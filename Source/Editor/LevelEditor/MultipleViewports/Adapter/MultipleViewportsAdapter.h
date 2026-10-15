@@ -12,7 +12,6 @@
 #include "Containers/Map.h"
 #include "Containers/Array.h"
 
-class FOutlinerPanel;
 class UPrimitiveComponent;
 class UStaticMeshComponent;
 class UWorld;
@@ -84,8 +83,6 @@ public:
     int32 GetHoveredViewIndex() const { return InputState.HoveredViewIndex; }
     // 우클릭 입력을 Capture 중인 View 인덱스를 반환한다.
     int32 GetCapturedViewIndex() const { return InputState.CapturedViewIndex; }
-    // 마지막 엔진 피킹 결과를 공통 Hit 형식으로 반환한다.
-    const FPickHit& GetLastPick() const { return LastPick; }
     // 지정 View의 로컬 화면 Rect를 반환한다.
     const FRect& GetViewRect(int32 ViewIndex) const;
     // Native View·Projection을 row-vector 순서로 합성한 엔진 행렬을 반환한다.
@@ -109,10 +106,6 @@ public:
 
     // View별 가시 ID를 엔진 컴포넌트로 역매핑해 렌더 큐를 구성한다.
     void BuildRenderQueue(int32 ViewIndex, FRenderQueue& OutQueue, FRenderQueue& OutIconQueue, FRenderQueue& OutArrowQueue);
-    // 활성 View Ray를 World·Component 피킹으로 전달하고 마지막 결과를 보관한다.
-    FPickHit PickActiveView(FVector2 LocalMousePosition, UWorld& World);
-    // 마지막 Hit Component의 Owner를 찾아 Outliner 선택에 반영한다.
-    void ApplyLastPickToOutliner(FOutlinerPanel& OutlinerPanel) const;
 
     // 외부에서 읽은 Split 비율을 Core 허용 범위로 제한해 저장한다.
     void SetSplitRatio(const FSplitRatio& Value);
@@ -159,7 +152,6 @@ private:
     static_assert(MaxViewCount == 5, "ViewModes initializer count must match MaxViewCount");
     FViewCamera CameraOverrides[MaxViewCount]{};
     bool bHasCameraOverride[MaxViewCount]{};
-    FPickHit LastPick{};
 
     // 이번 프레임의 엔진 객체와 파티클 준비 상태를 보관한다. 포인터는 다음 캡처 전까지 유효해야 한다.
     struct PrimitiveSnapshot

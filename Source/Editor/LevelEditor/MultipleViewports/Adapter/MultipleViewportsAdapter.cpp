@@ -8,15 +8,14 @@
 #include "Components/StaticMeshComponent.h"
 #include "Components/BillboardComponent.h"
 #include "Components/ParticleSubUVComponent.h"
-#include "Core/Stats/LightweightStats.h"
-#include "Core/Stats/EditorStats.h"
-#include "Editor/Outliner/OutlinerPanel.h"
 #include "Editor/Rendering/GridRenderer.h"
 #include "Engine/PrimitiveSceneProxy.h"
 #include "Engine/World.h"
 #include "Input/InputSystem.h"
-#include "UObject/UObjectIterator.h"
 #include "Asset/LOD/StaticMeshLODSelector.h"
+
+// View 입력에서 사용하는 ImGui API를 직접 포함한다.
+#include "imgui.h"
 
 #include <algorithm>
 #include <cassert>
@@ -766,51 +765,6 @@ void FMultipleViewportsAdapter::BuildRenderQueue(const int32 ViewIndex, FRenderQ
 	SelectLODs(LODInputs, LODContext, SelectedLODs);
 	for (uint32 I = 0; I < static_cast<uint32>(PendingStaticMeshes.Num()); ++I)
 		PendingStaticMeshes[I]->SubmitToRenderQueue(OutQueue, SelectedLODs[I]);
-}
-
-// 클릭한 View의 Ray를 World에 전달하고 Component의 최근접 교차 결과를 보관한다.
-FPickHit FMultipleViewportsAdapter::PickActiveView(const FVector2 LocalMousePosition, UWorld& World)
-{
-	SCOPE_CYCLE_COUNTER_ALWAYS(EditorStats::STAT_PickingTime);
-
-	LastPick = {};
-	FRay Ray{};
-	if (!TryGetActiveViewRay(LocalMousePosition, Ray)) return LastPick;
-
-	// 렌더와 같은 함수로 각 Billboard의 위치·크기에 맞는 View 행렬을 만든다.
-	const auto ResolveBillboardTransform = [](const UBillboardComponent& Billboard, const void* Context) -> FMatrix
-		{
-			const auto& Adapter = *static_cast<const FMultipleViewportsAdapter*>(Context);
-			const FVector Scale = Billboard.GetWorldScale3D();
-			return Adapter.BuildEngineBillboardMatrix(Adapter.GetActiveViewIndex(),
-				Billboard.GetWorldLocation(), Scale.Y, Scale.Z);
-		};
-	FHitResult Hit;
-	if (World.LineTraceSingle(Ray, Hit, ResolveBillboardTransform, this))
-	{
-		LastPick.bHit = true;
-		LastPick.Id = Hit.HitComponent->GetUUID();
-		LastPick.Distance = Hit.Distance;
-		LastPick.HitPoint = Hit.ImpactPoint;
-	}
-	return LastPick;
-}
-
-// 렌더 캡처 목록에 없는 컴포넌트도 Hit ID로 찾아 Owner를 선택한다. 삭제된 ID는 선택을 해제한다.
-void FMultipleViewportsAdapter::ApplyLastPickToOutliner(FOutlinerPanel& OutlinerPanel) const
-{
-	if (LastPick.bHit)
-	{
-		for (TObjectIterator<UPrimitiveComponent> It; It; ++It)
-		{
-			if (It->GetUUID() == LastPick.Id)
-			{
-				OutlinerPanel.SelectActor(It->GetOwner());
-				return;
-			}
-		}
-	}
-	OutlinerPanel.SelectActor(nullptr);
 }
 
 // Config에서 받은 비율을 Core 최소 범위로 clamp해 Adapter 상태에 저장한다.

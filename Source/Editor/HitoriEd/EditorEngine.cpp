@@ -18,6 +18,9 @@
 
 #include "Camera/CameraActor.h"
 #include "Camera/CameraComponent.h"
+// 피킹 결과와 View별 Billboard 행렬 공급에 사용한다.
+#include "Collision/HitResult.h"
+#include "Components/BillboardComponent.h"
 #include "GameFramework/Actor/LightActorBase.h"
 
 #include "Asset/AssetManager.h"
@@ -938,8 +941,19 @@ void UEditorEngine::UpdateGizmoAndPicking()
 	const bool bGizmoBlocksPick = bGizmoInView && (Gizmo->IsUsing() || Gizmo->GetHoveredAxis() >= 0);
 	if (FInputSystem::IsMousePressed(EMouseButton::Left) && !bGizmoBlocksPick)
 	{
-		MultipleViewportsAdapter.PickActiveView(LocalMousePosition, *ViewWorld);
-		MultipleViewportsAdapter.ApplyLastPickToOutliner(*OutlinerPanel);
+		// Billboard는 렌더링에 사용한 View와 동일한 행렬로 교차를 판정한다.
+		const auto ResolveBillboardTransform = [](const UBillboardComponent& Billboard, const void* Context) -> FMatrix
+		{
+			const auto& Adapter = *static_cast<const FMultipleViewportsAdapter*>(Context);
+			const FVector Scale = Billboard.GetWorldScale3D();
+			return Adapter.BuildEngineBillboardMatrix(Adapter.GetActiveViewIndex(),
+				Billboard.GetWorldLocation(), Scale.Y, Scale.Z);
+		};
+
+		// Gizmo에 사용한 Ray를 재사용하고, 월드의 피킹 결과를 선택에 직접 반영한다.
+		FHitResult Hit;
+		const bool bHit = ViewWorld->LineTraceSingle(Ray, Hit, ResolveBillboardTransform, &MultipleViewportsAdapter);
+		OutlinerPanel->SelectActor(bHit ? Hit.HitComponent->GetOwner() : nullptr);
 	}
 }
 
