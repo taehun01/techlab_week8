@@ -1,6 +1,7 @@
 #include "EnginePCH.h"
 
 #include "Editor/HitoriEd/EditorViewportClient.h"
+#include "Editor/Rendering/GridRenderer.h"
 
 #include <algorithm>
 #include <cmath>
@@ -77,11 +78,56 @@ void FEditorViewportClient::ApplyCameraPreset(EMultipleViewportsCameraPreset InP
     }
 }
 
+// 기존 Forward → Yaw/Pitch 계산과 직교 폭 보정을 Override에만 적용한다.
+void FEditorViewportClient::SetCameraOverride(const FVector& Location,
+    const FVector& Forward, const FCameraProjection& Projection, const FRect& Rect)
+{
+    const FVector Direction = NormalizedOrZero(Forward);
+    CameraOverride.Transform.Location = Location;
+    CameraOverride.Transform.Rotation = MakeCameraRotation(
+        std::atan2(Direction.Y, Direction.X) * 180.0f / Pi,
+        std::asin(FMath::Clamp(Direction.Z, -1.0f, 1.0f)) * 180.0f / Pi);
+    CameraOverride.Projection = Projection;
+    ConstrainOrthographicWidth(CameraOverride.Projection, Rect);
+    bHasCameraOverride = true;
+}
+
+// 축 정렬 프리셋은 고정 평면을, 일반 직교 View는 실제 카메라 방향을 사용한다.
+EGridPlane FEditorViewportClient::GetGridPlane() const
+{
+    switch (CameraPreset)
+    {
+    case EMultipleViewportsCameraPreset::Top:
+    case EMultipleViewportsCameraPreset::Bottom:
+    case EMultipleViewportsCameraPreset::Perspective:
+        return EGridPlane::XY;
+    case EMultipleViewportsCameraPreset::Front:
+    case EMultipleViewportsCameraPreset::Back:
+        return EGridPlane::YZ;
+    case EMultipleViewportsCameraPreset::Left:
+    case EMultipleViewportsCameraPreset::Right:
+        return EGridPlane::XZ;
+    case EMultipleViewportsCameraPreset::OrthographicView:
+        break;
+    }
+
+    const FVector Forward = GetEffectiveCamera().Transform.Rotation.GetForwardVector();
+    const float AbsX = std::fabs(Forward.X);
+    const float AbsY = std::fabs(Forward.Y);
+    const float AbsZ = std::fabs(Forward.Z);
+    if (AbsZ >= AbsX && AbsZ >= AbsY) return EGridPlane::XY;
+    if (AbsY >= AbsX) return EGridPlane::XZ;
+    return EGridPlane::YZ;
+}
+
 // 투영 방식에 맞는 이동축을 만들고 카메라별 계산으로 분기한다.
 void FEditorViewportClient::UpdateCamera(
     float DeltaTime, const FCameraMoveInput& RawInput, const FRect& Rect,
     float MoveSpeed, float MouseSensitivity, bool bCameraCaptured)
 {
+    // 게임 카메라 Override 중에는 저장된 편집 카메라를 입력으로 움직이지 않는다.
+    if (bHasCameraOverride) return;
+
     const bool bOrthographic = Camera.Projection.Mode == EProjectionMode::Orthographic;
     // 직교 이동은 W/S와 A/D를 화면 평면에 매핑하고 Q/E는 정규화 전에 제외한다.
     const FVector Axis = bOrthographic

@@ -4,7 +4,6 @@
 
 #include "Camera/CameraActor.h"
 #include "Camera/CameraComponent.h"
-#include "Editor/Rendering/GridRenderer.h"
 #include "Engine/World.h"
 #include "Input/InputSystem.h"
 #include "Asset/LOD/StaticMeshLODSelector.h"
@@ -14,12 +13,9 @@
 
 #include <algorithm>
 #include <cassert>
-#include <cmath>
 
 namespace
 {
-	constexpr float Pi = 3.14159265358979323846f;
-
 	// 양·음 방향 키 상태 차이로 -1~1 축 입력을 만든다.
 	float AxisValue(const EKeyCode Positive, const EKeyCode Negative)
 	{
@@ -78,27 +74,19 @@ void FMultipleViewportsAdapter::ApplyCameraProperties(const int32 ViewIndex,
 	ViewportClients[ViewIndex].ApplyCameraProperties(Camera, bRotationChanged, GetViewRect(ViewIndex));
 }
 
-// 외부 카메라의 위치·방향·투영을 Override로 보관한다. 저장 카메라와 프리셋은 바꾸지 않는다.
+// 패널과 외부 PIE의 카메라 Override를 해당 Client에 전달한다.
 void FMultipleViewportsAdapter::SetViewCameraOverride(const int32 ViewIndex, const FVector& Location,
 	const FVector& Forward, const FCameraProjection& Projection)
 {
 	assert(ViewIndex >= 0 && ViewIndex < MaxViewCount);
-	FViewCamera& Camera = CameraOverrides[ViewIndex];
-	Camera.Transform.Location = Location;
-	const FVector Direction = FEditorViewportClient::NormalizedOrZero(Forward);
-	Camera.Transform.Rotation = FEditorViewportClient::MakeCameraRotation(
-		std::atan2(Direction.Y, Direction.X) * 180.0f / Pi,
-		std::asin(FMath::Clamp(Direction.Z, -1.0f, 1.0f)) * 180.0f / Pi);
-	Camera.Projection = Projection;
-	FEditorViewportClient::ConstrainOrthographicWidth(Camera.Projection, GetViewRect(ViewIndex));
-	bHasCameraOverride[ViewIndex] = true;
+	ViewportClients[ViewIndex].SetCameraOverride(Location, Forward, Projection, GetViewRect(ViewIndex));
 }
 
 // Override를 해제해 저장 카메라로 되돌린다.
 void FMultipleViewportsAdapter::ClearViewCameraOverride(const int32 ViewIndex)
 {
 	assert(ViewIndex >= 0 && ViewIndex < MaxViewCount);
-	bHasCameraOverride[ViewIndex] = false;
+	ViewportClients[ViewIndex].ClearCameraOverride();
 }
 
 // 범위를 검사한 뒤 지정 View 카메라의 const 참조를 반환한다.
@@ -122,34 +110,11 @@ EMultipleViewportsCameraPreset FMultipleViewportsAdapter::GetCameraPreset(const 
 	return ViewportClients[ViewIndex].GetCameraPreset();
 }
 
-// 축 정렬 프리셋은 고정 평면을, Current는 Forward 지배축에 수직인 평면을 고른다.
+// Grid를 표시하는 패널 View의 평면 선택을 Client에 맡긴다.
 EGridPlane FMultipleViewportsAdapter::GetGridPlane(const int32 ViewIndex) const
 {
-	assert(ViewIndex >= 0 && ViewIndex < 4);
-	switch (ViewportClients[ViewIndex].GetCameraPreset())
-	{
-	case EMultipleViewportsCameraPreset::Top:
-	case EMultipleViewportsCameraPreset::Bottom:
-		return EGridPlane::XY;
-	case EMultipleViewportsCameraPreset::Front:
-	case EMultipleViewportsCameraPreset::Back:
-		return EGridPlane::YZ;
-	case EMultipleViewportsCameraPreset::Left:
-	case EMultipleViewportsCameraPreset::Right:
-		return EGridPlane::XZ;
-	case EMultipleViewportsCameraPreset::Perspective:
-		return EGridPlane::XY;
-	case EMultipleViewportsCameraPreset::OrthographicView:
-		break;
-	}
-
-	const FVector Forward = GetEffectiveCamera(ViewIndex).Transform.Rotation.GetForwardVector();
-	const float AbsX = std::fabs(Forward.X);
-	const float AbsY = std::fabs(Forward.Y);
-	const float AbsZ = std::fabs(Forward.Z);
-	if (AbsZ >= AbsX && AbsZ >= AbsY) return EGridPlane::XY;
-	if (AbsY >= AbsX) return EGridPlane::XZ;
-	return EGridPlane::YZ;
+	assert(ViewIndex >= 0 && ViewIndex < FLevelViewportLayout::ViewCount);
+	return ViewportClients[ViewIndex].GetGridPlane();
 }
 
 // 배치는 Layout에 맡기고 기존 카메라 보정과 입력 대상 유지 규칙을 적용한다.
@@ -206,8 +171,6 @@ void FMultipleViewportsAdapter::UpdateInput(
 	if (InputState.CapturedViewIndex != InvalidViewIndex)
 		ActiveViewIndex = InputState.CapturedViewIndex;
 	if (!IsViewActive(ActiveViewIndex)) return;
-	// 외부 카메라가 그리는 View는 에디터 카메라 조작을 받지 않는다.
-	if (bHasCameraOverride[ActiveViewIndex]) return;
 
 	// 키와 마우스 드래그는 우클릭으로 캡처한 View에만 전달한다.
 	const bool bCameraCaptured = FInputSystem::IsMouseDown(EMouseButton::Right)
@@ -239,7 +202,7 @@ bool FMultipleViewportsAdapter::IsViewActive(const int32 ViewIndex) const
 {
 	// 외부 View는 레이아웃과 무관하게 크기와 카메라가 주어졌을 때만 활성이다.
 	if (ViewIndex == ExternalViewIndex)
-		return bHasCameraOverride[ViewIndex] && IsViewRectValid(ExternalViewRect);
+		return ViewportClients[ViewIndex].HasCameraOverride() && IsViewRectValid(ExternalViewRect);
 	return Layout.IsViewActive(ViewIndex);
 }
 

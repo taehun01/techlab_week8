@@ -1,8 +1,9 @@
 #pragma once
 
 #include "Editor/LevelEditor/MultipleViewports/Adapter/MultipleViewportsAdapterTypes.h"
+#include "Render/ViewMode.h"
 
-// 한 에디터 View의 카메라 상태와 프리셋·이동·렌더 계산을 관리한다.
+// 한 View의 카메라·표시 상태와 프리셋·이동·렌더 계산을 관리한다.
 class FEditorViewportClient
 {
 public:
@@ -16,6 +17,27 @@ public:
     // 선택한 프리셋의 방향과 투영 방식을 적용한다.
     void ApplyCameraPreset(EMultipleViewportsCameraPreset InPreset, const FRect& Rect);
     EMultipleViewportsCameraPreset GetCameraPreset() const { return CameraPreset; }
+
+    // 저장 카메라와 프리셋을 보존하고 실제 View에 적용할 카메라만 교체한다.
+    void SetCameraOverride(const FVector& Location, const FVector& Forward,
+        const FCameraProjection& Projection, const FRect& Rect);
+    void ClearCameraOverride() { bHasCameraOverride = false; }
+    bool HasCameraOverride() const { return bHasCameraOverride; }
+
+    // 렌더·컬링·피킹은 Override가 반영된 논리 카메라를 사용한다.
+    const FViewCamera& GetEffectiveCamera() const
+    {
+        return bHasCameraOverride ? CameraOverride : Camera;
+    }
+
+    // 패널과 외부 PIE View의 표시 설정을 동일하게 보관한다.
+    void SetWireframe(bool Value) { bWireframe = Value; }
+    bool IsWireframe() const { return bWireframe; }
+    void SetViewMode(EViewMode Value) { ViewMode = Value; }
+    EViewMode GetViewMode() const { return ViewMode; }
+
+    // 축 정렬 프리셋과 실제 카메라 방향으로 Grid 평면을 선택한다.
+    EGridPlane GetGridPlane() const;
 
     // View 크기가 변경되면 현재 카메라의 직교 폭을 보정한다.
     void OnViewportResized(const FRect& Rect)
@@ -74,4 +96,12 @@ private:
 
     FViewCamera Camera{};
     EMultipleViewportsCameraPreset CameraPreset = EMultipleViewportsCameraPreset::Perspective;
+
+    // Override 설정·해제는 저장 Camera와 CameraPreset을 변경하지 않는다.
+    FViewCamera CameraOverride{};
+    bool bHasCameraOverride = false;
+
+    // 모든 Client가 같은 표시 기본값으로 시작한다.
+    bool bWireframe = false;
+    EViewMode ViewMode = EViewMode::Lit_Lambert;
 };

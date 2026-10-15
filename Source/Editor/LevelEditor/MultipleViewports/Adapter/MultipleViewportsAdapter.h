@@ -45,7 +45,11 @@ public:
     // Forward는 정규화되어 있어야 하며 Roll은 버린다.
     void SetViewCameraOverride(int32 ViewIndex, const FVector& Location, const FVector& Forward, const FCameraProjection& Projection);
     void ClearViewCameraOverride(int32 ViewIndex);
-    bool HasViewCameraOverride(int32 ViewIndex) const { return ViewIndex >= 0 && ViewIndex < MaxViewCount && bHasCameraOverride[ViewIndex]; }
+    bool HasViewCameraOverride(int32 ViewIndex) const
+    {
+        return ViewIndex >= 0 && ViewIndex < MaxViewCount
+            && ViewportClients[ViewIndex].HasCameraOverride();
+    }
     // 지정 View에 적용된 카메라 프리셋을 반환한다.
     EMultipleViewportsCameraPreset GetCameraPreset(int32 ViewIndex) const;
     // 프리셋 또는 카메라 Forward 지배축으로 표시할 Grid 평면을 고른다.
@@ -66,11 +70,26 @@ public:
     // 속성 창에서 선택한 View를 공통 편집 대상으로 지정한다.
     void SetEditorViewIndex(int32 Index) { if (Index >= 0 && Index < 4) EditorViewIndex = Index; }
     // View별 장면 래스터라이저 모드를 저장하고 조회한다.
-    void SetViewWireframe(int32 Index, bool Value) { if (Index >= 0 && Index < MaxViewCount) ViewWireframe[Index] = Value; }
-    bool IsViewWireframe(int32 Index) const { return Index >= 0 && Index < MaxViewCount && ViewWireframe[Index]; }
+    void SetViewWireframe(int32 Index, bool Value)
+    {
+        if (Index >= 0 && Index < MaxViewCount)
+            ViewportClients[Index].SetWireframe(Value);
+    }
+    bool IsViewWireframe(int32 Index) const
+    {
+        return Index >= 0 && Index < MaxViewCount && ViewportClients[Index].IsWireframe();
+    }
     // View별 조명 뷰모드(UberLit 변형)를 저장하고 조회한다.
-    void SetViewMode(int32 Index, EViewMode Value) { if (Index >= 0 && Index < MaxViewCount) ViewModes[Index] = Value; }
-    EViewMode GetViewMode(int32 Index) const { return (Index >= 0 && Index < MaxViewCount) ? ViewModes[Index] : EViewMode::Lit_Lambert; }
+    void SetViewMode(int32 Index, EViewMode Value)
+    {
+        if (Index >= 0 && Index < MaxViewCount)
+            ViewportClients[Index].SetViewMode(Value);
+    }
+    EViewMode GetViewMode(int32 Index) const
+    {
+        return Index >= 0 && Index < MaxViewCount
+            ? ViewportClients[Index].GetViewMode() : EViewMode::Lit_Lambert;
+    }
     // 현재 마우스가 올라간 View 인덱스를 반환한다.
     int32 GetHoveredViewIndex() const { return InputState.HoveredViewIndex; }
     // 우클릭 입력을 Capture 중인 View 인덱스를 반환한다.
@@ -102,24 +121,17 @@ public:
     FMatrix GetEngineProjection(int32 ViewIndex) const;
 
 private:
-    // Override가 있으면 그 카메라를, 없으면 저장 카메라를 반환한다. 외부 View는 Override만 쓴다.
+    // 인덱스 검증은 진입 함수가 담당하고 카메라 선택은 해당 Client에 맡긴다.
     const FViewCamera& GetEffectiveCamera(int32 ViewIndex) const
     {
-        if (ViewIndex == ExternalViewIndex || bHasCameraOverride[ViewIndex])
-            return CameraOverrides[ViewIndex];
-        return ViewportClients[ViewIndex].GetCamera();
+        return ViewportClients[ViewIndex].GetEffectiveCamera();
     }
-    // 패널 배치는 Layout이, 각 카메라와 프리셋은 해당 Client가 소유한다.
+    // 패널 배치는 Layout이, 카메라·표시 상태는 패널 4개와 외부 PIE의 Client가 소유한다.
     FLevelViewportLayout Layout;
-    FEditorViewportClient ViewportClients[FLevelViewportLayout::ViewCount];
+    FEditorViewportClient ViewportClients[MaxViewCount];
     FViewInputState InputState{};
     // 별도 PIE 창의 렌더 영역은 패널 레이아웃과 무관하다.
     FRect ExternalViewRect{};
     int32 ActiveViewIndex = InvalidViewIndex;
     int32 EditorViewIndex = 0;
-    bool ViewWireframe[MaxViewCount]{};
-    EViewMode ViewModes[MaxViewCount]{ EViewMode::Lit_Lambert, EViewMode::Lit_Lambert, EViewMode::Lit_Lambert, EViewMode::Lit_Lambert, EViewMode::Lit_Lambert };
-    static_assert(MaxViewCount == 5, "ViewModes initializer count must match MaxViewCount");
-    FViewCamera CameraOverrides[MaxViewCount]{};
-    bool bHasCameraOverride[MaxViewCount]{};
 };
