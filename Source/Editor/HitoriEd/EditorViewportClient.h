@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Editor/LevelEditor/MultipleViewports/Adapter/MultipleViewportsAdapterTypes.h"
+#include "Math/Frustum.h"
 #include "Render/ViewMode.h"
 
 // 한 View의 카메라·표시 상태와 프리셋·이동·렌더 계산을 관리한다.
@@ -67,8 +68,6 @@ public:
 
     // Override와 렌더 경로에서도 사용하는 기존 카메라 계산 구현을 한곳에 둔다.
     static FVector NormalizedOrZero(FVector Value);
-    static FQuat MakeCameraRotation(float YawDegrees, float PitchDegrees);
-    static void ConstrainOrthographicWidth(FCameraProjection& Projection, const FRect& Rect);
 
 private:
     // 논리 카메라는 보존하고 직교 렌더링에 필요한 깊이만 보정한다.
@@ -93,6 +92,8 @@ private:
     static float CameraForwardZ(const FQuat& Rotation);
     static float CameraYawDegrees(const FQuat& Rotation);
     static float CameraPitchDegrees(const FQuat& Rotation);
+    static FQuat MakeCameraRotation(float YawDegrees, float PitchDegrees);
+    static void ConstrainOrthographicWidth(FCameraProjection& Projection, const FRect& Rect);
 
     FViewCamera Camera{};
     EMultipleViewportsCameraPreset CameraPreset = EMultipleViewportsCameraPreset::Perspective;

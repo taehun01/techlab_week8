@@ -341,7 +341,7 @@ void UEditorEngine::UpdateMultipleViewportState(const float DeltaTime)
 	EMultipleViewportsCameraPreset RequestedPreset = EMultipleViewportsCameraPreset::Perspective;
 	if (ViewportsPanel->ConsumeCameraPresetRequest(PresetViewIndex, RequestedPreset))
 		MultipleViewportsAdapter.ApplyCameraPreset(PresetViewIndex, RequestedPreset);
-	MultipleViewportsAdapter.UpdateLayout(ViewportSize, LocalMousePosition);
+	MultipleViewportsAdapter.UpdateLayout(ViewportSize);
 
 	const float HorizontalDrag = ViewportsPanel->ConsumeHorizontalDrag();
 	const float VerticalDrag = ViewportsPanel->ConsumeVerticalDrag();
@@ -351,7 +351,7 @@ void UEditorEngine::UpdateMultipleViewportState(const float DeltaTime)
 		MultipleViewportsAdapter.ApplySplitterDrag(EDragAxis::Vertical, VerticalDrag, ViewportSize);
 	if (HorizontalDrag != 0.0f || VerticalDrag != 0.0f)
 	{
-		MultipleViewportsAdapter.UpdateLayout(ViewportSize, LocalMousePosition);
+		MultipleViewportsAdapter.UpdateLayout(ViewportSize);
 		const FSplitRatio Ratio = MultipleViewportsAdapter.GetSplitRatio();
 		SettingsPanel->GetMutableSettings().MultipleViewportsHorizontal = Ratio.Horizontal;
 		SettingsPanel->GetMutableSettings().MultipleViewportsVertical = Ratio.Vertical;

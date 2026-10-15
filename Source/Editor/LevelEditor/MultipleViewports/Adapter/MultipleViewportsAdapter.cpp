@@ -7,22 +7,13 @@
 #include "Engine/World.h"
 #include "Input/InputSystem.h"
 #include "Asset/LOD/StaticMeshLODSelector.h"
+#include "Render/RenderPacket.h"
 
 // View 입력에서 사용하는 ImGui API를 직접 포함한다.
 #include "imgui.h"
 
 #include <algorithm>
 #include <cassert>
-
-namespace
-{
-	// 양·음 방향 키 상태 차이로 -1~1 축 입력을 만든다.
-	float AxisValue(const EKeyCode Positive, const EKeyCode Negative)
-	{
-		return (FInputSystem::IsKeyDown(Positive) ? 1.0f : 0.0f) - (FInputSystem::IsKeyDown(Negative) ? 1.0f : 0.0f);
-	}
-
-} // 익명 네임스페이스
 
 // 외부 View Rect는 원점 기준 렌더 타깃 크기와 같다.
 void FMultipleViewportsAdapter::SetExternalViewSize(const uint32 Width, const uint32 Height)
@@ -53,24 +44,11 @@ void FMultipleViewportsAdapter::InitializeFromWorld(UWorld& World)
 	ViewportClients[3].ApplyCameraPreset(EMultipleViewportsCameraPreset::Left, GetViewRect(3));
 }
 
-// Single 대상의 검증과 저장은 레이아웃 소유자에게 맡긴다.
-void FMultipleViewportsAdapter::SetSingleViewIndex(const int32 ViewIndex)
-{
-	Layout.SetSingleViewIndex(ViewIndex);
-}
-
-// View 인덱스를 검증하고 카메라 적용을 해당 Client에 맡긴다.
-void FMultipleViewportsAdapter::SetViewCamera(const int32 ViewIndex, const FViewCamera& Camera)
-{
-	assert(ViewIndex >= 0 && ViewIndex < FLevelViewportLayout::ViewCount);
-	ViewportClients[ViewIndex].SetCamera(Camera, GetViewRect(ViewIndex));
-}
-
 // 속성 편집 시 프리셋 유지 여부는 카메라를 소유한 Client가 결정한다.
 void FMultipleViewportsAdapter::ApplyCameraProperties(const int32 ViewIndex,
 	const FViewCamera& Camera, const bool bRotationChanged)
 {
-	assert(ViewIndex >= 0 && ViewIndex < FLevelViewportLayout::ViewCount);
+	assert(IsPanelViewIndex(ViewIndex));
 	ViewportClients[ViewIndex].ApplyCameraProperties(Camera, bRotationChanged, GetViewRect(ViewIndex));
 }
 
@@ -78,51 +56,51 @@ void FMultipleViewportsAdapter::ApplyCameraProperties(const int32 ViewIndex,
 void FMultipleViewportsAdapter::SetViewCameraOverride(const int32 ViewIndex, const FVector& Location,
 	const FVector& Forward, const FCameraProjection& Projection)
 {
-	assert(ViewIndex >= 0 && ViewIndex < MaxViewCount);
+	assert(IsViewIndex(ViewIndex));
 	ViewportClients[ViewIndex].SetCameraOverride(Location, Forward, Projection, GetViewRect(ViewIndex));
 }
 
 // Override를 해제해 저장 카메라로 되돌린다.
 void FMultipleViewportsAdapter::ClearViewCameraOverride(const int32 ViewIndex)
 {
-	assert(ViewIndex >= 0 && ViewIndex < MaxViewCount);
+	assert(IsViewIndex(ViewIndex));
 	ViewportClients[ViewIndex].ClearCameraOverride();
 }
 
 // 범위를 검사한 뒤 지정 View 카메라의 const 참조를 반환한다.
 const FViewCamera& FMultipleViewportsAdapter::GetViewCamera(const int32 ViewIndex) const
 {
-	assert(ViewIndex >= 0 && ViewIndex < FLevelViewportLayout::ViewCount);
+	assert(IsPanelViewIndex(ViewIndex));
 	return ViewportClients[ViewIndex].GetCamera();
 }
 
 // 선택한 View의 프리셋 적용을 해당 Client에 맡긴다.
 void FMultipleViewportsAdapter::ApplyCameraPreset(const int32 ViewIndex, const EMultipleViewportsCameraPreset Preset)
 {
-	assert(ViewIndex >= 0 && ViewIndex < FLevelViewportLayout::ViewCount);
+	assert(IsPanelViewIndex(ViewIndex));
 	ViewportClients[ViewIndex].ApplyCameraPreset(Preset, GetViewRect(ViewIndex));
 }
 
 // 범위를 검사한 뒤 지정 View의 프리셋을 반환한다.
 EMultipleViewportsCameraPreset FMultipleViewportsAdapter::GetCameraPreset(const int32 ViewIndex) const
 {
-	assert(ViewIndex >= 0 && ViewIndex < FLevelViewportLayout::ViewCount);
+	assert(IsPanelViewIndex(ViewIndex));
 	return ViewportClients[ViewIndex].GetCameraPreset();
 }
 
 // Grid를 표시하는 패널 View의 평면 선택을 Client에 맡긴다.
 EGridPlane FMultipleViewportsAdapter::GetGridPlane(const int32 ViewIndex) const
 {
-	assert(ViewIndex >= 0 && ViewIndex < FLevelViewportLayout::ViewCount);
+	assert(IsPanelViewIndex(ViewIndex));
 	return ViewportClients[ViewIndex].GetGridPlane();
 }
 
 // 배치는 Layout에 맡기고 기존 카메라 보정과 입력 대상 유지 규칙을 적용한다.
-void FMultipleViewportsAdapter::UpdateLayout(const FVector2 WindowSize, const FVector2 LocalMousePosition)
+void FMultipleViewportsAdapter::UpdateLayout(const FVector2 WindowSize)
 {
 	Layout.Update(WindowSize, SplitterThickness);
 	// 창 크기와 Single/Quad 전환으로 Aspect가 바뀌어도 저장값과 실제 투영값을 함께 보정한다.
-	for (int32 ViewIndex = 0; ViewIndex < 4; ++ViewIndex)
+	for (int32 ViewIndex = 0; ViewIndex < FLevelViewportLayout::ViewCount; ++ViewIndex)
 	{
 		const FRect& Rect = Layout.GetViewRect(ViewIndex);
 		if (IsViewRectValid(Rect))
@@ -141,12 +119,6 @@ void FMultipleViewportsAdapter::UpdateLayout(const FVector2 WindowSize, const FV
 		ActiveViewIndex = Layout.GetLayoutMode() == ELayoutMode::Single && IsViewActive(SingleViewIndex)
 			? SingleViewIndex : InvalidViewIndex;
 	}
-}
-
-// Drag는 비율만 바꾸며 호출자가 UpdateLayout에서 배치와 입력 상태를 함께 갱신한다.
-void FMultipleViewportsAdapter::ApplySplitterDrag(const EDragAxis Axis, const float DeltaPixels, const FVector2 WindowSize)
-{
-	Layout.ApplySplitterDrag(Axis, DeltaPixels, WindowSize);
 }
 
 // Capture와 입력 대상을 결정하고 키·마우스·휠 입력을 해당 Client에 전달한다.
@@ -178,6 +150,12 @@ void FMultipleViewportsAdapter::UpdateInput(
 	FCameraMoveInput RawInput{};
 	if (bCameraCaptured)
 	{
+		// 키 상태를 읽는 규칙은 이 입력 처리 구간에서만 사용한다.
+		const auto AxisValue = [](EKeyCode Positive, EKeyCode Negative)
+		{
+			return (FInputSystem::IsKeyDown(Positive) ? 1.0f : 0.0f)
+				- (FInputSystem::IsKeyDown(Negative) ? 1.0f : 0.0f);
+		};
 		RawInput.MoveAxis = {
 			AxisValue(EKeyCode::W, EKeyCode::S),
 			AxisValue(EKeyCode::D, EKeyCode::A),
@@ -223,21 +201,18 @@ FMatrix FMultipleViewportsAdapter::GetEngineViewProjection(const int32 ViewIndex
 // Native 카메라 위치를 엔진 FVector 그대로 반환한다.
 FVector FMultipleViewportsAdapter::GetEngineCameraLocation(const int32 ViewIndex) const
 {
-	assert(ViewIndex >= 0 && ViewIndex < MaxViewCount);
 	return GetEffectiveCamera(ViewIndex).Transform.Location;
 }
 
 // Native 회전에서 정규화한 Forward를 엔진 FVector로 반환한다.
 FVector FMultipleViewportsAdapter::GetEngineCameraForward(const int32 ViewIndex) const
 {
-	assert(ViewIndex >= 0 && ViewIndex < MaxViewCount);
 	return FEditorViewportClient::NormalizedOrZero(GetEffectiveCamera(ViewIndex).Transform.Rotation.GetForwardVector());
 }
 
 // 지정 View의 논리 카메라로 렌더·피킹에 공통인 Billboard 계산을 호출한다.
 FMatrix FMultipleViewportsAdapter::BuildEngineBillboardMatrix(const int32 ViewIndex, const FVector& WorldPosition, const float Width, const float Height) const
 {
-	assert(ViewIndex >= 0 && ViewIndex < MaxViewCount);
 	return FEditorViewportClient::BuildBillboardMatrix(
 		GetEffectiveCamera(ViewIndex), WorldPosition, Width, Height);
 }
@@ -245,7 +220,6 @@ FMatrix FMultipleViewportsAdapter::BuildEngineBillboardMatrix(const int32 ViewIn
 // 지정 View 카메라의 투영 모드가 Orthographic인지 검사한다.
 bool FMultipleViewportsAdapter::IsOrthographic(const int32 ViewIndex) const
 {
-	assert(ViewIndex >= 0 && ViewIndex < MaxViewCount);
 	return GetEffectiveCamera(ViewIndex).Projection.Mode == EProjectionMode::Orthographic;
 }
 
@@ -307,12 +281,6 @@ void FMultipleViewportsAdapter::BuildRenderQueue(UWorld& World, const int32 View
 	// Renderer를 넘기지 않아 기존 에디터의 GPU 오클루전·상수 업로드 정책을 유지한다.
 	World.GatherRenderPackets(OutQueue, &LODContext, &Frustum, nullptr,
 		ResolveBillboard, &ViewCamera, &OutIconQueue, &OutArrowQueue);
-}
-
-// Config에서 받은 비율의 검증과 저장은 Layout이 담당한다.
-void FMultipleViewportsAdapter::SetSplitRatio(const FSplitRatio& Value)
-{
-	Layout.SetSplitRatio(Value);
 }
 
 // 라이트 컬링 등에 사용하는 렌더 View 행렬을 반환한다.
