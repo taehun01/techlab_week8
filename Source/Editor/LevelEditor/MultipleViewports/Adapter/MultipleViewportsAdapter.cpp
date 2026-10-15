@@ -28,74 +28,11 @@ namespace
 	constexpr float MaximumRotationDegreesPerFrame = 45.0f;
 	constexpr float MouseWheelDeltaPerStep = 120.0f;
 	constexpr float OrthographicZoomFactorPerStep = 0.9f;
-	constexpr float MinimumOrthographicWidth = 0.01f;
-	// 양방향 깊이 보정 뒤에도 절두체 평면 법선이 Core epsilon(1e-6)보다 충분히 크게 유지되게 한다.
-	// 정사각 View의 최악 조건에서 깊이 계수는 약 1 / (4 * sqrt(2) * Span)이다.
-	constexpr float MaximumOrthographicSpan = 80000.0f;
-
-	// 외부 설정과 화면 비율을 반영해 직교 투영 폭이 안전한 범위를 벗어나지 않게 한다.
-	void ConstrainOrthographicWidth(FCameraProjection& Projection, const FRect& Rect)
-	{
-		const float AspectRatio = Rect.Width > 0.0f && Rect.Height > 0.0f
-			? Rect.Width / Rect.Height : 1.0f;
-		// 폭과 높이 모두 상한 안에 들도록 세로로 긴 View에서는 폭 상한도 함께 줄인다.
-		const float MaximumWidth = std::max(MinimumOrthographicWidth,
-			MaximumOrthographicSpan * std::min(1.0f, AspectRatio));
-		Projection.OrthoWidth = std::isnan(Projection.OrthoWidth)
-			? 10.0f
-			: FMath::Clamp(Projection.OrthoWidth, MinimumOrthographicWidth, MaximumWidth);
-	}
 
 	// 양·음 방향 키 상태 차이로 -1~1 축 입력을 만든다.
 	float AxisValue(const EKeyCode Positive, const EKeyCode Negative)
 	{
 		return (FInputSystem::IsKeyDown(Positive) ? 1.0f : 0.0f) - (FInputSystem::IsKeyDown(Negative) ? 1.0f : 0.0f);
-	}
-
-	// 길이가 0이면 영벡터를, 아니면 정규화 벡터를 반환한다.
-	FVector NormalizedOrZero(const FVector Value)
-	{
-		const float LengthSquared = Value.X * Value.X + Value.Y * Value.Y + Value.Z * Value.Z;
-		if (LengthSquared <= 0.0f) return {};
-		const float InverseLength = 1.0f / std::sqrt(LengthSquared);
-		return { Value.X * InverseLength, Value.Y * InverseLength, Value.Z * InverseLength };
-	}
-
-	// quaternion으로 회전된 카메라 Forward의 Z 성분을 계산한다.
-	float CameraForwardZ(const FQuat& Rotation)
-	{
-		return 2.0f * (Rotation.X * Rotation.Z - Rotation.W * Rotation.Y);
-	}
-
-	// 카메라 Forward의 XY 방향을 atan2로 바꿔 Euler Yaw를 구한다.
-	float CameraYawDegrees(const FQuat& Rotation)
-	{
-		const FVector Forward = NormalizedOrZero(Rotation.GetForwardVector());
-		return std::atan2(Forward.Y, Forward.X) * 180.0f / Pi;
-	}
-
-	// 카메라 Forward의 Z 성분을 asin해 Euler Pitch를 구한다.
-	float CameraPitchDegrees(const FQuat& Rotation)
-	{
-		return std::asin(FMath::Clamp(CameraForwardZ(Rotation), -1.0f, 1.0f)) * 180.0f / Pi;
-	}
-
-	// Z-up Yaw와 Right축 Pitch만 합성해 Roll 없는 quaternion을 만든다.
-	FQuat MakeCameraRotation(const float YawDegrees, const float PitchDegrees)
-	{
-		const float HalfYaw = YawDegrees * Pi / 360.0f;
-		const float HalfPitch = PitchDegrees * Pi / 360.0f;
-		const float SinYaw = std::sin(HalfYaw);
-		const float CosYaw = std::cos(HalfYaw);
-		const float SinPitch = std::sin(HalfPitch);
-		const float CosPitch = std::cos(HalfPitch);
-
-		// 카메라 입력은 Euler Yaw/Pitch 두 축으로만 계산한다. Core 경계에 전달할 때만 quaternion으로 변환한다.
-		return {
-			SinPitch * SinYaw,
-			-SinPitch * CosYaw,
-			CosPitch * SinYaw,
-			CosPitch * CosYaw };
 	}
 
 } // 익명 네임스페이스
@@ -120,23 +57,13 @@ void FMultipleViewportsAdapter::InitializeFromWorld(UWorld& World)
 		MainCamera->GetFarZ() };
 	Layout.SetLayoutMode(ELayoutMode::QuadSplit);
 	// 최신 trace의 구도를 사용해 화면 정면은 +X, 화면 오른쪽은 +Y가 되도록 시작한다.
-	ViewCameras[0] = { {{-11.665390f, 6.117728f, 9.921079f},
+	const FViewCamera InitialCamera{ {{-11.665390f, 6.117728f, 9.921079f},
 		{0.081251f, 0.256328f, -0.291035f, 0.918146f}}, Perspective };
-	ViewCameras[0].Transform.Rotation = MakeCameraRotation(
-		CameraYawDegrees(ViewCameras[0].Transform.Rotation),
-		CameraPitchDegrees(ViewCameras[0].Transform.Rotation));
-	CameraPresets[0] = EMultipleViewportsCameraPreset::Perspective;
-
-	FCameraProjection Orthographic = Perspective;
-	Orthographic.Mode = EProjectionMode::Orthographic;
-	ViewCameras[1] = { {{0.0f, 0.0f, 10.0f}, {0.0f, 0.70710678f, 0.0f, 0.70710678f}}, Orthographic }; // 위쪽에서 -Z 방향을 본다.
-	ViewCameras[2] = { {{10.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 1.0f, 0.0f}}, Orthographic }; // +X 쪽에서 -X 방향을 본다.
-	ViewCameras[3] = { {{0.0f, -10.0f, 0.0f}, {0.0f, 0.0f, 0.70710678f, 0.70710678f}}, Orthographic }; // -Y 쪽에서 +Y 방향을 본다.
-	CameraPresets[1] = EMultipleViewportsCameraPreset::Top;
-	CameraPresets[2] = EMultipleViewportsCameraPreset::Front;
-	CameraPresets[3] = EMultipleViewportsCameraPreset::Left;
-	for (int32 ViewIndex = 0; ViewIndex < 4; ++ViewIndex)
-		ConstrainOrthographicWidth(ViewCameras[ViewIndex].Projection, GetViewRect(ViewIndex));
+	for (int32 ViewIndex = 0; ViewIndex < FLevelViewportLayout::ViewCount; ++ViewIndex)
+		ViewportClients[ViewIndex].SetCamera(InitialCamera, GetViewRect(ViewIndex));
+	ViewportClients[1].ApplyCameraPreset(EMultipleViewportsCameraPreset::Top, GetViewRect(1));
+	ViewportClients[2].ApplyCameraPreset(EMultipleViewportsCameraPreset::Front, GetViewRect(2));
+	ViewportClients[3].ApplyCameraPreset(EMultipleViewportsCameraPreset::Left, GetViewRect(3));
 }
 
 // Single 대상의 검증과 저장은 레이아웃 소유자에게 맡긴다.
@@ -145,32 +72,19 @@ void FMultipleViewportsAdapter::SetSingleViewIndex(const int32 ViewIndex)
 	Layout.SetSingleViewIndex(ViewIndex);
 }
 
-// 카메라를 복사하고 Perspective이면 Forward 기준 Yaw·Pitch로 Roll을 제거한다.
+// View 인덱스를 검증하고 카메라 적용을 해당 Client에 맡긴다.
 void FMultipleViewportsAdapter::SetViewCamera(const int32 ViewIndex, const FViewCamera& Camera)
 {
-	assert(ViewIndex >= 0 && ViewIndex < 4);
-	ViewCameras[ViewIndex] = Camera;
-	ConstrainOrthographicWidth(ViewCameras[ViewIndex].Projection, GetViewRect(ViewIndex));
-	if (ViewCameras[ViewIndex].Projection.Mode == EProjectionMode::Perspective)
-		ViewCameras[ViewIndex].Transform.Rotation = MakeCameraRotation(
-			CameraYawDegrees(ViewCameras[ViewIndex].Transform.Rotation),
-			CameraPitchDegrees(ViewCameras[ViewIndex].Transform.Rotation));
-	CameraPresets[ViewIndex] = Camera.Projection.Mode == EProjectionMode::Perspective
-		? EMultipleViewportsCameraPreset::Perspective
-		: EMultipleViewportsCameraPreset::OrthographicView;
+	assert(ViewIndex >= 0 && ViewIndex < FLevelViewportLayout::ViewCount);
+	ViewportClients[ViewIndex].SetCamera(Camera, GetViewRect(ViewIndex));
 }
 
-// 속성 편집을 적용하고 방향·투영 모드가 그대로이면 축 정렬 프리셋을 보존한다.
+// 속성 편집 시 프리셋 유지 여부는 카메라를 소유한 Client가 결정한다.
 void FMultipleViewportsAdapter::ApplyCameraProperties(const int32 ViewIndex,
 	const FViewCamera& Camera, const bool bRotationChanged)
 {
-	assert(ViewIndex >= 0 && ViewIndex < 4);
-	const EMultipleViewportsCameraPreset PreviousPreset = CameraPresets[ViewIndex];
-	const bool bKeepPreset = !bRotationChanged
-		&& ViewCameras[ViewIndex].Projection.Mode == Camera.Projection.Mode;
-	SetViewCamera(ViewIndex, Camera);
-	if (bKeepPreset)
-		CameraPresets[ViewIndex] = PreviousPreset;
+	assert(ViewIndex >= 0 && ViewIndex < FLevelViewportLayout::ViewCount);
+	ViewportClients[ViewIndex].ApplyCameraProperties(Camera, bRotationChanged, GetViewRect(ViewIndex));
 }
 
 // 외부 카메라의 위치·방향·투영을 Override로 보관한다. 저장 카메라와 프리셋은 바꾸지 않는다.
@@ -180,12 +94,12 @@ void FMultipleViewportsAdapter::SetViewCameraOverride(const int32 ViewIndex, con
 	assert(ViewIndex >= 0 && ViewIndex < MaxViewCount);
 	FViewCamera& Camera = CameraOverrides[ViewIndex];
 	Camera.Transform.Location = Location;
-	const FVector Direction = NormalizedOrZero(Forward);
-	Camera.Transform.Rotation = MakeCameraRotation(
+	const FVector Direction = FEditorViewportClient::NormalizedOrZero(Forward);
+	Camera.Transform.Rotation = FEditorViewportClient::MakeCameraRotation(
 		std::atan2(Direction.Y, Direction.X) * 180.0f / Pi,
 		std::asin(FMath::Clamp(Direction.Z, -1.0f, 1.0f)) * 180.0f / Pi);
 	Camera.Projection = Projection;
-	ConstrainOrthographicWidth(Camera.Projection, GetViewRect(ViewIndex));
+	FEditorViewportClient::ConstrainOrthographicWidth(Camera.Projection, GetViewRect(ViewIndex));
 	bHasCameraOverride[ViewIndex] = true;
 }
 
@@ -199,64 +113,29 @@ void FMultipleViewportsAdapter::ClearViewCameraOverride(const int32 ViewIndex)
 // 범위를 검사한 뒤 지정 View 카메라의 const 참조를 반환한다.
 const FViewCamera& FMultipleViewportsAdapter::GetViewCamera(const int32 ViewIndex) const
 {
-	assert(ViewIndex >= 0 && ViewIndex < 4);
-	return ViewCameras[ViewIndex];
+	assert(ViewIndex >= 0 && ViewIndex < FLevelViewportLayout::ViewCount);
+	return ViewportClients[ViewIndex].GetCamera();
 }
 
-// 축 정렬 프리셋은 고정 Transform을, Current는 현재 Transform을 유지해 적용한다.
+// 선택한 View의 프리셋 적용을 해당 Client에 맡긴다.
 void FMultipleViewportsAdapter::ApplyCameraPreset(const int32 ViewIndex, const EMultipleViewportsCameraPreset Preset)
 {
-	assert(ViewIndex >= 0 && ViewIndex < 4);
-	FViewCamera& Camera = ViewCameras[ViewIndex];
-	ConstrainOrthographicWidth(Camera.Projection, GetViewRect(ViewIndex));
-	CameraPresets[ViewIndex] = Preset;
-	Camera.Projection.Mode = Preset == EMultipleViewportsCameraPreset::Perspective
-		? EProjectionMode::Perspective
-		: EProjectionMode::Orthographic;
-
-	switch (Preset)
-	{
-	case EMultipleViewportsCameraPreset::Top:
-		Camera.Transform = { {0.0f, 0.0f, 10.0f}, {0.0f, 0.70710678f, 0.0f, 0.70710678f} };
-		break;
-	case EMultipleViewportsCameraPreset::Bottom:
-		Camera.Transform = { {0.0f, 0.0f, -10.0f}, {0.0f, -0.70710678f, 0.0f, 0.70710678f} };
-		break;
-	case EMultipleViewportsCameraPreset::Front:
-		Camera.Transform = { {10.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 1.0f, 0.0f} };
-		break;
-	case EMultipleViewportsCameraPreset::Back:
-		Camera.Transform = { {-10.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f, 1.0f} };
-		break;
-	case EMultipleViewportsCameraPreset::Left:
-		Camera.Transform = { {0.0f, -10.0f, 0.0f}, {0.0f, 0.0f, 0.70710678f, 0.70710678f} };
-		break;
-	case EMultipleViewportsCameraPreset::Right:
-		Camera.Transform = { {0.0f, 10.0f, 0.0f}, {0.0f, 0.0f, -0.70710678f, 0.70710678f} };
-		break;
-	case EMultipleViewportsCameraPreset::Perspective:
-		Camera.Transform.Rotation = MakeCameraRotation(
-			CameraYawDegrees(Camera.Transform.Rotation),
-			CameraPitchDegrees(Camera.Transform.Rotation));
-		break;
-	case EMultipleViewportsCameraPreset::OrthographicView:
-		// 투영 방식만 바꾸는 프리셋은 현재 Transform을 의도적으로 유지한다.
-		break;
-	}
+	assert(ViewIndex >= 0 && ViewIndex < FLevelViewportLayout::ViewCount);
+	ViewportClients[ViewIndex].ApplyCameraPreset(Preset, GetViewRect(ViewIndex));
 }
 
 // 범위를 검사한 뒤 지정 View의 프리셋을 반환한다.
 EMultipleViewportsCameraPreset FMultipleViewportsAdapter::GetCameraPreset(const int32 ViewIndex) const
 {
-	assert(ViewIndex >= 0 && ViewIndex < 4);
-	return CameraPresets[ViewIndex];
+	assert(ViewIndex >= 0 && ViewIndex < FLevelViewportLayout::ViewCount);
+	return ViewportClients[ViewIndex].GetCameraPreset();
 }
 
 // 축 정렬 프리셋은 고정 평면을, Current는 Forward 지배축에 수직인 평면을 고른다.
 EGridPlane FMultipleViewportsAdapter::GetGridPlane(const int32 ViewIndex) const
 {
 	assert(ViewIndex >= 0 && ViewIndex < 4);
-	switch (CameraPresets[ViewIndex])
+	switch (ViewportClients[ViewIndex].GetCameraPreset())
 	{
 	case EMultipleViewportsCameraPreset::Top:
 	case EMultipleViewportsCameraPreset::Bottom:
@@ -291,7 +170,7 @@ void FMultipleViewportsAdapter::UpdateLayout(const FVector2 WindowSize, const FV
 	{
 		const FRect& Rect = Layout.GetViewRect(ViewIndex);
 		if (IsViewRectValid(Rect))
-			ConstrainOrthographicWidth(ViewCameras[ViewIndex].Projection, Rect);
+			ViewportClients[ViewIndex].OnViewportResized(Rect);
 	}
 	// Hover 추적은 비활성화한다. 클릭 위치 판정 함수는 입력 전환에서 계속 사용한다.
 	InputState.HoveredViewIndex = InvalidViewIndex;
@@ -339,6 +218,9 @@ void FMultipleViewportsAdapter::UpdateInput(
 	// 외부 카메라가 그리는 View는 에디터 카메라 조작을 받지 않는다.
 	if (bHasCameraOverride[ActiveViewIndex]) return;
 
+	// 입력 계산 중에는 지역 복사본을 사용하고 마지막에 Client에 한 번 반영한다.
+	FEditorViewportClient& Client = ViewportClients[ActiveViewIndex];
+	FViewCamera CurrentCamera = Client.GetCamera();
 	constexpr float PerspectiveWheelSpeed = 0.1f;
 	FCameraMoveInput Input{};
 	const bool bCameraCaptured = FInputSystem::IsMouseDown(EMouseButton::Right) &&
@@ -346,13 +228,13 @@ void FMultipleViewportsAdapter::UpdateInput(
 	const float ForwardAxis = bCameraCaptured ? AxisValue(EKeyCode::W, EKeyCode::S) : 0.0f;
 	const float RightAxis = bCameraCaptured ? AxisValue(EKeyCode::D, EKeyCode::A) : 0.0f;
 	const float VerticalAxis = bCameraCaptured ? AxisValue(EKeyCode::E, EKeyCode::Q) : 0.0f;
-	const bool bOrthographic = ViewCameras[ActiveViewIndex].Projection.Mode == EProjectionMode::Orthographic;
+	const bool bOrthographic = CurrentCamera.Projection.Mode == EProjectionMode::Orthographic;
 	// 직교 카메라 이동은 화면 평면으로 제한한다.
 	// A/D는 수평, W/S는 수직으로 이동한다. 선택한 축 정렬 View가 뒤집히거나
 	// 깊이축을 따라 이동하지 않도록 Q/E와 마우스 회전은 의도적으로 무시한다.
 	const FVector Axis = bOrthographic
-		? NormalizedOrZero({ 0.0f, RightAxis, ForwardAxis })
-		: NormalizedOrZero({ ForwardAxis, RightAxis, VerticalAxis });
+		? FEditorViewportClient::NormalizedOrZero({ 0.0f, RightAxis, ForwardAxis })
+		: FEditorViewportClient::NormalizedOrZero({ ForwardAxis, RightAxis, VerticalAxis });
 	Input.MoveAxis = { Axis.X * MoveSpeed, Axis.Y * MoveSpeed, Axis.Z * MoveSpeed };
 
 	bool bUpdateEulerRotation = false;
@@ -360,9 +242,9 @@ void FMultipleViewportsAdapter::UpdateInput(
 	float UpdatedPitchDegrees = 0.0f;
 	if (!bOrthographic && bCameraCaptured)
 	{
-		const FQuat& CurrentRotation = ViewCameras[ActiveViewIndex].Transform.Rotation;
-		const float CurrentYawDegrees = CameraYawDegrees(CurrentRotation);
-		const float CurrentPitchDegrees = CameraPitchDegrees(CurrentRotation);
+		const FQuat& CurrentRotation = CurrentCamera.Transform.Rotation;
+		const float CurrentYawDegrees = FEditorViewportClient::CameraYawDegrees(CurrentRotation);
+		const float CurrentPitchDegrees = FEditorViewportClient::CameraPitchDegrees(CurrentRotation);
 		const float YawDeltaDegrees = FMath::Clamp(
 			FInputSystem::GetMouseDeltaX() * MouseSensitivity,
 			-MaximumRotationDegreesPerFrame,
@@ -383,34 +265,34 @@ void FMultipleViewportsAdapter::UpdateInput(
 		// 패널 밖이나 다른 View 위의 휠 입력은 마지막 선택 카메라에 전달하지 않는다.
 		const int RoutedWheelDelta = bCameraCaptured || PointerViewIndex == ActiveViewIndex ? WheelDelta : 0;
 		const float WheelSteps = static_cast<float>(RoutedWheelDelta) / MouseWheelDeltaPerStep;
-		ViewCameras[ActiveViewIndex].Projection.OrthoWidth = std::max(
-			MinimumOrthographicWidth,
-			ViewCameras[ActiveViewIndex].Projection.OrthoWidth *
+		CurrentCamera.Projection.OrthoWidth = std::max(
+			FEditorViewportClient::MinimumOrthographicWidth,
+			CurrentCamera.Projection.OrthoWidth *
 			std::pow(OrthographicZoomFactorPerStep, WheelSteps));
 		const FRect& Rect = GetViewRect(ActiveViewIndex);
 		// 큰 휠 입력과 overflow도 동일한 안전 범위의 최댓값으로 제한한다.
-		ConstrainOrthographicWidth(ViewCameras[ActiveViewIndex].Projection, Rect);
+		FEditorViewportClient::ConstrainOrthographicWidth(CurrentCamera.Projection, Rect);
 	}
 	else
 	{
 		Input.ZoomDelta = bCameraCaptured || PointerViewIndex == ActiveViewIndex
 			? static_cast<float>(WheelDelta) * PerspectiveWheelSpeed : 0.0f;
 	}
-	FViewCamera UpdatedCamera = ApplyCameraMovement(ViewCameras[ActiveViewIndex], Input, DeltaTime);
+	FViewCamera UpdatedCamera = ApplyCameraMovement(CurrentCamera, Input, DeltaTime);
 	if (bOrthographic && bCameraCaptured)
 	{
 		const FRect& Rect = GetViewRect(ActiveViewIndex);
-		const float WorldUnitsPerPixel = ViewCameras[ActiveViewIndex].Projection.OrthoWidth / Rect.Width;
-		const FVector Right = NormalizedOrZero(ViewCameras[ActiveViewIndex].Transform.Rotation.GetRightVector());
-		const FVector Up = NormalizedOrZero(ViewCameras[ActiveViewIndex].Transform.Rotation.GetUpVector());
+		const float WorldUnitsPerPixel = CurrentCamera.Projection.OrthoWidth / Rect.Width;
+		const FVector Right = FEditorViewportClient::NormalizedOrZero(CurrentCamera.Transform.Rotation.GetRightVector());
+		const FVector Up = FEditorViewportClient::NormalizedOrZero(CurrentCamera.Transform.Rotation.GetUpVector());
 		// 화면을 잡아 끄는 방향으로 보이도록 카메라는 수평 드래그의 반대, 수직 드래그의 Up 방향으로 이동한다.
 		const FVector PanOffset = Right * (-static_cast<float>(FInputSystem::GetMouseDeltaX()) * WorldUnitsPerPixel)
 			+ Up * (static_cast<float>(FInputSystem::GetMouseDeltaY()) * WorldUnitsPerPixel);
 		UpdatedCamera.Transform.Location += PanOffset;
 	}
 	if (bUpdateEulerRotation)
-		UpdatedCamera.Transform.Rotation = MakeCameraRotation(UpdatedYawDegrees, UpdatedPitchDegrees);
-	ViewCameras[ActiveViewIndex] = UpdatedCamera;
+		UpdatedCamera.Transform.Rotation = FEditorViewportClient::MakeCameraRotation(UpdatedYawDegrees, UpdatedPitchDegrees);
+	Client.ApplyNavigation(UpdatedCamera);
 }
 
 // 현재 World의 가시 컴포넌트에서 경계만 캡처한다. Mesh·삼각형은 복사하지 않는다.
@@ -488,7 +370,7 @@ FViewCamera FMultipleViewportsAdapter::GetRenderCamera(const int32 ViewIndex) co
 	// 현재 카메라 평면의 앞뒤를 모두 포함하고 기존 FarClip보다 깊이 범위를 줄이지 않는다.
 	const float Radius = std::max(Camera.Projection.FarClip,
 		2.0f * Distance + 4.0f * std::sqrt(HalfWidth * HalfWidth + HalfHeight * HalfHeight));
-	const FVector Forward = NormalizedOrZero(Camera.Transform.Rotation.GetForwardVector());
+	const FVector Forward = FEditorViewportClient::NormalizedOrZero(Camera.Transform.Rotation.GetForwardVector());
 	const float Retreat = Radius + Camera.Projection.NearClip;
 	Camera.Transform.Location = Position - Forward * Retreat;
 	Camera.Projection.FarClip = Camera.Projection.NearClip + 2.0f * Radius;
@@ -528,7 +410,7 @@ FVector FMultipleViewportsAdapter::GetEngineCameraLocation(const int32 ViewIndex
 FVector FMultipleViewportsAdapter::GetEngineCameraForward(const int32 ViewIndex) const
 {
 	assert(ViewIndex >= 0 && ViewIndex < MaxViewCount);
-	return NormalizedOrZero(GetEffectiveCamera(ViewIndex).Transform.Rotation.GetForwardVector());
+	return FEditorViewportClient::NormalizedOrZero(GetEffectiveCamera(ViewIndex).Transform.Rotation.GetForwardVector());
 }
 
 // 위치·크기·View 카메라로 엔진 규약의 Billboard 행렬을 계산한다.
@@ -540,9 +422,9 @@ FMatrix FMultipleViewportsAdapter::BuildEngineBillboardMatrix(const int32 ViewIn
 	{
 		// 직교 투영의 모든 시선은 평행하므로 카메라 위치가 아니라 고정된 화면 기저를 사용한다.
 		// 위치 기반 LookAt을 사용하면 평면 이동 시 오브젝트-카메라 벡터가 달라져 Billboard가 회전한다.
-		const FVector Facing = NormalizedOrZero(ViewCamera.Transform.Rotation.GetForwardVector()) * -1.0f;
-		const FVector Right = NormalizedOrZero(ViewCamera.Transform.Rotation.GetRightVector());
-		const FVector Up = NormalizedOrZero(ViewCamera.Transform.Rotation.GetUpVector());
+		const FVector Facing = FEditorViewportClient::NormalizedOrZero(ViewCamera.Transform.Rotation.GetForwardVector()) * -1.0f;
+		const FVector Right = FEditorViewportClient::NormalizedOrZero(ViewCamera.Transform.Rotation.GetRightVector());
+		const FVector Up = FEditorViewportClient::NormalizedOrZero(ViewCamera.Transform.Rotation.GetUpVector());
 
 		FMatrix EngineMatrix;
 		EngineMatrix.SetIdentity();

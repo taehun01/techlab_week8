@@ -2,6 +2,7 @@
 
 #include "Editor/LevelEditor/MultipleViewports/Adapter/MultipleViewportsAdapterTypes.h"
 #include "Editor/LevelViewportLayout.h"
+#include "Editor/HitoriEd/EditorViewportClient.h"
 
 #include "Collision/Ray.h"
 #include "Containers/Queue.h"
@@ -122,7 +123,7 @@ private:
     {
         if (ViewIndex == ExternalViewIndex || bHasCameraOverride[ViewIndex])
             return CameraOverrides[ViewIndex];
-        return ViewCameras[ViewIndex];
+        return ViewportClients[ViewIndex].GetCamera();
     }
     // 직교 View의 논리 위치는 유지하고 렌더·컬링·피킹용 깊이 범위만 확장한다.
     FViewCamera GetRenderCamera(int32 ViewIndex) const;
@@ -137,10 +138,9 @@ private:
     // 호출할 때마다 현재 카메라로 VP와 절두체를 계산한다.
     const PreparedView& PrepareView(int32 ViewIndex) const;
     mutable PreparedView PreparedViews[MaxViewCount]{};
-    // 패널 배치와 카메라 상태는 각 소유자가 별도로 보관한다.
+    // 패널 배치는 Layout이, 각 카메라와 프리셋은 해당 Client가 소유한다.
     FLevelViewportLayout Layout;
-    FViewCamera ViewCameras[FLevelViewportLayout::ViewCount]{};
-    EMultipleViewportsCameraPreset CameraPresets[4]{};
+    FEditorViewportClient ViewportClients[FLevelViewportLayout::ViewCount];
     FViewInputState InputState{};
     // 별도 PIE 창의 렌더 영역은 패널 레이아웃과 무관하다.
     FRect ExternalViewRect{};
