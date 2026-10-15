@@ -24,10 +24,6 @@
 namespace
 {
 	constexpr float Pi = 3.14159265358979323846f;
-	constexpr float MaximumCameraPitchDegrees = 89.0f;
-	constexpr float MaximumRotationDegreesPerFrame = 45.0f;
-	constexpr float MouseWheelDeltaPerStep = 120.0f;
-	constexpr float OrthographicZoomFactorPerStep = 0.9f;
 
 	// 양·음 방향 키 상태 차이로 -1~1 축 입력을 만든다.
 	float AxisValue(const EKeyCode Positive, const EKeyCode Negative)
@@ -193,7 +189,7 @@ void FMultipleViewportsAdapter::ApplySplitterDrag(const EDragAxis Axis, const fl
 	Layout.ApplySplitterDrag(Axis, DeltaPixels, WindowSize);
 }
 
-// 우클릭 Capture 상태를 갱신하고 Perspective는 회전, Ortho는 화면 평면 드래그·폭 줌을 적용한다.
+// Capture와 입력 대상을 결정하고 키·마우스·휠 입력을 해당 Client에 전달한다.
 void FMultipleViewportsAdapter::UpdateInput(
 	const float DeltaTime,
 	const FVector2 LocalMousePosition,
@@ -218,81 +214,29 @@ void FMultipleViewportsAdapter::UpdateInput(
 	// 외부 카메라가 그리는 View는 에디터 카메라 조작을 받지 않는다.
 	if (bHasCameraOverride[ActiveViewIndex]) return;
 
-	// 입력 계산 중에는 지역 복사본을 사용하고 마지막에 Client에 한 번 반영한다.
-	FEditorViewportClient& Client = ViewportClients[ActiveViewIndex];
-	FViewCamera CurrentCamera = Client.GetCamera();
-	constexpr float PerspectiveWheelSpeed = 0.1f;
-	FCameraMoveInput Input{};
-	const bool bCameraCaptured = FInputSystem::IsMouseDown(EMouseButton::Right) &&
-		InputState.CapturedViewIndex == ActiveViewIndex;
-	const float ForwardAxis = bCameraCaptured ? AxisValue(EKeyCode::W, EKeyCode::S) : 0.0f;
-	const float RightAxis = bCameraCaptured ? AxisValue(EKeyCode::D, EKeyCode::A) : 0.0f;
-	const float VerticalAxis = bCameraCaptured ? AxisValue(EKeyCode::E, EKeyCode::Q) : 0.0f;
-	const bool bOrthographic = CurrentCamera.Projection.Mode == EProjectionMode::Orthographic;
-	// 직교 카메라 이동은 화면 평면으로 제한한다.
-	// A/D는 수평, W/S는 수직으로 이동한다. 선택한 축 정렬 View가 뒤집히거나
-	// 깊이축을 따라 이동하지 않도록 Q/E와 마우스 회전은 의도적으로 무시한다.
-	const FVector Axis = bOrthographic
-		? FEditorViewportClient::NormalizedOrZero({ 0.0f, RightAxis, ForwardAxis })
-		: FEditorViewportClient::NormalizedOrZero({ ForwardAxis, RightAxis, VerticalAxis });
-	Input.MoveAxis = { Axis.X * MoveSpeed, Axis.Y * MoveSpeed, Axis.Z * MoveSpeed };
+	// 키와 마우스 드래그는 우클릭으로 캡처한 View에만 전달한다.
+	const bool bCameraCaptured = FInputSystem::IsMouseDown(EMouseButton::Right)
+		&& InputState.CapturedViewIndex == ActiveViewIndex;
+	FCameraMoveInput RawInput{};
+	if (bCameraCaptured)
+	{
+		RawInput.MoveAxis = {
+			AxisValue(EKeyCode::W, EKeyCode::S),
+			AxisValue(EKeyCode::D, EKeyCode::A),
+			AxisValue(EKeyCode::E, EKeyCode::Q)
+		};
+		RawInput.MouseDelta = {
+			static_cast<float>(FInputSystem::GetMouseDeltaX()),
+			static_cast<float>(FInputSystem::GetMouseDeltaY())
+		};
+	}
 
-	bool bUpdateEulerRotation = false;
-	float UpdatedYawDegrees = 0.0f;
-	float UpdatedPitchDegrees = 0.0f;
-	if (!bOrthographic && bCameraCaptured)
-	{
-		const FQuat& CurrentRotation = CurrentCamera.Transform.Rotation;
-		const float CurrentYawDegrees = FEditorViewportClient::CameraYawDegrees(CurrentRotation);
-		const float CurrentPitchDegrees = FEditorViewportClient::CameraPitchDegrees(CurrentRotation);
-		const float YawDeltaDegrees = FMath::Clamp(
-			FInputSystem::GetMouseDeltaX() * MouseSensitivity,
-			-MaximumRotationDegreesPerFrame,
-			MaximumRotationDegreesPerFrame);
-		const float PitchDeltaDegrees = FMath::Clamp(
-			-FInputSystem::GetMouseDeltaY() * MouseSensitivity,
-			-MaximumRotationDegreesPerFrame,
-			MaximumRotationDegreesPerFrame);
-		UpdatedYawDegrees = CurrentYawDegrees + YawDeltaDegrees;
-		UpdatedPitchDegrees = FMath::Clamp(
-			CurrentPitchDegrees + PitchDeltaDegrees,
-			-MaximumCameraPitchDegrees,
-			MaximumCameraPitchDegrees);
-		bUpdateEulerRotation = true;
-	}
-	if (bOrthographic)
-	{
-		// 패널 밖이나 다른 View 위의 휠 입력은 마지막 선택 카메라에 전달하지 않는다.
-		const int RoutedWheelDelta = bCameraCaptured || PointerViewIndex == ActiveViewIndex ? WheelDelta : 0;
-		const float WheelSteps = static_cast<float>(RoutedWheelDelta) / MouseWheelDeltaPerStep;
-		CurrentCamera.Projection.OrthoWidth = std::max(
-			FEditorViewportClient::MinimumOrthographicWidth,
-			CurrentCamera.Projection.OrthoWidth *
-			std::pow(OrthographicZoomFactorPerStep, WheelSteps));
-		const FRect& Rect = GetViewRect(ActiveViewIndex);
-		// 큰 휠 입력과 overflow도 동일한 안전 범위의 최댓값으로 제한한다.
-		FEditorViewportClient::ConstrainOrthographicWidth(CurrentCamera.Projection, Rect);
-	}
-	else
-	{
-		Input.ZoomDelta = bCameraCaptured || PointerViewIndex == ActiveViewIndex
-			? static_cast<float>(WheelDelta) * PerspectiveWheelSpeed : 0.0f;
-	}
-	FViewCamera UpdatedCamera = ApplyCameraMovement(CurrentCamera, Input, DeltaTime);
-	if (bOrthographic && bCameraCaptured)
-	{
-		const FRect& Rect = GetViewRect(ActiveViewIndex);
-		const float WorldUnitsPerPixel = CurrentCamera.Projection.OrthoWidth / Rect.Width;
-		const FVector Right = FEditorViewportClient::NormalizedOrZero(CurrentCamera.Transform.Rotation.GetRightVector());
-		const FVector Up = FEditorViewportClient::NormalizedOrZero(CurrentCamera.Transform.Rotation.GetUpVector());
-		// 화면을 잡아 끄는 방향으로 보이도록 카메라는 수평 드래그의 반대, 수직 드래그의 Up 방향으로 이동한다.
-		const FVector PanOffset = Right * (-static_cast<float>(FInputSystem::GetMouseDeltaX()) * WorldUnitsPerPixel)
-			+ Up * (static_cast<float>(FInputSystem::GetMouseDeltaY()) * WorldUnitsPerPixel);
-		UpdatedCamera.Transform.Location += PanOffset;
-	}
-	if (bUpdateEulerRotation)
-		UpdatedCamera.Transform.Rotation = FEditorViewportClient::MakeCameraRotation(UpdatedYawDegrees, UpdatedPitchDegrees);
-	Client.ApplyNavigation(UpdatedCamera);
+	// 이미 한 번 읽은 휠 값을 대상 View에만 전달한다.
+	RawInput.ZoomDelta = bCameraCaptured || PointerViewIndex == ActiveViewIndex
+		? static_cast<float>(WheelDelta) : 0.0f;
+	ViewportClients[ActiveViewIndex].UpdateCamera(
+		DeltaTime, RawInput, GetViewRect(ActiveViewIndex),
+		MoveSpeed, MouseSensitivity, bCameraCaptured);
 }
 
 // 현재 World의 가시 컴포넌트에서 경계만 캡처한다. Mesh·삼각형은 복사하지 않는다.

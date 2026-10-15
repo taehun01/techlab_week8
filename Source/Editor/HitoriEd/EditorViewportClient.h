@@ -2,7 +2,7 @@
 
 #include "Editor/LevelEditor/MultipleViewports/Adapter/MultipleViewportsAdapterTypes.h"
 
-// 한 에디터 View의 카메라 상태와 프리셋 적용 규칙을 관리한다.
+// 한 에디터 View의 카메라 상태와 프리셋·이동 계산을 관리한다.
 class FEditorViewportClient
 {
 public:
@@ -23,28 +23,35 @@ public:
         ConstrainOrthographicWidth(Camera.Projection, Rect);
     }
 
-    // 이동 입력의 계산 결과를 저장하며 기존 프리셋을 유지한다.
-    void ApplyNavigation(const FViewCamera& UpdatedCamera)
-    {
-        Camera = UpdatedCamera;
-    }
+    // RawInput은 키 축·마우스 픽셀·원시 휠 값이며 기존 프리셋을 유지해 카메라를 갱신한다.
+    void UpdateCamera(float DeltaTime, const FCameraMoveInput& RawInput, const FRect& Rect,
+        float MoveSpeed, float MouseSensitivity, bool bCameraCaptured);
 
-    // 입력과 Override에서도 사용하는 기존 카메라 계산 구현을 한곳에 둔다.
+    // Override와 렌더 경로에서도 사용하는 기존 카메라 계산 구현을 한곳에 둔다.
     static FVector NormalizedOrZero(FVector Value);
-    static float CameraYawDegrees(const FQuat& Rotation);
-    static float CameraPitchDegrees(const FQuat& Rotation);
     static FQuat MakeCameraRotation(float YawDegrees, float PitchDegrees);
     static void ConstrainOrthographicWidth(FCameraProjection& Projection, const FRect& Rect);
 
-    // 입력의 줌 계산과 투영 보정에서 같은 최솟값을 사용한다.
-    static constexpr float MinimumOrthographicWidth = 0.01f;
-
 private:
-    // 기존 카메라 회전·직교 투영 계산의 상수와 보조 함수다.
+    // 투영 방식에 따라 원근 이동·회전 또는 직교 이동·줌을 계산한다.
+    void UpdatePerspectiveCamera(float DeltaTime, const FCameraMoveInput& MoveInput,
+        FVector2 MouseDelta, float MouseSensitivity, bool bCameraCaptured);
+    void UpdateOrthographicCamera(float DeltaTime, const FCameraMoveInput& MoveInput,
+        FVector2 MouseDelta, float WheelDelta, const FRect& Rect, bool bCameraCaptured);
+
+    // 기존 카메라 이동·회전·직교 투영 계산의 상수와 보조 함수다.
     static constexpr float Pi = 3.14159265358979323846f;
+    static constexpr float MaximumCameraPitchDegrees = 89.0f;
+    static constexpr float MaximumRotationDegreesPerFrame = 45.0f;
+    static constexpr float MouseWheelDeltaPerStep = 120.0f;
+    static constexpr float OrthographicZoomFactorPerStep = 0.9f;
+    static constexpr float PerspectiveWheelSpeed = 0.1f;
+    static constexpr float MinimumOrthographicWidth = 0.01f;
     // 양방향 깊이 보정 뒤에도 절두체 평면 법선이 Core epsilon보다 충분히 크게 유지되게 한다.
     static constexpr float MaximumOrthographicSpan = 80000.0f;
     static float CameraForwardZ(const FQuat& Rotation);
+    static float CameraYawDegrees(const FQuat& Rotation);
+    static float CameraPitchDegrees(const FQuat& Rotation);
 
     FViewCamera Camera{};
     EMultipleViewportsCameraPreset CameraPreset = EMultipleViewportsCameraPreset::Perspective;

@@ -77,6 +77,81 @@ void FEditorViewportClient::ApplyCameraPreset(EMultipleViewportsCameraPreset InP
     }
 }
 
+// 투영 방식에 맞는 이동축을 만들고 카메라별 계산으로 분기한다.
+void FEditorViewportClient::UpdateCamera(
+    float DeltaTime, const FCameraMoveInput& RawInput, const FRect& Rect,
+    float MoveSpeed, float MouseSensitivity, bool bCameraCaptured)
+{
+    const bool bOrthographic = Camera.Projection.Mode == EProjectionMode::Orthographic;
+    // 직교 이동은 W/S와 A/D를 화면 평면에 매핑하고 Q/E는 정규화 전에 제외한다.
+    const FVector Axis = bOrthographic
+        ? FVector(0.0f, RawInput.MoveAxis.Y, RawInput.MoveAxis.X)
+        : RawInput.MoveAxis;
+
+    // Core에는 이동 속도만 전달한다. MouseDelta는 0으로 두어 회전 중복을 막는다.
+    FCameraMoveInput MoveInput{};
+    MoveInput.MoveAxis = NormalizedOrZero(Axis) * MoveSpeed;
+
+    if (bOrthographic)
+    {
+        UpdateOrthographicCamera(
+            DeltaTime, MoveInput, RawInput.MouseDelta, RawInput.ZoomDelta, Rect, bCameraCaptured);
+    }
+    else
+    {
+        MoveInput.ZoomDelta = RawInput.ZoomDelta * PerspectiveWheelSpeed;
+        UpdatePerspectiveCamera(
+            DeltaTime, MoveInput, RawInput.MouseDelta, MouseSensitivity, bCameraCaptured);
+    }
+}
+
+// 이전 회전으로 이동한 뒤 마우스 회전을 적용한다.
+void FEditorViewportClient::UpdatePerspectiveCamera(
+    float DeltaTime, const FCameraMoveInput& MoveInput, FVector2 MouseDelta,
+    float MouseSensitivity, bool bCameraCaptured)
+{
+    Camera = ApplyCameraMovement(Camera, MoveInput, DeltaTime);
+    if (!bCameraCaptured) return;
+
+    // 마우스 회전은 기존처럼 픽셀 기준이며 DeltaTime을 곱하지 않는다.
+    const float YawDelta = FMath::Clamp(
+        MouseDelta.X * MouseSensitivity,
+        -MaximumRotationDegreesPerFrame, MaximumRotationDegreesPerFrame);
+    const float PitchDelta = FMath::Clamp(
+        -MouseDelta.Y * MouseSensitivity,
+        -MaximumRotationDegreesPerFrame, MaximumRotationDegreesPerFrame);
+
+    const float Yaw = CameraYawDegrees(Camera.Transform.Rotation) + YawDelta;
+    const float Pitch = FMath::Clamp(
+        CameraPitchDegrees(Camera.Transform.Rotation) + PitchDelta,
+        -MaximumCameraPitchDegrees, MaximumCameraPitchDegrees);
+
+    Camera.Transform.Rotation = MakeCameraRotation(Yaw, Pitch);
+}
+
+// 직교 카메라는 회전 없이 화면 평면 이동과 폭 줌을 적용한다.
+void FEditorViewportClient::UpdateOrthographicCamera(
+    float DeltaTime, const FCameraMoveInput& MoveInput, FVector2 MouseDelta,
+    float WheelDelta, const FRect& Rect, bool bCameraCaptured)
+{
+    // 제한된 줌 폭을 이번 프레임의 Pan 거리 계산에도 사용한다.
+    const float WheelSteps = WheelDelta / MouseWheelDeltaPerStep;
+    Camera.Projection.OrthoWidth = std::max(
+        MinimumOrthographicWidth,
+        Camera.Projection.OrthoWidth * std::pow(OrthographicZoomFactorPerStep, WheelSteps));
+    ConstrainOrthographicWidth(Camera.Projection, Rect);
+
+    Camera = ApplyCameraMovement(Camera, MoveInput, DeltaTime);
+    if (!bCameraCaptured) return;
+
+    // 픽셀 드래그는 시간과 무관하게 현재 화면 배율로 월드 이동량을 계산한다.
+    const float WorldUnitsPerPixel = Camera.Projection.OrthoWidth / Rect.Width;
+    const FVector Right = NormalizedOrZero(Camera.Transform.Rotation.GetRightVector());
+    const FVector Up = NormalizedOrZero(Camera.Transform.Rotation.GetUpVector());
+    Camera.Transform.Location += Right * (-MouseDelta.X * WorldUnitsPerPixel)
+        + Up * (MouseDelta.Y * WorldUnitsPerPixel);
+}
+
 // 길이가 0이면 영벡터를, 아니면 기존 계산 순서대로 정규화한 벡터를 반환한다.
 FVector FEditorViewportClient::NormalizedOrZero(FVector Value)
 {
