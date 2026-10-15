@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Editor/LevelEditor/MultipleViewports/Adapter/MultipleViewportsAdapterTypes.h"
+#include "Editor/LevelViewportLayout.h"
 
 #include "Collision/Ray.h"
 #include "Containers/Queue.h"
@@ -31,13 +32,13 @@ public:
     void InitializeFromWorld(UWorld& World);
 
     // 현재 Single·Quad 레이아웃 모드를 설정한다.
-    void SetLayoutMode(ELayoutMode Mode) { Views.Mode = Mode; }
+    void SetLayoutMode(ELayoutMode Mode) { Layout.SetLayoutMode(Mode); }
     // 현재 레이아웃 모드를 반환한다.
-    ELayoutMode GetLayoutMode() const { return Views.Mode; }
+    ELayoutMode GetLayoutMode() const { return Layout.GetLayoutMode(); }
     // Single 레이아웃에서 전체 화면으로 표시할 View 인덱스를 설정한다.
     void SetSingleViewIndex(int32 ViewIndex);
     // Single 레이아웃에서 선택된 View 인덱스를 반환한다.
-    int32 GetSingleViewIndex() const { return SingleViewIndex; }
+    int32 GetSingleViewIndex() const { return Layout.GetSingleViewIndex(); }
     // 외부 카메라 값을 지정 View에 복사하고 투영 모드에 맞는 프리셋을 설정한다.
     void SetViewCamera(int32 ViewIndex, const FViewCamera& Camera);
     // 속성 창의 변경을 반영하되 위치·투영 수치만 바뀌면 기존 축 정렬 프리셋을 유지한다.
@@ -56,7 +57,7 @@ public:
     // 프리셋 또는 카메라 Forward 지배축으로 표시할 Grid 평면을 고른다.
     EGridPlane GetGridPlane(int32 ViewIndex) const;
 
-    // 레이아웃 Rect를 계산하고 마우스 위치로 Hover·활성 View를 갱신한다.
+    // 레이아웃을 갱신하고 카메라 투영과 숨겨진 View의 입력 상태를 보정한다.
     void UpdateLayout(FVector2 WindowSize, FVector2 LocalMousePosition);
     // Splitter Drag 픽셀을 Core 비율 계산에 전달해 레이아웃 상태를 갱신한다.
     void ApplySplitterDrag(EDragAxis Axis, float DeltaPixels, FVector2 WindowSize);
@@ -70,7 +71,7 @@ public:
     // 현재 입력을 소비할 활성 View 인덱스를 반환한다.
     int32 GetActiveViewIndex() const { return ActiveViewIndex; }
     // 입력 영역 밖에서도 마지막 편집 대상을 유지하며 Single에서는 확대 View를 반환한다.
-    int32 GetEditorViewIndex() const { return Views.Mode == ELayoutMode::Single ? SingleViewIndex : EditorViewIndex; }
+    int32 GetEditorViewIndex() const { return Layout.GetLayoutMode() == ELayoutMode::Single ? Layout.GetSingleViewIndex() : EditorViewIndex; }
     // 속성 창에서 선택한 View를 공통 편집 대상으로 지정한다.
     void SetEditorViewIndex(int32 Index) { if (Index >= 0 && Index < 4) EditorViewIndex = Index; }
     // View별 장면 래스터라이저 모드를 저장하고 조회한다.
@@ -110,7 +111,7 @@ public:
     // 외부에서 읽은 Split 비율을 Core 허용 범위로 제한해 저장한다.
     void SetSplitRatio(const FSplitRatio& Value);
     // 현재 가로·세로 Split 비율을 반환한다.
-    const FSplitRatio& GetSplitRatio() const { return SplitRatio; }
+    const FSplitRatio& GetSplitRatio() const { return Layout.GetSplitRatio(); }
 
     FMatrix GetEngineView(int32 ViewIndex) const;
     FMatrix GetEngineProjection(int32 ViewIndex) const;
@@ -121,7 +122,7 @@ private:
     {
         if (ViewIndex == ExternalViewIndex || bHasCameraOverride[ViewIndex])
             return CameraOverrides[ViewIndex];
-        return Views.Cameras[ViewIndex];
+        return ViewCameras[ViewIndex];
     }
     // 직교 View의 논리 위치는 유지하고 렌더·컬링·피킹용 깊이 범위만 확장한다.
     FViewCamera GetRenderCamera(int32 ViewIndex) const;
@@ -136,15 +137,13 @@ private:
     // 호출할 때마다 현재 카메라로 VP와 절두체를 계산한다.
     const PreparedView& PrepareView(int32 ViewIndex) const;
     mutable PreparedView PreparedViews[MaxViewCount]{};
-    static constexpr float MinimumSplitRatio = 0.1f;
-
-    FViewSet Views{};
+    // 패널 배치와 카메라 상태는 각 소유자가 별도로 보관한다.
+    FLevelViewportLayout Layout;
+    FViewCamera ViewCameras[FLevelViewportLayout::ViewCount]{};
     EMultipleViewportsCameraPreset CameraPresets[4]{};
-    FSplitRatio SplitRatio{};
     FViewInputState InputState{};
-    // Core 함수는 앞의 네 Rect만 읽고 쓴다. 마지막 칸은 외부 View다.
-    FRect ViewRects[MaxViewCount]{};
-    int32 SingleViewIndex = 0;
+    // 별도 PIE 창의 렌더 영역은 패널 레이아웃과 무관하다.
+    FRect ExternalViewRect{};
     int32 ActiveViewIndex = InvalidViewIndex;
     int32 EditorViewIndex = 0;
     bool ViewWireframe[MaxViewCount]{};
