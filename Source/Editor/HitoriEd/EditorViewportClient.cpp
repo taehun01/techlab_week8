@@ -152,6 +152,67 @@ void FEditorViewportClient::UpdateOrthographicCamera(
         + Up * (MouseDelta.Y * WorldUnitsPerPixel);
 }
 
+// 직교 화면 구도를 유지하면서 카메라 평면 앞뒤를 렌더링할 깊이를 확보한다.
+FViewCamera FEditorViewportClient::BuildRenderCamera(
+    const FViewCamera& InCamera, const FRect& Rect)
+{
+    FViewCamera RenderCamera = InCamera;
+    if (RenderCamera.Projection.Mode != EProjectionMode::Orthographic)
+        return RenderCamera;
+
+    const float AspectRatio = Rect.Width > 0.0f && Rect.Height > 0.0f
+        ? Rect.Width / Rect.Height : 1.0f;
+    const float HalfWidth = RenderCamera.Projection.OrthoWidth * 0.5f;
+    const float HalfHeight = HalfWidth / AspectRatio;
+    const FVector Position = RenderCamera.Transform.Location;
+    const float Distance = std::sqrt(
+        Position.X * Position.X + Position.Y * Position.Y + Position.Z * Position.Z);
+
+    // 기존 FarClip보다 깊이 범위를 줄이지 않는 현재 보정 공식을 유지한다.
+    const float Radius = std::max(RenderCamera.Projection.FarClip,
+        2.0f * Distance + 4.0f * std::sqrt(HalfWidth * HalfWidth + HalfHeight * HalfHeight));
+    const FVector Forward = NormalizedOrZero(
+        RenderCamera.Transform.Rotation.GetForwardVector());
+    const float Retreat = Radius + RenderCamera.Projection.NearClip;
+
+    RenderCamera.Transform.Location = Position - Forward * Retreat;
+    RenderCamera.Projection.FarClip = RenderCamera.Projection.NearClip + 2.0f * Radius;
+    return RenderCamera;
+}
+
+// 렌더 보정 카메라를 기존 Core 행렬 계산에 전달한다.
+void FEditorViewportClient::CalcViewMatrices(
+    const FViewCamera& InCamera, const FRect& Rect,
+    FMatrix& OutView, FMatrix& OutProjection)
+{
+    const FViewCamera RenderCamera = BuildRenderCamera(InCamera, Rect);
+    OutView = BuildViewMatrix(RenderCamera.Transform);
+    OutProjection = BuildProjectionMatrix(
+        RenderCamera.Projection, Rect.Width / Rect.Height);
+}
+
+// row-vector 순서로 VP를 만들고 요청된 경우에만 절두체를 추출한다.
+FMatrix FEditorViewportClient::CalcViewProjection(
+    const FViewCamera& InCamera, const FRect& Rect, FFrustumPlanes* OutFrustum)
+{
+    FMatrix View;
+    FMatrix Projection;
+    CalcViewMatrices(InCamera, Rect, View, Projection);
+    const FMatrix ViewProjection = View * Projection;
+
+    if (OutFrustum)
+        *OutFrustum = ExtractFrustumPlanes(ViewProjection);
+    return ViewProjection;
+}
+
+// 렌더링과 같은 깊이 보정을 적용해 직교 화면 뒤쪽 대상도 피킹한다.
+FRay FEditorViewportClient::DeprojectView(
+    const FViewCamera& InCamera, const FRect& Rect, FVector2 ViewLocalPosition)
+{
+    return Deproject(BuildRenderCamera(InCamera, Rect),
+        ViewLocalPosition, { Rect.Width, Rect.Height });
+}
+
 // 길이가 0이면 영벡터를, 아니면 기존 계산 순서대로 정규화한 벡터를 반환한다.
 FVector FEditorViewportClient::NormalizedOrZero(FVector Value)
 {

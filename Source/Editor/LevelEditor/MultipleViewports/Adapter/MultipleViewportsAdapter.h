@@ -125,19 +125,6 @@ private:
             return CameraOverrides[ViewIndex];
         return ViewportClients[ViewIndex].GetCamera();
     }
-    // 직교 View의 논리 위치는 유지하고 렌더·컬링·피킹용 깊이 범위만 확장한다.
-    FViewCamera GetRenderCamera(int32 ViewIndex) const;
-    // 현재 호출에서 계산한 행렬·절두체를 보관한다.
-    struct PreparedView
-    {
-        FFrustumPlanes Frustum{};
-        FMatrix EngineView{};
-        FMatrix EngineProjection{};
-        FMatrix EngineViewProjection{};
-    };
-    // 호출할 때마다 현재 카메라로 VP와 절두체를 계산한다.
-    const PreparedView& PrepareView(int32 ViewIndex) const;
-    mutable PreparedView PreparedViews[MaxViewCount]{};
     // 패널 배치는 Layout이, 각 카메라와 프리셋은 해당 Client가 소유한다.
     FLevelViewportLayout Layout;
     FEditorViewportClient ViewportClients[FLevelViewportLayout::ViewCount];

@@ -294,53 +294,12 @@ const FRect& FMultipleViewportsAdapter::GetViewRect(const int32 ViewIndex) const
 	return ViewIndex == ExternalViewIndex ? ExternalViewRect : Layout.GetViewRect(ViewIndex);
 }
 
-// 직교 화면의 XY는 유지하면서 렌더·컬링·피킹용 카메라만 후퇴시켜 양방향 깊이를 확보한다.
-FViewCamera FMultipleViewportsAdapter::GetRenderCamera(const int32 ViewIndex) const
-{
-	assert(ViewIndex >= 0 && ViewIndex < MaxViewCount);
-	FViewCamera Camera = GetEffectiveCamera(ViewIndex);
-	if (Camera.Projection.Mode != EProjectionMode::Orthographic)
-		return Camera;
-
-	const FRect& Rect = GetViewRect(ViewIndex);
-	const float AspectRatio = Rect.Width > 0.0f && Rect.Height > 0.0f
-		? Rect.Width / Rect.Height : 1.0f;
-	const float HalfWidth = Camera.Projection.OrthoWidth * 0.5f;
-	const float HalfHeight = HalfWidth / AspectRatio;
-	const FVector Position = Camera.Transform.Location;
-	const float Distance = std::sqrt(
-		Position.X * Position.X + Position.Y * Position.Y + Position.Z * Position.Z);
-
-	// 현재 카메라 평면의 앞뒤를 모두 포함하고 기존 FarClip보다 깊이 범위를 줄이지 않는다.
-	const float Radius = std::max(Camera.Projection.FarClip,
-		2.0f * Distance + 4.0f * std::sqrt(HalfWidth * HalfWidth + HalfHeight * HalfHeight));
-	const FVector Forward = FEditorViewportClient::NormalizedOrZero(Camera.Transform.Rotation.GetForwardVector());
-	const float Retreat = Radius + Camera.Projection.NearClip;
-	Camera.Transform.Location = Position - Forward * Retreat;
-	Camera.Projection.FarClip = Camera.Projection.NearClip + 2.0f * Radius;
-	return Camera;
-}
-
-// 현재 카메라로 VP와 절두체를 매번 계산한다.
-const FMultipleViewportsAdapter::PreparedView& FMultipleViewportsAdapter::PrepareView(const int32 ViewIndex) const
-{
-	assert(IsViewActive(ViewIndex));
-	const FViewCamera Camera = GetRenderCamera(ViewIndex);
-	const auto& Rect = GetViewRect(ViewIndex);
-	PreparedView& Prepared = PreparedViews[ViewIndex];
-	Prepared.EngineView = BuildViewMatrix(Camera.Transform);
-	Prepared.EngineProjection = BuildProjectionMatrix(Camera.Projection, Rect.Width / Rect.Height);
-	Prepared.EngineViewProjection = Prepared.EngineView * Prepared.EngineProjection;
-
-	Prepared.Frustum = ExtractFrustumPlanes(Prepared.EngineViewProjection);
-	return Prepared;
-}
-
-// Native와 엔진이 함께 쓰는 현재 row-vector VP를 반환한다.
+// 활성 View의 카메라를 선택하고 VP 계산을 Client에 맡긴다.
 FMatrix FMultipleViewportsAdapter::GetEngineViewProjection(const int32 ViewIndex) const
 {
 	assert(IsViewActive(ViewIndex));
-	return PrepareView(ViewIndex).EngineViewProjection;
+	return FEditorViewportClient::CalcViewProjection(
+		GetEffectiveCamera(ViewIndex), GetViewRect(ViewIndex));
 }
 
 // Native 카메라 위치를 엔진 FVector 그대로 반환한다.
@@ -399,7 +358,7 @@ bool FMultipleViewportsAdapter::IsOrthographic(const int32 ViewIndex) const
 	return GetEffectiveCamera(ViewIndex).Projection.Mode == EProjectionMode::Orthographic;
 }
 
-// 활성 View Rect 기준 로컬 좌표를 Core로 역투영하고 엔진 Ray로 변환한다.
+// 피킹할 View를 판정하고 View 내부 좌표의 역투영을 Client에 맡긴다.
 bool FMultipleViewportsAdapter::TryGetActiveViewRay(const FVector2 LocalMousePosition, FRay& OutRay) const
 {
 	if (ActiveViewIndex == InvalidViewIndex || !IsViewActive(ActiveViewIndex))
@@ -409,8 +368,8 @@ bool FMultipleViewportsAdapter::TryGetActiveViewRay(const FVector2 LocalMousePos
 		return false;
 	const FRect& Rect = GetViewRect(ActiveViewIndex);
 	const FVector2 ViewLocal{ LocalMousePosition.X - Rect.X, LocalMousePosition.Y - Rect.Y };
-	const FRay Ray = Deproject(GetRenderCamera(ActiveViewIndex), ViewLocal, { Rect.Width, Rect.Height });
-	OutRay = Ray;
+	OutRay = FEditorViewportClient::DeprojectView(
+		GetEffectiveCamera(ActiveViewIndex), Rect, ViewLocal);
 	return true;
 }
 
@@ -431,13 +390,16 @@ void FMultipleViewportsAdapter::BuildRenderQueue(const int32 ViewIndex, FRenderQ
     PendingStaticMeshes.Reset();
     LODInputs.Reset();
     if (!IsViewActive(ViewIndex)) return;
-    {
-        CullForView(RenderObjects, PrepareView(ViewIndex).Frustum, VisibleIds[ViewIndex]);
-    }
     const FRect& Rect = GetViewRect(ViewIndex);
     const FViewCamera& ViewCamera = GetEffectiveCamera(ViewIndex);
-    const FMatrix Projection = BuildProjectionMatrix(
-        ViewCamera.Projection, Rect.Width / Rect.Height);
+    // 컬링과 LOD가 이번 호출에서 계산한 동일한 VP를 사용한다.
+    FFrustumPlanes Frustum{};
+    const FMatrix ViewProjection = FEditorViewportClient::CalcViewProjection(
+        ViewCamera, Rect, &Frustum);
+    CullForView(RenderObjects, Frustum, VisibleIds[ViewIndex]);
+
+    // 직교 깊이 보정은 Projection의 화면 X/Y 배율을 바꾸지 않는다.
+    const FMatrix Projection = GetEngineProjection(ViewIndex);
     const float ScaleX = Projection.M[1][0];
     const float ScaleY = Projection.M[2][1];
 
@@ -445,8 +407,9 @@ void FMultipleViewportsAdapter::BuildRenderQueue(const int32 ViewIndex, FRenderQ
 		static_cast<uint32>(Rect.Width),
 		static_cast<uint32>(Rect.Height)
 	};
-	LODContext.CameraPosition = GetEngineCameraLocation(ViewIndex);
-	LODContext.ViewProjection = GetEngineViewProjection(ViewIndex);
+	// 거리와 NearZ는 기존처럼 논리 카메라를 기준으로 유지한다.
+	LODContext.CameraPosition = ViewCamera.Transform.Location;
+	LODContext.ViewProjection = ViewProjection;
 	LODContext.CameraForward = GetEngineCameraForward(ViewIndex);
 	LODContext.ProjectionScaleSquared = std::max(ScaleX * ScaleX, ScaleY * ScaleY);
 	LODContext.NearZ = ViewCamera.Projection.NearClip;
@@ -539,14 +502,24 @@ void FMultipleViewportsAdapter::SetSplitRatio(const FSplitRatio& Value)
 	Layout.SetSplitRatio(Value);
 }
 
+// 라이트 컬링 등에 사용하는 렌더 View 행렬을 반환한다.
 FMatrix FMultipleViewportsAdapter::GetEngineView(int32 ViewIndex) const
 {
 	assert(IsViewActive(ViewIndex));
-	return PrepareView(ViewIndex).EngineView;
+	FMatrix View;
+	FMatrix Projection;
+	FEditorViewportClient::CalcViewMatrices(
+		GetEffectiveCamera(ViewIndex), GetViewRect(ViewIndex), View, Projection);
+	return View;
 }
 
+// 깊이 보정까지 반영된 렌더 Projection 행렬을 반환한다.
 FMatrix FMultipleViewportsAdapter::GetEngineProjection(int32 ViewIndex) const
 {
 	assert(IsViewActive(ViewIndex));
-	return PrepareView(ViewIndex).EngineProjection;
+	FMatrix View;
+	FMatrix Projection;
+	FEditorViewportClient::CalcViewMatrices(
+		GetEffectiveCamera(ViewIndex), GetViewRect(ViewIndex), View, Projection);
+	return Projection;
 }

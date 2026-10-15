@@ -2,7 +2,7 @@
 
 #include "Editor/LevelEditor/MultipleViewports/Adapter/MultipleViewportsAdapterTypes.h"
 
-// 한 에디터 View의 카메라 상태와 프리셋·이동 계산을 관리한다.
+// 한 에디터 View의 카메라 상태와 프리셋·이동·렌더 계산을 관리한다.
 class FEditorViewportClient
 {
 public:
@@ -27,12 +27,27 @@ public:
     void UpdateCamera(float DeltaTime, const FCameraMoveInput& RawInput, const FRect& Rect,
         float MoveSpeed, float MouseSensitivity, bool bCameraCaptured);
 
+    // 유효한 View 영역과 선택된 카메라로 렌더용 행렬을 계산한다.
+    static void CalcViewMatrices(const FViewCamera& InCamera, const FRect& Rect,
+        FMatrix& OutView, FMatrix& OutProjection);
+
+    // 같은 VP로 Frustum도 필요할 때 함께 계산한다.
+    static FMatrix CalcViewProjection(const FViewCamera& InCamera, const FRect& Rect,
+        FFrustumPlanes* OutFrustum = nullptr);
+
+    // View 원점을 뺀 화면 좌표를 렌더 카메라 기준으로 역투영한다.
+    static FRay DeprojectView(const FViewCamera& InCamera, const FRect& Rect,
+        FVector2 ViewLocalPosition);
+
     // Override와 렌더 경로에서도 사용하는 기존 카메라 계산 구현을 한곳에 둔다.
     static FVector NormalizedOrZero(FVector Value);
     static FQuat MakeCameraRotation(float YawDegrees, float PitchDegrees);
     static void ConstrainOrthographicWidth(FCameraProjection& Projection, const FRect& Rect);
 
 private:
+    // 논리 카메라는 보존하고 직교 렌더링에 필요한 깊이만 보정한다.
+    static FViewCamera BuildRenderCamera(const FViewCamera& InCamera, const FRect& Rect);
+
     // 투영 방식에 따라 원근 이동·회전 또는 직교 이동·줌을 계산한다.
     void UpdatePerspectiveCamera(float DeltaTime, const FCameraMoveInput& MoveInput,
         FVector2 MouseDelta, float MouseSensitivity, bool bCameraCaptured);
