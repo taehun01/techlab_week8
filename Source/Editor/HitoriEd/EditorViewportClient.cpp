@@ -213,6 +213,34 @@ FRay FEditorViewportClient::DeprojectView(
         ViewLocalPosition, { Rect.Width, Rect.Height });
 }
 
+// 직교의 고정 화면 기저와 원근의 기존 Core 계산으로 Billboard 행렬을 만든다.
+FMatrix FEditorViewportClient::BuildBillboardMatrix(const FViewCamera& InCamera,
+    const FVector& WorldPosition, float Width, float Height)
+{
+    if (InCamera.Projection.Mode == EProjectionMode::Orthographic)
+    {
+        const FVector Facing = NormalizedOrZero(InCamera.Transform.Rotation.GetForwardVector()) * -1.0f;
+        const FVector Right = NormalizedOrZero(InCamera.Transform.Rotation.GetRightVector());
+        const FVector Up = NormalizedOrZero(InCamera.Transform.Rotation.GetUpVector());
+
+        FMatrix Matrix;
+        Matrix.SetIdentity();
+        Matrix.M[0][0] = Facing.X; Matrix.M[0][1] = Facing.Y; Matrix.M[0][2] = Facing.Z;
+        Matrix.M[1][0] = Right.X * Width; Matrix.M[1][1] = Right.Y * Width; Matrix.M[1][2] = Right.Z * Width;
+        Matrix.M[2][0] = Up.X * Height; Matrix.M[2][1] = Up.Y * Height; Matrix.M[2][2] = Up.Z * Height;
+        Matrix.M[3][0] = WorldPosition.X; Matrix.M[3][1] = WorldPosition.Y; Matrix.M[3][2] = WorldPosition.Z;
+        return Matrix;
+    }
+
+    FMatrix Matrix = ComputeBillboardTransform(
+        { WorldPosition, { Width, Height } }, InCamera.Transform).WorldMatrix;
+    // ParticleQuad의 기존 와인딩에 맞춰 오른쪽 축만 뒤집는다.
+    Matrix.M[1][0] = -Matrix.M[1][0];
+    Matrix.M[1][1] = -Matrix.M[1][1];
+    Matrix.M[1][2] = -Matrix.M[1][2];
+    return Matrix;
+}
+
 // 길이가 0이면 영벡터를, 아니면 기존 계산 순서대로 정규화한 벡터를 반환한다.
 FVector FEditorViewportClient::NormalizedOrZero(FVector Value)
 {

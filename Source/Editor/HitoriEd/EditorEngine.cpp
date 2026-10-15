@@ -39,7 +39,7 @@ namespace
 	DECLARE_CYCLE_STAT("Viewport Update", STAT_ViewportUpdate);
 	DECLARE_CYCLE_STAT("World Tick", STAT_WorldTick);
 	DECLARE_CYCLE_STAT("Editor Tick", STAT_EditorTick);
-	DECLARE_CYCLE_STAT("Capture World", STAT_CaptureWorld);
+	DECLARE_CYCLE_STAT("Prepare Render Views", STAT_PrepareRenderViews);
 	DECLARE_CYCLE_STAT("Build Render Queue", STAT_BuildRenderQueue);
 	DECLARE_CYCLE_STAT("ImGui", STAT_ImGui);
 }
@@ -367,10 +367,10 @@ void UEditorEngine::UpdateMultipleViewportState(const float DeltaTime)
 		MultipleViewportsAdapter.SetEditorViewIndex(MultipleViewportsAdapter.GetActiveViewIndex());
 }
 
-// 월드를 한 번 Tick·Capture한 뒤 에디터와 피킹을 갱신한다.
+// 월드를 한 번 Tick한 뒤 에디터와 피킹을 갱신한다.
 void UEditorEngine::TickWorldAndEditor(const float DeltaTime)
 {
-	// 월드 상태는 프레임마다 정확히 한 번 갱신하고 캡처한다.
+	// 월드 상태는 프레임마다 정확히 한 번 갱신한다.
 
 	{
 		SCOPE_CYCLE_COUNTER(STAT_WorldTick);
@@ -387,7 +387,7 @@ void UEditorEngine::TickWorldAndEditor(const float DeltaTime)
 		SCOPE_CYCLE_COUNTER(STAT_EditorTick);
 		EditorUI->Tick(DeltaTime);
 	}
-	// 월드 캡처는 View마다 그릴 월드가 다르므로 RenderMultipleViewports에서 한다.
+	// 렌더 준비는 View마다 그릴 월드가 다르므로 RenderMultipleViewports에서 한다.
 	// PIE 중에도 PIE가 아닌 View에서는 EditorWorld 편집을 계속한다.
 	UpdateGizmoAndPicking();
 	//SCOPE_CYCLE_COUNTER(STAT_UpdateAllTransforms);
@@ -396,7 +396,7 @@ void UEditorEngine::TickWorldAndEditor(const float DeltaTime)
 		PlayWorld->GetScene().UpdateAllTransforms();
 }
 
-// View가 그릴 월드가 바뀔 때만 다시 캡처해 활성 View별 렌더 큐를 만들고 렌더한다.
+// View가 그릴 월드가 바뀔 때 렌더 데이터를 준비하고 View별 수집·렌더를 완료한다.
 void UEditorEngine::RenderMultipleViewports()
 {
 	// PIE 창 크기를 외부 View에 먼저 알려야 카메라 Override의 직교 폭 보정이 맞는다.
@@ -406,7 +406,7 @@ void UEditorEngine::RenderMultipleViewports()
 	// 월드 Tick으로 움직인 게임 카메라를 같은 프레임에 반영한다.
 	UpdatePIEViewCamera();
 
-	UWorld* CapturedWorld = nullptr;
+	UWorld* PreparedWorld = nullptr;
 	Renderer->SetLightDebugMode(SettingsPanel->GetSettings().LightDebugMode);
 	Renderer->SetLightCullingMode(static_cast<ELightCullingMode>(SettingsPanel->GetSettings().LightCullingMode));
 	for (int32 ViewIndex = 0; ViewIndex < 4; ++ViewIndex)
@@ -417,19 +417,19 @@ void UEditorEngine::RenderMultipleViewports()
 			continue;
 
 		UWorld* ViewWorld = GetWorldForView(ViewIndex);
-		if (ViewWorld != CapturedWorld)
+		if (ViewWorld != PreparedWorld)
 		{
-			SCOPE_CYCLE_COUNTER(STAT_CaptureWorld);
-			MultipleViewportsAdapter.CaptureWorld(*ViewWorld);
+			SCOPE_CYCLE_COUNTER(STAT_PrepareRenderViews);
+			ViewWorld->BeginRenderViews();
 			// FireBall 라이트 상수는 Renderer 공용 상태라 월드가 바뀌면 다시 올린다.
 			// ViewWorld->GetScene().UpdateFireBallLight(Renderer);
 			ViewWorld->GetScene().UpdateLights(Renderer);
-			CapturedWorld = ViewWorld;
+			PreparedWorld = ViewWorld;
 		}
 
 		{
 			SCOPE_CYCLE_COUNTER(STAT_BuildRenderQueue);
-			MultipleViewportsAdapter.BuildRenderQueue(ViewIndex, RenderQueue, IconQueue, ArrowQueue);
+			MultipleViewportsAdapter.BuildRenderQueue(*ViewWorld, ViewIndex, RenderQueue, IconQueue, ArrowQueue);
 		}
 
 		RenderFrame(
@@ -445,22 +445,22 @@ void UEditorEngine::RenderMultipleViewports()
 
 	}
 
-	// 별도 PIE 창은 패널 View 뒤에 PlayWorld를 한 번 더 캡처해 그린다.
+	// 별도 PIE 창은 패널 View 뒤에 PlayWorld의 데이터로 그린다.
 	if (bRenderPIEWindow && MultipleViewportsAdapter.IsViewActive(PIEViewIndex))
 	{
 		UWorld* ViewWorld = GetWorldForView(PIEViewIndex);
-		if (ViewWorld != CapturedWorld)
+		if (ViewWorld != PreparedWorld)
 		{
-			SCOPE_CYCLE_COUNTER(STAT_CaptureWorld);
-			MultipleViewportsAdapter.CaptureWorld(*ViewWorld);
+			SCOPE_CYCLE_COUNTER(STAT_PrepareRenderViews);
+			ViewWorld->BeginRenderViews();
 			//ViewWorld->GetScene().UpdateFireBallLight(Renderer);
 			ViewWorld->GetScene().UpdateLights(Renderer);
-			CapturedWorld = ViewWorld;
+			PreparedWorld = ViewWorld;
 		}
 
 		{
 			SCOPE_CYCLE_COUNTER(STAT_BuildRenderQueue);
-			MultipleViewportsAdapter.BuildRenderQueue(PIEViewIndex, RenderQueue, IconQueue, ArrowQueue);
+			MultipleViewportsAdapter.BuildRenderQueue(*ViewWorld, PIEViewIndex, RenderQueue, IconQueue, ArrowQueue);
 		}
 
 		RenderFrame(
@@ -722,6 +722,7 @@ void UEditorEngine::RenderOverlayPass(const int32 ViewIndex, UWorld& ViewWorld, 
 	}
 
 	// Editor Icon (안개, Light Actor) + 빛 방향 Arrow
+	// TODO: 모든 프리미티브를 공통 큐로 통합하고 패스별로 렌더하도록 별도 IconQueue·ArrowQueue를 제거한다.
 	if (bShowEditorOverlay)
 	{
 		RenderCommand::SetRasterizerState(ERasterizerState::SolidBack);

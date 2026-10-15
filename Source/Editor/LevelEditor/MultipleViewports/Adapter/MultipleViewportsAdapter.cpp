@@ -4,12 +4,7 @@
 
 #include "Camera/CameraActor.h"
 #include "Camera/CameraComponent.h"
-#include "Components/PrimitiveComponent.h"
-#include "Components/StaticMeshComponent.h"
-#include "Components/BillboardComponent.h"
-#include "Components/ParticleSubUVComponent.h"
 #include "Editor/Rendering/GridRenderer.h"
-#include "Engine/PrimitiveSceneProxy.h"
 #include "Engine/World.h"
 #include "Input/InputSystem.h"
 #include "Asset/LOD/StaticMeshLODSelector.h"
@@ -239,46 +234,6 @@ void FMultipleViewportsAdapter::UpdateInput(
 		MoveSpeed, MouseSensitivity, bCameraCaptured);
 }
 
-// 현재 World의 가시 컴포넌트에서 경계만 캡처한다. Mesh·삼각형은 복사하지 않는다.
-void FMultipleViewportsAdapter::CaptureWorld(UWorld& World)
-{
-	RenderObjects.Reset();
-	for (auto& Entry : PrimitiveById) Entry.second.bCaptured = false;
-	bCapturedBillboard = false;
-	bCapturedParticle = false;
-
-	const FScene& Scene = World.GetScene();
-	const int32 Count = Scene.PrimitiveSceneProxies.Num();
-	for (int32 i = 0; i < Count;++i)
-	{
-		if (!Scene.PrimitiveFlags[i]) continue;
-		UPrimitiveComponent* Primitive = Scene.PrimitiveSceneProxies[i]->GetComponent();
-		if (!Primitive || !Primitive->IsVisible() || !Primitive->GetOwner() ||
-			Primitive->GetOwner()->GetWorld() != &World) continue;
-		const ObjectId Id = Primitive->GetUUID();
-		if (Id == InvalidObjectId) continue;
-
-		FRenderableObject RenderObject{};
-		RenderObject.Id = Id;
-		const FPrimitiveSceneProxy* Proxy = Primitive->GetSceneProxy();
-		RenderObject.WorldBounds = Proxy && Proxy->GetMesh()
-			? Proxy->GetBounds() : MakeWorldBounds(Primitive->CalcBounds());
-		RenderObjects.Add(RenderObject);
-		PrimitiveSnapshot& Snapshot = PrimitiveById[Id];
-		Snapshot.Primitive = Primitive;
-		Snapshot.bCaptured = true;
-		Snapshot.bParticlesPrepared = false;
-		if (Cast<UParticleSubUVComponent>(Primitive)) bCapturedParticle = true;
-		else if (Cast<UBillboardComponent>(Primitive)) bCapturedBillboard = true;
-	}
-
-	for (auto Iterator = PrimitiveById.begin(); Iterator != PrimitiveById.end();)
-	{
-		const auto Current = Iterator++;
-		if (!Current->second.bCaptured) PrimitiveById.Remove(Current->first);
-	}
-}
-
 // 패널 View는 Layout이, 외부 PIE View는 별도 크기와 카메라가 활성 여부를 결정한다.
 bool FMultipleViewportsAdapter::IsViewActive(const int32 ViewIndex) const
 {
@@ -316,39 +271,12 @@ FVector FMultipleViewportsAdapter::GetEngineCameraForward(const int32 ViewIndex)
 	return FEditorViewportClient::NormalizedOrZero(GetEffectiveCamera(ViewIndex).Transform.Rotation.GetForwardVector());
 }
 
-// 위치·크기·View 카메라로 엔진 규약의 Billboard 행렬을 계산한다.
+// 지정 View의 논리 카메라로 렌더·피킹에 공통인 Billboard 계산을 호출한다.
 FMatrix FMultipleViewportsAdapter::BuildEngineBillboardMatrix(const int32 ViewIndex, const FVector& WorldPosition, const float Width, const float Height) const
 {
 	assert(ViewIndex >= 0 && ViewIndex < MaxViewCount);
-	const FViewCamera& ViewCamera = GetEffectiveCamera(ViewIndex);
-	if (ViewCamera.Projection.Mode == EProjectionMode::Orthographic)
-	{
-		// 직교 투영의 모든 시선은 평행하므로 카메라 위치가 아니라 고정된 화면 기저를 사용한다.
-		// 위치 기반 LookAt을 사용하면 평면 이동 시 오브젝트-카메라 벡터가 달라져 Billboard가 회전한다.
-		const FVector Facing = FEditorViewportClient::NormalizedOrZero(ViewCamera.Transform.Rotation.GetForwardVector()) * -1.0f;
-		const FVector Right = FEditorViewportClient::NormalizedOrZero(ViewCamera.Transform.Rotation.GetRightVector());
-		const FVector Up = FEditorViewportClient::NormalizedOrZero(ViewCamera.Transform.Rotation.GetUpVector());
-
-		FMatrix EngineMatrix;
-		EngineMatrix.SetIdentity();
-		EngineMatrix.M[0][0] = Facing.X; EngineMatrix.M[0][1] = Facing.Y; EngineMatrix.M[0][2] = Facing.Z;
-		EngineMatrix.M[1][0] = Right.X * Width; EngineMatrix.M[1][1] = Right.Y * Width; EngineMatrix.M[1][2] = Right.Z * Width;
-		EngineMatrix.M[2][0] = Up.X * Height; EngineMatrix.M[2][1] = Up.Y * Height; EngineMatrix.M[2][2] = Up.Z * Height;
-		EngineMatrix.M[3][0] = WorldPosition.X; EngineMatrix.M[3][1] = WorldPosition.Y; EngineMatrix.M[3][2] = WorldPosition.Z;
-		return EngineMatrix;
-	}
-
-	const FBillboardTransform Result = ComputeBillboardTransform(
-		{ WorldPosition, {Width, Height} },
-		ViewCamera.Transform);
-	FMatrix EngineMatrix = Result.WorldMatrix;
-
-	// 팀 엔진의 ParticleQuad는 Core의 Billboard 오른쪽 축과 반대 와인딩을 사용한다.
-	// 오른쪽 축만 뒤집어 기존 렌더 경로와 같은 앞면이 카메라를 향하게 한다.
-	EngineMatrix.M[1][0] = -EngineMatrix.M[1][0];
-	EngineMatrix.M[1][1] = -EngineMatrix.M[1][1];
-	EngineMatrix.M[1][2] = -EngineMatrix.M[1][2];
-	return EngineMatrix;
+	return FEditorViewportClient::BuildBillboardMatrix(
+		GetEffectiveCamera(ViewIndex), WorldPosition, Width, Height);
 }
 
 // 지정 View 카메라의 투영 모드가 Orthographic인지 검사한다.
@@ -373,30 +301,27 @@ bool FMultipleViewportsAdapter::TryGetActiveViewRay(const FVector2 LocalMousePos
 	return true;
 }
 
-// 범위를 검사한 뒤 지정 View의 재사용 가시 ID 버퍼 크기를 반환한다.
-std::size_t FMultipleViewportsAdapter::GetVisibleObjectCount(const int32 ViewIndex) const
-{
-	assert(ViewIndex >= 0 && ViewIndex < MaxViewCount);
-	return VisibleIds[ViewIndex].Num();
-}
-
-// 가시 ID를 컴포넌트로 역매핑해 큐를 구성한다. 생존 목록·상수는 프레임 공통, Billboard·정렬 거리는 View별이다.
-void FMultipleViewportsAdapter::BuildRenderQueue(const int32 ViewIndex, FRenderQueue& OutQueue, FRenderQueue& OutIconQueue, FRenderQueue& OutArrowQueue)
+// View 입력만 준비하고 정적·동적 패킷 수집은 World의 공통 경로에 맡긴다.
+void FMultipleViewportsAdapter::BuildRenderQueue(UWorld& World, const int32 ViewIndex,
+    FRenderQueue& OutQueue, FRenderQueue& OutIconQueue, FRenderQueue& OutArrowQueue)
 {
     OutQueue.Reset();
     OutIconQueue.Reset();
     OutArrowQueue.Reset();
-    
-    PendingStaticMeshes.Reset();
-    LODInputs.Reset();
     if (!IsViewActive(ViewIndex)) return;
     const FRect& Rect = GetViewRect(ViewIndex);
     const FViewCamera& ViewCamera = GetEffectiveCamera(ViewIndex);
+    // Runtime은 이 동기 호출 동안만 논리 카메라 Context를 사용한다.
+    const auto ResolveBillboard = [](const FVector& Position, float Width, float Height,
+        const void* Context) -> FMatrix
+    {
+        const auto& Camera = *static_cast<const FViewCamera*>(Context);
+        return FEditorViewportClient::BuildBillboardMatrix(Camera, Position, Width, Height);
+    };
     // 컬링과 LOD가 이번 호출에서 계산한 동일한 VP를 사용한다.
     FFrustumPlanes Frustum{};
     const FMatrix ViewProjection = FEditorViewportClient::CalcViewProjection(
         ViewCamera, Rect, &Frustum);
-    CullForView(RenderObjects, Frustum, VisibleIds[ViewIndex]);
 
     // 직교 깊이 보정은 Projection의 화면 X/Y 배율을 바꾸지 않는다.
     const FMatrix Projection = GetEngineProjection(ViewIndex);
@@ -416,84 +341,9 @@ void FMultipleViewportsAdapter::BuildRenderQueue(const int32 ViewIndex, FRenderQ
 	LODContext.bOrthographic = ViewCamera.Projection.Mode == EProjectionMode::Orthographic;
 	LODContext.Prepare();
 
-	for (const ObjectId Id : VisibleIds[ViewIndex])
-	{
-		const auto Found = PrimitiveById.Find(Id);
-		if (!Found || !Found->Primitive)
-			continue;
-
-        UPrimitiveComponent* Primitive = Found->Primitive;
-        if (UParticleSubUVComponent* ParticleComponent = Cast<UParticleSubUVComponent>(Primitive))
-        {
-            const TArray<FParticle>& Particles = ParticleComponent->GetParticlesForView();
-            PrimitiveSnapshot& Snapshot = *Found;
-            if (!Snapshot.bParticlesPrepared)
-            {
-                Snapshot.AliveParticleIndices.Reset();
-                Snapshot.AliveParticleIndices.Reserve(Particles.Num());
-                for (int32 Index = 0; Index < Particles.Num(); ++Index)
-                    if (Particles[Index].bAlive) Snapshot.AliveParticleIndices.Add(Index);
-                ParticleComponent->BeginViewSubmission();
-                Snapshot.bParticlesPrepared = true;
-            }
-            // 반투명은 모든 emitter를 합친 최종 Renderer만 정렬한다. 불투명은 Core 정렬을 유지하며 동률은 인덱스 순서다.
-            const FVector CameraLocation = GetEngineCameraLocation(ViewIndex);
-            const bool bOpaque = ParticleComponent->UsesOpaqueMaterial();
-            if (bOpaque)
-            {
-                SortInputs.Reset();
-                for (const int32 Index : Snapshot.AliveParticleIndices)
-                    SortInputs.Add({static_cast<ObjectId>(Index + 1), Particles[Index].Location});
-                SortParticlesByCameraDistance(SortInputs, ViewCamera.Transform.Location, SortedParticleIds);
-            }
-            for (int32 Order = 0; Order < Snapshot.AliveParticleIndices.Num(); ++Order)
-            {
-                const int32 ParticleIndex = bOpaque ? static_cast<int32>(SortedParticleIds[Order] - 1) : Snapshot.AliveParticleIndices[Order];
-                const FParticle& Particle = Particles[ParticleIndex];
-                const FMatrix ParticleWorld = BuildEngineBillboardMatrix(ViewIndex, Particle.Location, Particle.Scale, Particle.Scale);
-                const FVector Delta = Particle.Location - CameraLocation;
-                ParticleComponent->SubmitParticleToRenderQueue(OutQueue, ParticleIndex, ParticleWorld, Delta.Dot(Delta));
-            }
-        }
-        else if (UBillboardComponent* Billboard = Cast<UBillboardComponent>(Primitive))
-        {
-            const FVector Scale = Billboard->GetWorldScale3D();
-
-            // Editor Icon 이면 IconQueue로 빼기
-            FRenderQueue& Target = Billboard->IsEditorIcon()? OutIconQueue : OutQueue;
-
-            Billboard->SubmitToRenderQueue(
-                Target,
-                BuildEngineBillboardMatrix(ViewIndex, Billboard->GetWorldLocation(), Scale.Y, Scale.Z));
-        }
-        else if (auto* StaticComponent = Cast<UStaticMeshComponent>(Primitive))
-        {
-            UStaticMesh* Mesh = StaticComponent->GetStaticMesh();
-            if (!Mesh)
-                continue;
-            
-            // 빛 방향 Arrow 이면 ArrowQueue로 빼기
-            if (StaticComponent->IsEditorIcon())
-            {
-                StaticComponent->SubmitToRenderQueue(OutArrowQueue, 0);
-                continue;
-            }
-
-			const FPrimitiveSceneProxy* Proxy = StaticComponent->GetSceneProxy();
-			if (Proxy)
-			{
-				PendingStaticMeshes.Add(StaticComponent);
-				LODInputs.Add({ Proxy->GetLODSphere(), Proxy->GetRenderState() });
-			}
-		}
-		else
-		{
-			Primitive->SubmitToRenderQueue(OutQueue);
-		}
-	}
-	SelectLODs(LODInputs, LODContext, SelectedLODs);
-	for (uint32 I = 0; I < static_cast<uint32>(PendingStaticMeshes.Num()); ++I)
-		PendingStaticMeshes[I]->SubmitToRenderQueue(OutQueue, SelectedLODs[I]);
+	// Renderer를 넘기지 않아 기존 에디터의 GPU 오클루전·상수 업로드 정책을 유지한다.
+	World.GatherRenderPackets(OutQueue, &LODContext, &Frustum, nullptr,
+		ResolveBillboard, &ViewCamera, &OutIconQueue, &OutArrowQueue);
 }
 
 // Config에서 받은 비율의 검증과 저장은 Layout이 담당한다.

@@ -39,21 +39,17 @@ public:
 	
 	virtual void BeginPlay() override;
 	virtual void TickComponent(float DeltaTime) override;
+	// 시뮬레이션 배열과 View별 렌더 제출을 분리한다.
+	FPrimitiveSceneProxy* CreateSceneProxy() override;
 
+	// 기본 카메라용 호환 경로이며 View별 수집은 SceneProxy가 맡는다.
 	virtual void SubmitToRenderQueue(FRenderQueue& RenderQueue) override;
-	// Adapter가 View별 거리 정렬 입력을 만들 수 있도록 현재 파티클 배열을 읽기 전용으로 제공한다.
-	const TArray<FParticle>& GetParticlesForView() const { return Particles; }
-	// 프레임의 첫 View 전에 파티클 인덱스별 상수를 준비하고 네 View에서 재사용한다.
-	void BeginViewSubmission();
-	// 불투명 파티클의 기존 정렬 경로를 선택한다.
-	bool UsesOpaqueMaterial() const;
-	// Adapter가 정렬한 파티클을 View별 Billboard 행렬과 거리 순서로 렌더 큐에 넣는다.
-	void SubmitParticleToRenderQueue(FRenderQueue& RenderQueue, int32 ParticleIndex, const FMatrix& WorldMatrix, float CameraDistanceSquared);
 
 	void SetSubUVSize(uint32 Cols, uint32 Rows);
 	void SetFrameRate(float InFrameRate);
 
 private:
+	friend class FParticleSceneProxy;
 	void RespawnParticle(FParticle& Particle);
 
 	// Todo: Move to util class
@@ -80,6 +76,7 @@ private:
 
 	float FadeStart = 0.8f;             // 수명 비율이 이 값을 넘으면 페이드아웃 시작 (0~1)
 
+	// 기본 카메라 호환 제출용이며 View 공통 상수는 Particle Proxy가 별도로 소유한다.
 	TArray<FSubUVConstants> Constants;
 
 	uint32 ColSize;

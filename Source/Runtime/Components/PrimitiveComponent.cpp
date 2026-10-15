@@ -78,6 +78,14 @@ void UPrimitiveComponent::MarkRenderStateDirty()
 		SceneProxy->GetScene()->MarkRenderStateDirty(SceneProxy);
 }
 
+// Reflection 편집은 SetVisible을 거치지 않으므로 가시성 캐시 갱신을 직접 예약한다.
+void UPrimitiveComponent::PostEditChangeProperty(const FProperty& Property)
+{
+	Super::PostEditChangeProperty(Property);
+	if (Property.Name == "bVisible")
+		MarkRenderStateDirty();
+}
+
 bool UPrimitiveComponent::LineTraceComponentLocal(const FRay& LocalRay, float& OutT)
 {
 	const FStaticMeshData* Mesh = GetMeshData();
@@ -113,6 +121,12 @@ bool UPrimitiveComponent::MoveComponent(const FVector& Delta, const FRotator& Ne
 	}
 
 	return true;
+}
+
+// 기본 Primitive는 기존 공통 Proxy를 사용한다.
+FPrimitiveSceneProxy* UPrimitiveComponent::CreateSceneProxy()
+{
+	return new FPrimitiveSceneProxy(this);
 }
 
 void UPrimitiveComponent::CreateRenderState()

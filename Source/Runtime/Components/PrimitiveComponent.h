@@ -59,6 +59,9 @@ public:
 		MarkRenderStateDirty();
 	}
 
+	// Details에서 직접 바꾼 가시성도 Proxy의 렌더 상태에 반영한다.
+	void PostEditChangeProperty(const FProperty& Property) override;
+
 	virtual bool LineTraceComponent(const FRay& WorldRay, FHitResult& OutHit);
 	virtual bool LineTraceComponentLocal(const FRay& LocalRay, float& OutT);
 	virtual FBox CalcLocalBounds() const override
@@ -68,6 +71,9 @@ public:
 	}
 
 	FPrimitiveSceneProxy* GetSceneProxy() const { return SceneProxy; }
+
+	// Proxy의 구체 타입만 선택하며 Scene이 등록과 삭제를 담당한다.
+	virtual FPrimitiveSceneProxy* CreateSceneProxy();
 
 	void MarkRenderStateDirty();
 

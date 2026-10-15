@@ -10,6 +10,26 @@ FPrimitiveSceneProxy::~FPrimitiveSceneProxy()
     if (Mesh) Mesh->UnregisterProxy(this);
 }
 
+// 준비한 데이터는 다음 Capture 구간까지 모든 View에서 재사용한다.
+void FPrimitiveSceneProxy::PrepareDynamicData()
+{
+    if (bDynamicDataPrepared) return;
+    UpdateDynamicData();
+    bDynamicDataPrepared = true;
+}
+
+// 기본 Primitive는 동적 스냅샷이 필요하지 않다.
+void FPrimitiveSceneProxy::UpdateDynamicData()
+{
+}
+
+// 처리하지 않은 타입은 호출자가 기존 Component 제출 경로로 보낸다.
+bool FPrimitiveSceneProxy::GatherDynamicRenderPackets(FRenderQueue&, FRenderQueue*,
+    const FVector&, FBillboardMatrixBuilder, const void*, TArray<int32>&, TArray<float>&) const
+{
+    return false;
+}
+
 void FPrimitiveSceneProxy::OnMeshRenderDataChanged()
 {
     if (Scene)

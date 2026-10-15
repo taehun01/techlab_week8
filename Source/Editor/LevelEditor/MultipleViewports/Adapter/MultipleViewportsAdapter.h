@@ -5,17 +5,10 @@
 #include "Editor/HitoriEd/EditorViewportClient.h"
 
 #include "Collision/Ray.h"
-#include "Containers/Queue.h"
 #include "Math/Matrix.h"
 #include "Render/RenderPacket.h"
 #include "Render/ViewMode.h"
-#include "Asset/LOD/StaticMeshLODSelector.h"
 
-#include "Containers/Map.h"
-#include "Containers/Array.h"
-
-class UPrimitiveComponent;
-class UStaticMeshComponent;
 class UWorld;
 
 // 팀 엔진 데이터와 MultipleViewports Core API 사이의 상태·변환·렌더 연결을 맡는다.
@@ -64,9 +57,6 @@ public:
     void ApplySplitterDrag(EDragAxis Axis, float DeltaPixels, FVector2 WindowSize);
     // 우클릭 Capture View에 이동·Euler Yaw/Pitch·줌 입력을 적용한다.
     void UpdateInput(float DeltaTime, FVector2 LocalMousePosition, float MoveSpeed, float MouseSensitivity);
-    // Tick 뒤 현재 World의 ID·경계만 캡처하며 피킹은 Component에 위임한다.
-    void CaptureWorld(UWorld& World);
-
     // 레이아웃과 Rect 상태를 기준으로 지정 View의 활성 여부를 반환한다.
     bool IsViewActive(int32 ViewIndex) const;
     // 현재 입력을 소비할 활성 View 인덱스를 반환한다.
@@ -99,15 +89,9 @@ public:
     bool IsOrthographic(int32 ViewIndex) const;
     // 활성 View의 로컬 마우스 좌표를 Core로 역투영해 엔진 Ray로 반환한다.
     bool TryGetActiveViewRay(FVector2 LocalMousePosition, FRay& OutRay) const;
-    // 지정 View의 절두체를 통과한 오브젝트 수를 반환한다.
-    std::size_t GetVisibleObjectCount(int32 ViewIndex) const;
-    // 최근 World 스냅샷에 Billboard가 포함됐는지 반환한다.
-    bool HasCapturedBillboard() const { return bCapturedBillboard; }
-    // 최근 World 스냅샷에 Particle이 포함됐는지 반환한다.
-    bool HasCapturedParticle() const { return bCapturedParticle; }
-
-    // View별 가시 ID를 엔진 컴포넌트로 역매핑해 렌더 큐를 구성한다.
-    void BuildRenderQueue(int32 ViewIndex, FRenderQueue& OutQueue, FRenderQueue& OutIconQueue, FRenderQueue& OutArrowQueue);
+    // View 입력을 준비하고 컬링·LOD·패킷 수집은 World에 맡긴다.
+    void BuildRenderQueue(UWorld& World, int32 ViewIndex, FRenderQueue& OutQueue,
+        FRenderQueue& OutIconQueue, FRenderQueue& OutArrowQueue);
 
     // 외부에서 읽은 Split 비율을 Core 허용 범위로 제한해 저장한다.
     void SetSplitRatio(const FSplitRatio& Value);
@@ -138,25 +122,4 @@ private:
     static_assert(MaxViewCount == 5, "ViewModes initializer count must match MaxViewCount");
     FViewCamera CameraOverrides[MaxViewCount]{};
     bool bHasCameraOverride[MaxViewCount]{};
-
-    // 이번 프레임의 엔진 객체와 파티클 준비 상태를 보관한다. 포인터는 다음 캡처 전까지 유효해야 한다.
-    struct PrimitiveSnapshot
-    {
-        UPrimitiveComponent* Primitive = nullptr;
-        bool bCaptured = false;
-        bool bParticlesPrepared = false;
-        TArray<int32> AliveParticleIndices;
-    };
-    TMap<ObjectId, PrimitiveSnapshot> PrimitiveById;
-    // Host가 컬링 입력 버퍼를 소유하고 용량을 재사용한다.
-    TArray<FRenderableObject> RenderObjects;
-    // 불투명 파티클은 최종 렌더러가 거리 정렬하지 않아 기존 Core 정렬을 유지한다.
-    TArray<FParticleSortInput> SortInputs;
-    TArray<ObjectId> SortedParticleIds;
-    TArray<ObjectId> VisibleIds[MaxViewCount];
-    TArray<UStaticMeshComponent*> PendingStaticMeshes;
-    TArray<FLODSelectionInput> LODInputs;
-    TArray<uint8> SelectedLODs;
-    bool bCapturedBillboard = false;
-    bool bCapturedParticle = false;
 };

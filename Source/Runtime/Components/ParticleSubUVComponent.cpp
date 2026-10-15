@@ -9,6 +9,7 @@
 #include "BillboardComponent.h"
 
 #include "Engine/World.h"
+#include "Engine/ParticleSceneProxy.h"
 
 const float UParticleSubUVComponent::MAX_NORMALIZED_VALUE = 1.0f;
 
@@ -28,6 +29,12 @@ UParticleSubUVComponent::UParticleSubUVComponent()
 
 	//Shader = RenderCommand::CreateShader(L"Resources/Shader/ParticleSubUVShader.hlsl", FParticleVertex::GetLayout());
 	//Material = UAssetManager::GetAssetByPath<UMaterial>("SubUVMaterial");	
+}
+
+// 파티클 렌더 스냅샷은 Scene이 관리하는 전용 Proxy가 소유한다.
+FPrimitiveSceneProxy* UParticleSubUVComponent::CreateSceneProxy()
+{
+	return new FParticleSceneProxy(this);
 }
 
 // 파티클 에셋과 배열을 준비하고 초기 상태를 채운다.
@@ -253,53 +260,4 @@ float UParticleSubUVComponent::GedSmoothStepedRatio(float start, float end, floa
 	}
 
 	return normedValue * normedValue * (3.0f - 2.0f * normedValue);
-}
-
-// 프레임당 한 번 전체 인덱스 순서로 상수를 준비하며 View 제출 중 재할당하지 않는다.
-void UParticleSubUVComponent::BeginViewSubmission()
-{
-	Constants.Reset();
-	Constants.Reserve(Particles.Num());
-    for (const FParticle& Particle : Particles)
-    {
-        FSubUVConstants Value{};
-        Value.CurrentFrame = static_cast<float>(Particle.SubUVFrame);
-        Value.AtlasColSize = static_cast<float>(ColSize);
-        Value.AtlasRowSize = static_cast<float>(RowSize);
-        Value.Alpha = Particle.Alpha;
-        Constants.Add(Value);
-    }
-}
-
-// 파티클의 View 행렬·거리·SubUV 상수를 렌더 패킷에 담는다.
-void UParticleSubUVComponent::SubmitParticleToRenderQueue(
-	FRenderQueue& RenderQueue,
-	const int32 ParticleIndex,
-	const FMatrix& WorldMatrix,
-	const float CameraDistanceSquared)
-{
-	if (ParticleIndex < 0 || ParticleIndex >= Particles.Num() || QuadMesh == nullptr || Material == nullptr)
-		return;
-
-	const FParticle& Particle = Particles[ParticleIndex];
-	if (!Particle.bAlive)
-		return;
-
-	assert(Constants.Num() == Particles.Num());
-
-	FRenderPacket Packet;
-	Packet.Model = RenderQueue.StoreWorldMatrix(WorldMatrix);
-	Packet.Mesh = QuadMesh;
-	Packet.Material = Material;
-	Packet.CameraToParticleDistance = CameraDistanceSquared;
-	Packet.MaterialParamData = &Constants[ParticleIndex];
-	Packet.MaterialParamDataSize = sizeof(FSubUVConstants);
-	RenderQueue.Add(Packet);
-}
-
-
-// 실제 재질의 블렌드 상태로 프레임 공통 정렬과 View별 정렬을 구분한다.
-bool UParticleSubUVComponent::UsesOpaqueMaterial() const
-{
-    return Material && Material->BlendState == EBlendState::Opaque;
 }

@@ -39,6 +39,10 @@ public:
     static FRay DeprojectView(const FViewCamera& InCamera, const FRect& Rect,
         FVector2 ViewLocalPosition);
 
+    // 선택한 논리 카메라로 렌더·피킹에 공통인 Billboard 행렬을 계산한다.
+    static FMatrix BuildBillboardMatrix(const FViewCamera& InCamera,
+        const FVector& WorldPosition, float Width, float Height);
+
     // Override와 렌더 경로에서도 사용하는 기존 카메라 계산 구현을 한곳에 둔다.
     static FVector NormalizedOrZero(FVector Value);
     static FQuat MakeCameraRotation(float YawDegrees, float PitchDegrees);
