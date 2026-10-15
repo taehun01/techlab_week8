@@ -88,37 +88,10 @@ namespace
 		return 2.0f * (Rotation.X * Rotation.Z - Rotation.W * Rotation.Y);
 	}
 
-	// +X Forward를 quaternion으로 회전해 카메라 월드 Forward를 구한다.
-	FVector CameraForward(const FQuat& Rotation)
-	{
-		return {
-			1.0f - 2.0f * (Rotation.Y * Rotation.Y + Rotation.Z * Rotation.Z),
-			2.0f * (Rotation.X * Rotation.Y + Rotation.W * Rotation.Z),
-			2.0f * (Rotation.X * Rotation.Z - Rotation.W * Rotation.Y) };
-	}
-
-	// +Y Right를 quaternion으로 회전해 카메라 화면의 수평 월드축을 구한다.
-	FVector CameraRight(const FQuat& Rotation)
-	{
-		return {
-			2.0f * (Rotation.X * Rotation.Y - Rotation.W * Rotation.Z),
-			1.0f - 2.0f * (Rotation.X * Rotation.X + Rotation.Z * Rotation.Z),
-			2.0f * (Rotation.Y * Rotation.Z + Rotation.W * Rotation.X) };
-	}
-
-	// +Z Up을 quaternion으로 회전해 카메라 화면의 수직 월드축을 구한다.
-	FVector CameraUp(const FQuat& Rotation)
-	{
-		return {
-			2.0f * (Rotation.X * Rotation.Z + Rotation.W * Rotation.Y),
-			2.0f * (Rotation.Y * Rotation.Z - Rotation.W * Rotation.X),
-			1.0f - 2.0f * (Rotation.X * Rotation.X + Rotation.Y * Rotation.Y) };
-	}
-
 	// 카메라 Forward의 XY 방향을 atan2로 바꿔 Euler Yaw를 구한다.
 	float CameraYawDegrees(const FQuat& Rotation)
 	{
-		const FVector Forward = NormalizedOrZero(CameraForward(Rotation));
+		const FVector Forward = NormalizedOrZero(Rotation.GetForwardVector());
 		return std::atan2(Forward.Y, Forward.X) * 180.0f / Pi;
 	}
 
@@ -322,7 +295,7 @@ EGridPlane FMultipleViewportsAdapter::GetGridPlane(const int32 ViewIndex) const
 		break;
 	}
 
-	const FVector Forward = CameraForward(GetEffectiveCamera(ViewIndex).Transform.Rotation);
+	const FVector Forward = GetEffectiveCamera(ViewIndex).Transform.Rotation.GetForwardVector();
 	const float AbsX = std::fabs(Forward.X);
 	const float AbsY = std::fabs(Forward.Y);
 	const float AbsZ = std::fabs(Forward.Z);
@@ -458,8 +431,8 @@ void FMultipleViewportsAdapter::UpdateInput(
 	{
 		const FRect& Rect = ViewRects[ActiveViewIndex];
 		const float WorldUnitsPerPixel = Views.Cameras[ActiveViewIndex].Projection.OrthoWidth / Rect.Width;
-		const FVector Right = NormalizedOrZero(CameraRight(Views.Cameras[ActiveViewIndex].Transform.Rotation));
-		const FVector Up = NormalizedOrZero(CameraUp(Views.Cameras[ActiveViewIndex].Transform.Rotation));
+		const FVector Right = NormalizedOrZero(Views.Cameras[ActiveViewIndex].Transform.Rotation.GetRightVector());
+		const FVector Up = NormalizedOrZero(Views.Cameras[ActiveViewIndex].Transform.Rotation.GetUpVector());
 		// 화면을 잡아 끄는 방향으로 보이도록 카메라는 수평 드래그의 반대, 수직 드래그의 Up 방향으로 이동한다.
 		const FVector PanOffset = Right * (-static_cast<float>(FInputSystem::GetMouseDeltaX()) * WorldUnitsPerPixel)
 			+ Up * (static_cast<float>(FInputSystem::GetMouseDeltaY()) * WorldUnitsPerPixel);
@@ -548,7 +521,7 @@ FViewCamera FMultipleViewportsAdapter::GetRenderCamera(const int32 ViewIndex) co
 	// 현재 카메라 평면의 앞뒤를 모두 포함하고 기존 FarClip보다 깊이 범위를 줄이지 않는다.
 	const float Radius = std::max(Camera.Projection.FarClip,
 		2.0f * Distance + 4.0f * std::sqrt(HalfWidth * HalfWidth + HalfHeight * HalfHeight));
-	const FVector Forward = NormalizedOrZero(CameraForward(Camera.Transform.Rotation));
+	const FVector Forward = NormalizedOrZero(Camera.Transform.Rotation.GetForwardVector());
 	const float Retreat = Radius + Camera.Projection.NearClip;
 	Camera.Transform.Location = Position - Forward * Retreat;
 	Camera.Projection.FarClip = Camera.Projection.NearClip + 2.0f * Radius;
@@ -588,7 +561,7 @@ FVector FMultipleViewportsAdapter::GetEngineCameraLocation(const int32 ViewIndex
 FVector FMultipleViewportsAdapter::GetEngineCameraForward(const int32 ViewIndex) const
 {
 	assert(ViewIndex >= 0 && ViewIndex < MaxViewCount);
-	return NormalizedOrZero(CameraForward(GetEffectiveCamera(ViewIndex).Transform.Rotation));
+	return NormalizedOrZero(GetEffectiveCamera(ViewIndex).Transform.Rotation.GetForwardVector());
 }
 
 // 위치·크기·View 카메라로 엔진 규약의 Billboard 행렬을 계산한다.
@@ -600,9 +573,9 @@ FMatrix FMultipleViewportsAdapter::BuildEngineBillboardMatrix(const int32 ViewIn
 	{
 		// 직교 투영의 모든 시선은 평행하므로 카메라 위치가 아니라 고정된 화면 기저를 사용한다.
 		// 위치 기반 LookAt을 사용하면 평면 이동 시 오브젝트-카메라 벡터가 달라져 Billboard가 회전한다.
-		const FVector Facing = NormalizedOrZero(CameraForward(ViewCamera.Transform.Rotation)) * -1.0f;
-		const FVector Right = NormalizedOrZero(CameraRight(ViewCamera.Transform.Rotation));
-		const FVector Up = NormalizedOrZero(CameraUp(ViewCamera.Transform.Rotation));
+		const FVector Facing = NormalizedOrZero(ViewCamera.Transform.Rotation.GetForwardVector()) * -1.0f;
+		const FVector Right = NormalizedOrZero(ViewCamera.Transform.Rotation.GetRightVector());
+		const FVector Up = NormalizedOrZero(ViewCamera.Transform.Rotation.GetUpVector());
 
 		FMatrix EngineMatrix;
 		EngineMatrix.SetIdentity();
