@@ -177,6 +177,7 @@ struct alignas(16) FLightGridConstants
 static_assert(sizeof(FLightGridConstants) == 48, "UberLit의 cbuffer LightGrid와 같아야 한다");
 
 struct FLightRenderParameters;
+class FProjectedShadowInfo;
 
 class FRenderer
 {
@@ -210,6 +211,10 @@ public:
 	// Depth Prepass: 불투명만 PS 없이 그려 깊이 버퍼를 채운다. RenderQueueSorting 뒤, RenderOpaque 전에 부른다.
 	// 같은 VS·행렬이라 깊이가 비트 단위로 같으므로 본 패스는 LESS_EQUAL로 통과한다.
 	void RenderDepth(const FMatrix& ViewProjection);
+
+	// 준비된 타깃·라이트 VP로 Caster 큐를 소비해 Shadow Depth를 생성한다.
+	// 카메라 큐를 Gather·정렬하기 전에 호출한다.
+	void RenderShadowDepth(FProjectedShadowInfo& ShadowInfo);
 
 	// [측정 전용] RenderOpaque 직후에 호출한다. 불투명 패킷을 깊이 LESS_EQUAL·색 쓰기 없이 다시 그리며
 	// 패킷마다 오클루전 쿼리를 걸어, 최종 화면에 실제로 픽셀을 남긴 물체 수를 센다.
