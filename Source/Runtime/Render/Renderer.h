@@ -212,6 +212,10 @@ public:
 	// 같은 VS·행렬이라 깊이가 비트 단위로 같으므로 본 패스는 LESS_EQUAL로 통과한다.
 	void RenderDepth(const FMatrix& ViewProjection);
 
+	// SetupProjection이 성공한 작업의 Depth 타깃과 패스 설정을 준비한다.
+	// 실패하면 false를 반환하며, 호출자는 해당 작업을 제출하지 않는다.
+	bool PrepareShadowDepthTarget(FProjectedShadowInfo& ShadowInfo);
+
 	// 준비된 타깃·라이트 VP로 Caster 큐를 소비해 Shadow Depth를 생성한다.
 	// 카메라 큐를 Gather·정렬하기 전에 호출한다.
 	void RenderShadowDepth(FProjectedShadowInfo& ShadowInfo);
@@ -257,6 +261,9 @@ private:
 	ELightCullingMode LightCullingMode = ELightCullingMode::Clustered;
 	// RenderDepth 동안 true. BindMaterial이 PS를 끈다.
 	bool bDepthOnly = false;
+
+	// 쉐도우맵에 사용하는 Depth 텍스처다.
+	TUniquePtr<FTexture2D> ShadowDepthTarget;
 
 	// FIFO 소비용 배열의 용량만 재사용하며 매 View의 패킷 값은 새로 채운다.
 	FRenderQueue RenderPackets;

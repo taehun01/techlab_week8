@@ -15,6 +15,9 @@
 #include "Camera/CameraComponent.h"
 #include "Asset/AssetManager.h"
 
+#include "Engine/LightSceneProxy.h"
+#include "ProjectedShadowInfo.h"
+
 #include <algorithm>
 #include <chrono>
 #include <unordered_map>
@@ -284,6 +287,53 @@ void FRenderer::RenderDepth(const FMatrix& ViewProjection)
 	// 본 패스가 머티리얼을 처음부터 다시 바인딩해 PS가 돌아오게 한다.
 	LastMesh = nullptr;
 	LastMaterial = nullptr;
+}
+
+// 유효한 프로젝션이 설정된 섀도우 맵 타깃을 준비한다.
+bool FRenderer::PrepareShadowDepthTarget(FProjectedShadowInfo& ShadowInfo)
+{
+	// 이전 타깃 참조 초기화
+	ShadowInfo.SetRenderingInfo(FRenderingInfo{});
+
+	const uint32 Resolution = static_cast<uint32>(ShadowInfo.LightProxy->GetLightComponent()->GetShadowMapResolution());
+
+	// 텍스쳐 크기가 달라질때 GPU 재할당
+	if (!ShadowDepthTarget || ShadowDepthTarget->GetWidth() != Resolution || ShadowDepthTarget->GetWidth() != Resolution)
+	{
+		D3D11_TEXTURE2D_DESC Desc{};
+		Desc.Width = Resolution;
+		Desc.Height = Resolution;
+		Desc.MipLevels = 1;
+		Desc.ArraySize = 1;
+		Desc.Format = DXGI_FORMAT_R24G8_TYPELESS;
+		Desc.SampleDesc.Count = 1;
+		Desc.Usage = D3D11_USAGE_DEFAULT;
+		Desc.BindFlags = D3D11_BIND_DEPTH_STENCIL | D3D11_BIND_SHADER_RESOURCE;
+
+		// 필요한 View까지 생성된 경우에만 기존 자원을 교체한다.
+		TUniquePtr<FTexture2D> NewTarget = RenderCommand::CreateTexture2D(Desc);
+		if (!NewTarget->GetDSV() || !NewTarget->GetSRV())
+		{
+			HTR_LOG(Error, "Shadow Depth target creation failed: {}x{}", Resolution, Resolution);
+			return false;
+		}
+		ShadowDepthTarget = std::move(NewTarget);
+	}
+	// 색상 타깃은 비워 두고 전체 텍스처를 Depth 출력 영역으로 사용한다.
+	FRenderingInfo RenderingInfo{};
+	RenderingInfo.ViewportSetting.Width = Resolution;
+	RenderingInfo.ViewportSetting.Height = Resolution;
+	RenderingInfo.DepthStencil.Texture = ShadowDepthTarget.get();
+	RenderingInfo.DepthStencil.LoadOp = ERenderTargetLoadOp::Clear;
+	RenderingInfo.DepthStencil.StoreOp = ERenderTargetStoreOp::Store;
+	RenderingInfo.DepthStencil.ClearValue.DepthClearValue = 1.0f;
+
+	ShadowInfo.SetRenderingInfo(RenderingInfo);
+	return true;
+}
+
+void FRenderer::RenderShadowDepth(FProjectedShadowInfo& ShadowInfo)
+{
 }
 
 // 정렬된 패킷 중 [Begin, End) 범위를 View 행렬과 Section 범위로 그린다.
