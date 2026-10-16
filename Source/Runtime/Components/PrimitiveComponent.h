@@ -28,6 +28,8 @@ class UPrimitiveComponent :public USceneComponent
 	// (빌보드는 단일 머티리얼, 스태틱 메시는 슬롯별 덮어쓰기) 각자 등록한다.
 	REFLECT_START(ClassName)
 		PROPERTY(bVisible)
+		PROPERTY(bCaster)
+		PROPERTY(bReceiver)
 		REFLECT_END()
 public:
 	UPrimitiveComponent();
@@ -58,6 +60,20 @@ public:
 		bVisible = bInVisible;
 		MarkRenderStateDirty();
 	}
+	bool IsCaster() const { return bCaster; }
+	void SetCaster(bool bInCaster)
+	{
+		bCaster = bInCaster;
+		MarkRenderStateDirty();
+	}
+
+	bool IsReceiver() const { return bReceiver; }
+	void SetVReceiver(bool bInReceiver)
+	{
+		bReceiver = bInReceiver;
+		MarkRenderStateDirty();
+	}
+
 
 	// Details에서 직접 바꾼 가시성도 Proxy의 렌더 상태에 반영한다.
 	void PostEditChangeProperty(const FProperty& Property) override;
@@ -94,6 +110,8 @@ protected:
 	bool TraceMesh(const FRay& WorldRay, const FStaticMeshData& Mesh, const FMatrix& WorldMatrix, FHitResult& OutResult);
 	bool TraceMeshLocal(const FRay& LocalRay, const FStaticMeshData& Mesh, float& OutT);
 	bool bVisible = true;
+	bool bCaster = false;
+	bool bReceiver = false;
 
 private:
 	friend class FScene;

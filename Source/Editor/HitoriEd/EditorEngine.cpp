@@ -943,9 +943,12 @@ void UEditorEngine::RenderShadowPass(const FRenderingInfo& ViewRenderingInfo, FS
 		
 		for (int j = 0; j < ViewWorldScene.PrimitiveSceneProxies.Num();j++)
 		{
-			FMatrix WorldMatrix = ViewWorldScene.PrimitiveSceneProxies[j]->GetLocalToWorld();
-			ShadowViewRenderer->OnRender(PassInfo.DepthStencil.Texture, LightSpaceMatrix, WorldMatrix);
-			RenderCommand::DrawIndexed();
+			if (ViewWorldScene.PrimitiveSceneProxies[j]->IsCaster()) {
+				FMatrix WorldMatrix = ViewWorldScene.PrimitiveSceneProxies[j]->GetLocalToWorld();
+				ShadowViewRenderer->OnRender(PassInfo.DepthStencil.Texture, LightSpaceMatrix, WorldMatrix);
+				RenderCommand::BindMesh(ViewWorldScene.PrimitiveSceneProxies[j]->GetMesh(), 0);
+				RenderCommand::DrawIndexed(ViewWorldScene.PrimitiveSceneProxies[j]->GetMesh()->GetIndexBuffer(0)->GetIndexCount(), 0);
+			}
 		}
 	}
 	RenderCommand::EndRenderPass(PassInfo);
