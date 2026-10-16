@@ -24,6 +24,7 @@ public:
 	bool Init();
 	void OnRender(FTexture2D* depthTexture, const FMatrix& ViewProjection, const FMatrix& WorldMatrix);
 	void AddShadowMap(int32 index, TUniquePtr<FTexture2D> ShadowMap);
+	FTexture2D* GetShadowMapbyUUID(int32 UUID) { return ShadowTextureMap[UUID].get(); }
 	void ResetCurrentShadowMap();
 
 	TMap<int32, TUniquePtr<FTexture2D>> ShadowTextureMap;

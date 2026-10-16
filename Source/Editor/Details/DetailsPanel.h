@@ -6,9 +6,11 @@
 #include "Engine/World.h"
 
 struct FTransform;
+class FTexture2D;
 
 using DetailsSelectionCallback = std::function<void(UActorComponent*)>;
 using DetailsDeleteComponentCallback = std::function<void(UActorComponent*)>;
+using DetailsShadowMapQuery = std::function<FTexture2D*(uint32)>;
 
 class FDetailsPanel : public IEditorPanel
 {
@@ -34,6 +36,7 @@ public:
 
 	void SetSelectionCallback(DetailsSelectionCallback InCallback) { Callback = InCallback; }
 	void SetDeleteComponentCallback(DetailsDeleteComponentCallback InCallback) { DeleteCallback = InCallback; }
+	void SetShadowMapQuery(DetailsShadowMapQuery InQuery) { ShadowMapQuery = InQuery; }
 
 	void SetWorld(UWorld* InWorld) { World = InWorld; }
 
@@ -50,6 +53,7 @@ private:
 	UActorComponent* TargetComponent = nullptr;
 	DetailsSelectionCallback Callback;
 	DetailsDeleteComponentCallback DeleteCallback;
+	DetailsShadowMapQuery ShadowMapQuery;
 
 	UActorComponent* PendingDeleteComponent = nullptr;
 	UActorComponent* EditingNameComponent = nullptr;

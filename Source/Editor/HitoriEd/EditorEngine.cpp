@@ -124,6 +124,12 @@ bool UEditorEngine::Init()
 
 	// 필요한 Panel들 추가후 raw pointer 반환(소유권 = EditorUI)
 	DetailsPanel = EditorUI->AddEditorPanel<FDetailsPanel>();
+	DetailsPanel->SetShadowMapQuery([this](uint32 LightUUID) -> FTexture2D*
+		{
+			if (!ShadowViewRenderer) return nullptr;
+			const auto* ShadowMap = ShadowViewRenderer->ShadowTextureMap.Find(LightUUID);
+			return ShadowMap ? ShadowMap->get() : nullptr;
+		});
 	EditorControlsPanel = EditorUI->AddEditorPanel<FEditorControlsPanel>();
 	ViewportsPanel = EditorUI->AddEditorPanel<FViewportsPanel>();
 	ContentDrawerPanel = EditorUI->AddEditorPanel<FContentDrawerPanel>();

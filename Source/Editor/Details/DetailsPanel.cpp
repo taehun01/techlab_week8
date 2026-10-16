@@ -1,4 +1,8 @@
 #include "EnginePCH.h"
+
+#include <algorithm>
+
+#include "Engine/Engine.h"
 #include "Editor/Details/DetailsPanel.h"
 
 #include "imgui_internal.h"
@@ -898,6 +902,23 @@ void FDetailsPanel::OnRender()
 			if (UMeshComponent* MeshComponent = Cast<UMeshComponent>(TargetComponent))
 			{
 				DrawMaterialSlots(MeshComponent);
+			}
+			if (ULightComponent* Light = Cast<ULightComponent>(TargetComponent))
+			{
+				ImGui::SeparatorText("Shadow Map Preview");
+				FTexture2D* ShadowMap = ShadowMapQuery ? ShadowMapQuery(Light->GetUUID()) : nullptr;
+				if (ShadowMap && ShadowMap->GetSRV() && ShadowMap->GetWidth() > 0)
+				{
+					const float Width = std::min(512.0f, ImGui::GetContentRegionAvail().x);
+					const float Height = Width * static_cast<float>(ShadowMap->GetHeight()) / ShadowMap->GetWidth();
+					if (Width > 0.0f)
+						ImGui::Image((ImTextureID)ShadowMap->GetSRV(), ImVec2(Width, Height));
+					ImGui::TextDisabled("Raw depth (red channel)");
+				}
+				else
+				{
+					ImGui::TextDisabled("No shadow map available for this light.");
+				}
 			}
 			ImGui::PopID();
 
