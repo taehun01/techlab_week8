@@ -903,55 +903,73 @@ void UEditorEngine::RenderDepthPass(const int32 ViewIndex, const FRenderingInfo&
 void UEditorEngine::RenderShadowPass(const FRenderingInfo& ViewRenderingInfo, FScene ViewWorldScene)
 {
 	FRenderingInfo PassInfo{};
-	PassInfo.DepthStencil.Texture = ShadowViewRenderer->GetShadowTarget().get();
 	PassInfo.ViewportSetting.Width = 1920;
 	PassInfo.ViewportSetting.Height = 1080;
-	RenderCommand::BeginRenderPass(PassInfo);
+	PassInfo.ColorRenderTargets.Reset();
+
 	for (int i = 0;i < ViewWorldScene.LocalLightProxies.Num();i++) {
-
-		FVector WorldLocation = ViewWorldScene.LocalLightProxies[i]->GetLightComponent()->GetWorldLocation();
-		FRotator WorldRotation = ViewWorldScene.LocalLightProxies[i]->GetLightComponent()->GetWorldRotation();
-		FQuat WorldQuat = WorldRotation.Quaternion();
-		FMatrix RotationMatrix = WorldQuat.ToFMatrix();
-		FMatrix InverseTranslation = FMatrix::MakeTranslation(WorldLocation * -1.0f);
-		FMatrix InverseRotation = RotationMatrix.GetTransposed();
-		FMatrix LightViewMatrix = InverseTranslation * InverseRotation;
-		FMatrix LightProjectionMatrix = FMatrix::Identity;
-
-		if (ViewWorldScene.LocalLightProxies[i]->GetLightComponent()->GetLightType() == ELightType::Spot)
-		{
-			float AspectRatio = PassInfo.ViewportSetting.Width / PassInfo.ViewportSetting.Height;
-			const float FieldOfView = ViewWorldScene.LocalLightParameters[i].OuterConeCos * 2.0f;
-			const float NearClipPlane = 0.1f; 
-			const float FarClipPlane = ViewWorldScene.LocalLightParameters[i].Radius;
-			const float HalfFOV = FMath::DegreesToRadians(ViewWorldScene.LocalLightParameters[i].OuterConeCos) * 0.5f;
-			const float YScale = 1.0f / tan(HalfFOV);
-			const float XScale = YScale / AspectRatio;
-			const float ZScale = FarClipPlane / (FarClipPlane - NearClipPlane);
-			const float ZOffset = -NearClipPlane * FarClipPlane / (FarClipPlane - NearClipPlane);
-
-			//Forward가 X인 좌표
-			FMatrix LightProjectionMatrix = FMatrix(
-				0.0f, 0.0f, ZScale, 1.0f,
-				XScale, 0.0f, 0.0f, 0.0f,
-				0.0f, YScale, 0.0f, 0.0f,
-				0.0f, 0.0f, ZOffset, 0.0f
-			);
-		}
-
-		FMatrix LightSpaceMatrix = LightViewMatrix * LightProjectionMatrix;
-		
-		for (int j = 0; j < ViewWorldScene.PrimitiveSceneProxies.Num();j++)
-		{
-			if (ViewWorldScene.PrimitiveSceneProxies[j]->IsCaster()) {
-				FMatrix WorldMatrix = ViewWorldScene.PrimitiveSceneProxies[j]->GetLocalToWorld();
-				ShadowViewRenderer->OnRender(PassInfo.DepthStencil.Texture, LightSpaceMatrix, WorldMatrix);
-				RenderCommand::BindMesh(ViewWorldScene.PrimitiveSceneProxies[j]->GetMesh(), 0);
-				RenderCommand::DrawIndexed(ViewWorldScene.PrimitiveSceneProxies[j]->GetMesh()->GetIndexBuffer(0)->GetIndexCount(), 0);
+			uint32 LightUUID = ViewWorldScene.LocalLightProxies[i]->GetLightComponent()->GetUUID();
+			if ((ShadowViewRenderer->ShadowTextureMap.Find(LightUUID)))
+			{
+				PassInfo.DepthStencil.Texture = ShadowViewRenderer->ShadowTextureMap.Find(LightUUID)->get();
 			}
-		}
+			else {
+				D3D11_TEXTURE2D_DESC Desc{};
+				Desc.Width = 1920;
+				Desc.Height = 1080;
+				Desc.MipLevels = 1;
+				Desc.ArraySize = 1;
+				Desc.Format = DXGI_FORMAT_R24G8_TYPELESS;
+				Desc.SampleDesc.Count = 1;
+				Desc.Usage = D3D11_USAGE_DEFAULT;
+				Desc.BindFlags = D3D11_BIND_DEPTH_STENCIL | D3D11_BIND_SHADER_RESOURCE;
+				TUniquePtr<FTexture2D> CurrentShadowMap = RenderCommand::CreateTexture2D(Desc);
+				ShadowViewRenderer->AddShadowMap(LightUUID,std::move(CurrentShadowMap));
+				PassInfo.DepthStencil.Texture = ShadowViewRenderer->ShadowTextureMap.Find(LightUUID)->get();
+			}
+			RenderCommand::BeginRenderPass(PassInfo);
+
+			FVector WorldLocation = ViewWorldScene.LocalLightProxies[i]->GetLightComponent()->GetWorldLocation();
+			FRotator WorldRotation = ViewWorldScene.LocalLightProxies[i]->GetLightComponent()->GetWorldRotation();
+			FQuat WorldQuat = WorldRotation.Quaternion();
+			FMatrix RotationMatrix = WorldQuat.ToFMatrix();
+			FMatrix InverseTranslation = FMatrix::MakeTranslation(WorldLocation * -1.0f);
+			FMatrix InverseRotation = RotationMatrix.GetTransposed();
+			FMatrix LightViewMatrix = InverseTranslation * InverseRotation;
+			FMatrix LightProjectionMatrix = FMatrix::Identity;
+
+			if (ViewWorldScene.LocalLightProxies[i]->GetLightComponent()->GetLightType() == ELightType::Spot)
+			{
+				float AspectRatio = float(PassInfo.ViewportSetting.Width) / float(PassInfo.ViewportSetting.Height);
+				const float NearClipPlane = 0.1f;
+				const float FarClipPlane = ViewWorldScene.LocalLightParameters[i].Radius;
+				const float HalfFOV = acos(ViewWorldScene.LocalLightParameters[i].OuterConeCos);
+				const float YScale = 1.0f / tan(HalfFOV);
+				const float XScale = YScale / AspectRatio;
+				const float ZScale = FarClipPlane / (FarClipPlane - NearClipPlane);
+				const float ZOffset = -NearClipPlane * FarClipPlane / (FarClipPlane - NearClipPlane);
+				//Forward가 X인 좌표
+				LightProjectionMatrix = FMatrix(
+					0.0f, 0.0f, ZScale, 1.0f,
+					XScale, 0.0f, 0.0f, 0.0f,
+					0.0f, YScale, 0.0f, 0.0f,
+					0.0f, 0.0f, ZOffset, 0.0f
+				);
+			}
+
+			FMatrix LightSpaceMatrix = LightViewMatrix * LightProjectionMatrix;
+
+			for (int j = 0; j < ViewWorldScene.PrimitiveSceneProxies.Num();j++)
+			{
+				if (ViewWorldScene.PrimitiveSceneProxies[j]->IsCaster() && ViewWorldScene.PrimitiveSceneProxies[j]->GetMesh() != nullptr) {
+					FMatrix WorldMatrix = ViewWorldScene.PrimitiveSceneProxies[j]->GetLocalToWorld();
+					ShadowViewRenderer->OnRender(PassInfo.DepthStencil.Texture, LightSpaceMatrix, WorldMatrix);
+					RenderCommand::BindMesh(ViewWorldScene.PrimitiveSceneProxies[j]->GetMesh(), 0);
+					RenderCommand::DrawIndexed(ViewWorldScene.PrimitiveSceneProxies[j]->GetMesh()->GetIndexBuffer(0)->GetIndexCount(), 0);
+				}
+			}
+			RenderCommand::EndRenderPass(PassInfo);
 	}
-	RenderCommand::EndRenderPass(PassInfo);
 }
 
 // 입력 View의 Ray와 피킹으로 Gizmo·공유 선택을 갱신한다.

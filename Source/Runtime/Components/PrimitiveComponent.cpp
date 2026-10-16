@@ -84,6 +84,10 @@ void UPrimitiveComponent::PostEditChangeProperty(const FProperty& Property)
 	Super::PostEditChangeProperty(Property);
 	if (Property.Name == "bVisible")
 		MarkRenderStateDirty();
+	if (Property.Name == "bCaster")
+		MarkRenderStateDirty();
+	if (Property.Name == "bReceiver")
+		MarkRenderStateDirty();
 }
 
 bool UPrimitiveComponent::LineTraceComponentLocal(const FRay& LocalRay, float& OutT)

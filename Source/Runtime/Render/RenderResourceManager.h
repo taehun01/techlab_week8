@@ -29,9 +29,8 @@ public:
 	static FShaderProgram* GetUberLitProgram(EViewMode Mode);
 	// 머티리얼 셰이더가 UberLit(기본 키 또는 변형)인지. 아니면 뷰모드로 바꾸지 않는다.
 	static bool IsUberLitProgram(const FShaderProgram* Program);
-private:
 	void LoadOrCompileShader(const FString& Path, const D3D_SHADER_MACRO* Macro = nullptr);
-
+private:
 	TMap<FString, TUniquePtr<FVertexShader>> VertexShaderMap;
 	TMap<FString, TUniquePtr<FPixelShader>> PixelShaderMap;
 	TMap<FString, TUniquePtr<FComputeShader>> ComputeShaderMap;
