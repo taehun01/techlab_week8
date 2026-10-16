@@ -10,7 +10,7 @@
 
 bool FShadowViewRenderer::Init()
 {
-	Shader = FRenderResourceManager::GetShaderProgram("Resources/Shader/DepthViewShader.hlsl");
+	Shader = FRenderResourceManager::GetShaderProgram("Resources/Shader/ShadowViewShader.hlsl");
 	if (!Shader)
 	{
 		HTR_LOG(Error, "[ShadowMap] shader not found");

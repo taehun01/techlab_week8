@@ -897,6 +897,14 @@ void UEditorEngine::RenderDepthPass(const int32 ViewIndex, const FRenderingInfo&
 	RenderCommand::EndRenderPass(PassInfo);
 }
 
+void UEditorEngine::RenderShadowPass(const int32 ViewIndex, const FRenderingInfo& ViewRenderingInfo, const FMatrix& LightSpaceMatrix, const FMatrix& WorldMatrix)
+{
+	FRenderingInfo PassInfo = ViewRenderingInfo;
+	RenderCommand::BeginRenderPass(PassInfo);
+	ShadowViewRenderer->OnRender(ViewRenderingInfo.DepthStencil.Texture, LightSpaceMatrix, WorldMatrix);
+	RenderCommand::EndRenderPass(PassInfo);
+}
+
 // 입력 View의 Ray와 피킹으로 Gizmo·공유 선택을 갱신한다.
 void UEditorEngine::UpdateGizmoAndPicking()
 {
