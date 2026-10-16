@@ -119,7 +119,7 @@ private:
 	//ToneMap Pass
 	void RenderToneMapPass(const int32 ViewIndex, const FRenderingInfo& ViewRenderingInfo);
 	//Shadow Pass
-	void RenderShadowPass(const int32 ViewIndex, const FRenderingInfo& ViewRenderingInfo, const FMatrix& LightSpaceMatrix, const FMatrix& WorldMatrix);
+	void RenderShadowPass(const FRenderingInfo& ViewRenderingInfo, FScene ViewWorldScene);
 	//Icon Pass
 	void RenderIconPass(int32 ViewIndex, UWorld& ViewWorld, const FRenderingInfo& ViewRenderingInfo, const FMatrix& ViewProjection, const FVector& ViewCameraLocation, const FVector& ViewCameraForward, FRenderQueue& RenderIconQueue, FRenderQueue& ArrowQueue);
 

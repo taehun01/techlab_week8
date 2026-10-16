@@ -23,9 +23,11 @@ public:
 
 	bool Init();
 	void OnRender(FTexture2D* depthTexture, const FMatrix& ViewProjection, const FMatrix& WorldMatrix);
+	TUniquePtr<FTexture2D>& GetShadowTarget() { return CurrentShadowMap; }
 private:
 	FPipelineState PipelineState;
 	FShaderProgram* Shader = nullptr;
 	TUniquePtr<FConstantBuffer> ConstantBuffer;
-
+	TMap<int32, FTexture2D> ShadowTextureMap;
+	TUniquePtr<FTexture2D> CurrentShadowMap;
 };

@@ -8,10 +8,10 @@ cbuffer FShadowViewConstants : register(b0)
 
 struct VSInput
 {
-    float4 Position : SV_POSITION;
+    float4 Position : POSITION;
 };
 
-float4 mainVS(VSInput Input)
+float4 mainVS(VSInput Input) : SV_Position
 {  
     float4 WorldPos = mul(Input.Position, WorldMatrix);
     float4 Output = mul(WorldPos, LightSpaceMatrix);

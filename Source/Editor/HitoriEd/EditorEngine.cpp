@@ -118,6 +118,9 @@ bool UEditorEngine::Init()
 	ToneMapRenderer = MakeUnique<FToneMapRenderer>();
 	ToneMapRenderer->Init();
 
+	ShadowViewRenderer = MakeUnique<FShadowViewRenderer>();
+	ShadowViewRenderer->Init();
+
 
 	// 필요한 Panel들 추가후 raw pointer 반환(소유권 = EditorUI)
 	DetailsPanel = EditorUI->AddEditorPanel<FDetailsPanel>();
@@ -897,11 +900,54 @@ void UEditorEngine::RenderDepthPass(const int32 ViewIndex, const FRenderingInfo&
 	RenderCommand::EndRenderPass(PassInfo);
 }
 
-void UEditorEngine::RenderShadowPass(const int32 ViewIndex, const FRenderingInfo& ViewRenderingInfo, const FMatrix& LightSpaceMatrix, const FMatrix& WorldMatrix)
+void UEditorEngine::RenderShadowPass(const FRenderingInfo& ViewRenderingInfo, FScene ViewWorldScene)
 {
-	FRenderingInfo PassInfo = ViewRenderingInfo;
+	FRenderingInfo PassInfo{};
+	PassInfo.DepthStencil.Texture = ShadowViewRenderer->GetShadowTarget().get();
+	PassInfo.ViewportSetting.Width = 1920;
+	PassInfo.ViewportSetting.Height = 1080;
 	RenderCommand::BeginRenderPass(PassInfo);
-	ShadowViewRenderer->OnRender(ViewRenderingInfo.DepthStencil.Texture, LightSpaceMatrix, WorldMatrix);
+	for (int i = 0;i < ViewWorldScene.LocalLightProxies.Num();i++) {
+
+		FVector WorldLocation = ViewWorldScene.LocalLightProxies[i]->GetLightComponent()->GetWorldLocation();
+		FRotator WorldRotation = ViewWorldScene.LocalLightProxies[i]->GetLightComponent()->GetWorldRotation();
+		FQuat WorldQuat = WorldRotation.Quaternion();
+		FMatrix RotationMatrix = WorldQuat.ToFMatrix();
+		FMatrix InverseTranslation = FMatrix::MakeTranslation(WorldLocation * -1.0f);
+		FMatrix InverseRotation = RotationMatrix.GetTransposed();
+		FMatrix LightViewMatrix = InverseTranslation * InverseRotation;
+		FMatrix LightProjectionMatrix = FMatrix::Identity;
+
+		if (ViewWorldScene.LocalLightProxies[i]->GetLightComponent()->GetLightType() == ELightType::Spot)
+		{
+			float AspectRatio = PassInfo.ViewportSetting.Width / PassInfo.ViewportSetting.Height;
+			const float FieldOfView = ViewWorldScene.LocalLightParameters[i].OuterConeCos * 2.0f;
+			const float NearClipPlane = 0.1f; 
+			const float FarClipPlane = ViewWorldScene.LocalLightParameters[i].Radius;
+			const float HalfFOV = FMath::DegreesToRadians(ViewWorldScene.LocalLightParameters[i].OuterConeCos) * 0.5f;
+			const float YScale = 1.0f / tan(HalfFOV);
+			const float XScale = YScale / AspectRatio;
+			const float ZScale = FarClipPlane / (FarClipPlane - NearClipPlane);
+			const float ZOffset = -NearClipPlane * FarClipPlane / (FarClipPlane - NearClipPlane);
+
+			//Forward가 X인 좌표
+			FMatrix LightProjectionMatrix = FMatrix(
+				0.0f, 0.0f, ZScale, 1.0f,
+				XScale, 0.0f, 0.0f, 0.0f,
+				0.0f, YScale, 0.0f, 0.0f,
+				0.0f, 0.0f, ZOffset, 0.0f
+			);
+		}
+
+		FMatrix LightSpaceMatrix = LightViewMatrix * LightProjectionMatrix;
+		
+		for (int j = 0; j < ViewWorldScene.PrimitiveSceneProxies.Num();j++)
+		{
+			FMatrix WorldMatrix = ViewWorldScene.PrimitiveSceneProxies[j]->GetLocalToWorld();
+			ShadowViewRenderer->OnRender(PassInfo.DepthStencil.Texture, LightSpaceMatrix, WorldMatrix);
+			RenderCommand::DrawIndexed();
+		}
+	}
 	RenderCommand::EndRenderPass(PassInfo);
 }
 
@@ -969,7 +1015,7 @@ void UEditorEngine::UpdateGizmoAndPicking()
 // View 행렬로 Scene·Grid·Gizmo·텍스트·Outline을 렌더한다.
 void UEditorEngine::RenderFrame(const int32 ViewIndex, UWorld& ViewWorld, const FRenderingInfo& ViewRenderingInfo, const FMatrix& ViewProjection, const FVector& ViewCameraLocation, const FVector& ViewCameraForward, FRenderQueue& RenderQueue, FRenderQueue& IconQueue, FRenderQueue& ArrowQueue)
 {
-
+	RenderShadowPass(ViewRenderingInfo, ViewWorld.GetScene());
 	RenderOpaquePass(ViewIndex, ViewRenderingInfo, ViewProjection, ViewCameraLocation, ViewCameraForward, RenderQueue);
 
 	if (SettingsPanel->GetSettings().bDepthView)
