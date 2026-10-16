@@ -290,50 +290,117 @@ void FRenderer::RenderDepth(const FMatrix& ViewProjection)
 }
 
 // 유효한 프로젝션이 설정된 섀도우 맵 타깃을 준비한다.
-bool FRenderer::PrepareShadowDepthTarget(FProjectedShadowInfo& ShadowInfo)
+void FRenderer::PrepareShadowDepthTargets(TArray<FProjectedShadowInfo>& ShadowInfos)
 {
-	// 이전 타깃 참조 초기화
-	ShadowInfo.SetRenderingInfo(FRenderingInfo{});
-
-	const uint32 Resolution = static_cast<uint32>(ShadowInfo.LightProxy->GetLightComponent()->GetShadowMapResolution());
-
-	// 텍스쳐 크기가 달라질때 GPU 재할당
-	if (!ShadowDepthTarget || ShadowDepthTarget->GetWidth() != Resolution || ShadowDepthTarget->GetHeight() != Resolution)
+	// 타깃을 교체하기 전에 전달받은 작업들의 이전 비소유 참조를 비운다.
+	// 투영 결과와 Caster 큐는 유지한다.
+	for (FProjectedShadowInfo& ShadowInfo : ShadowInfos)
 	{
-		D3D11_TEXTURE2D_DESC Desc{};
-		Desc.Width = Resolution;
-		Desc.Height = Resolution;
-		Desc.MipLevels = 1;
-		Desc.ArraySize = 1;
-		Desc.Format = DXGI_FORMAT_R24G8_TYPELESS;
-		Desc.SampleDesc.Count = 1;
-		Desc.Usage = D3D11_USAGE_DEFAULT;
-		Desc.BindFlags = D3D11_BIND_DEPTH_STENCIL | D3D11_BIND_SHADER_RESOURCE;
-
-		// 필요한 View까지 생성된 경우에만 기존 자원을 교체한다.
-		TUniquePtr<FTexture2D> NewTarget = RenderCommand::CreateTexture2D(Desc);
-		if (!NewTarget->GetDSV() || !NewTarget->GetSRV())
-		{
-			HTR_LOG(Error, "Shadow Depth target creation failed: {}x{}", Resolution, Resolution);
-			return false;
-		}
-		ShadowDepthTarget = std::move(NewTarget);
+		ShadowInfo.SetRenderingInfo(FRenderingInfo{});
 	}
-	// 색상 타깃은 비워 두고 전체 텍스처를 Depth 출력 영역으로 사용한다.
-	FRenderingInfo RenderingInfo{};
-	RenderingInfo.ViewportSetting.Width = Resolution;
-	RenderingInfo.ViewportSetting.Height = Resolution;
-	RenderingInfo.DepthStencil.Texture = ShadowDepthTarget.get();
-	RenderingInfo.DepthStencil.LoadOp = ERenderTargetLoadOp::Clear;
-	RenderingInfo.DepthStencil.StoreOp = ERenderTargetStoreOp::Store;
-	RenderingInfo.DepthStencil.ClearValue.DepthClearValue = 1.0f;
 
-	ShadowInfo.SetRenderingInfo(RenderingInfo);
-	return true;
+	// 남는 GPU 텍스처는 해제하되 배열의 저장 용량은 유지한다.
+	// 이전 작업들의 모든 소비가 끝난 시점에만 이 함수를 호출한다.
+	ShadowDepthTargets.SetNum(ShadowInfos.Num(), false);
+
+	for (int32 TargetIndex = 0; TargetIndex < ShadowInfos.Num(); ++TargetIndex)
+	{
+		FProjectedShadowInfo& ShadowInfo = ShadowInfos[TargetIndex];
+		TUniquePtr<FTexture2D>& DepthTarget = ShadowDepthTargets[TargetIndex];
+
+		// 투영의 유효성은 작업을 구성한 호출자가 보장한다.
+		const uint32 Resolution = static_cast<uint32>(ShadowInfo.LightProxy->GetLightComponent()->GetShadowMapResolution());
+
+		// 같은 슬롯의 크기가 같으면 GPU 자원을 재사용한다.
+		if (!DepthTarget
+			|| DepthTarget->GetWidth() != Resolution
+			|| DepthTarget->GetHeight() != Resolution)
+		{
+			D3D11_TEXTURE2D_DESC Desc{};
+			Desc.Width = Resolution;
+			Desc.Height = Resolution;
+			Desc.MipLevels = 1;
+			Desc.ArraySize = 1;
+			Desc.Format = DXGI_FORMAT_R24G8_TYPELESS;
+			Desc.SampleDesc.Count = 1;
+			Desc.Usage = D3D11_USAGE_DEFAULT;
+			Desc.BindFlags = D3D11_BIND_DEPTH_STENCIL | D3D11_BIND_SHADER_RESOURCE;
+
+			// 새 자원의 필요한 View가 모두 생성된 경우에만 슬롯을 교체한다.
+			TUniquePtr<FTexture2D> NewTarget = RenderCommand::CreateTexture2D(Desc);
+			if (!NewTarget->GetDSV() || !NewTarget->GetSRV())
+			{
+				HTR_LOG(Error, "Shadow Depth target {} creation failed: {}x{}",	TargetIndex, Resolution, Resolution);
+				continue;
+			}
+
+			DepthTarget = std::move(NewTarget);
+		}
+
+		// 이 작업에 배정한 텍스처와 전체 렌더 영역을 연결한다.
+		FRenderingInfo RenderingInfo{};
+		RenderingInfo.ViewportSetting.Width = Resolution;
+		RenderingInfo.ViewportSetting.Height = Resolution;
+		RenderingInfo.DepthStencil.Texture = DepthTarget.get();
+		RenderingInfo.DepthStencil.LoadOp = ERenderTargetLoadOp::Clear;
+		RenderingInfo.DepthStencil.StoreOp = ERenderTargetStoreOp::Store;
+		RenderingInfo.DepthStencil.ClearValue.DepthClearValue = 1.0f;
+
+		ShadowInfo.SetRenderingInfo(RenderingInfo);
+	}
+}
+
+void FRenderer::RenderShadowMaps(TArray<FProjectedShadowInfo>&& InShadows)
+{
+	// 이전 프레임의 소비가 끝난 뒤, 새 작업 목록의 소유권을 인수한다.
+	ProjectedShadows = std::move(InShadows);
+
+	// 빈 목록도 전달하여 이전 타깃을 정리한다.
+	PrepareShadowDepthTargets(ProjectedShadows);
+
+	for (FProjectedShadowInfo& ShadowInfo : ProjectedShadows)
+	{
+		// 타깃 생성에 실패한 작업만 제외한다.
+		if (!ShadowInfo.HasDepthTarget())
+			continue;
+
+		RenderShadowDepth(ShadowInfo);
+	}
 }
 
 void FRenderer::RenderShadowDepth(FProjectedShadowInfo& ShadowInfo)
 {
+	// PrepareShadowDepthTarget 성공 후, 카메라 패스와 큐 수집 전에 호출한다.
+	// 이전 카메라의 묶음과 상수 준비 상태를 그림자 작업에 재사용하지 않는다.
+	ResetStaticDrawGroups();
+	bObjectConstantsPrepared = false;
+
+	// Caster 큐를 소비하고 라이트 기준 View·Object 상수를 준비한다.
+	RenderQueueSorting(ShadowInfo.CasterQueue, ShadowInfo.LightViewProjection, ShadowInfo.ShadowViewOrigin);
+
+	// 기존 UberLit의 Unlit VS를 사용해 정점 조명 계산 없이 위치를 변환한다.
+	// 실제 화면 View의 Unlit 여부는 호출자가 판단한다.
+	const EViewMode SavedViewMode = CurrentViewMode;
+	SetViewMode(EViewMode::Unlit);
+
+	// 동일 텍스처를 SRV와 DSV로 동시에 바인딩하지 않는다.
+	RenderCommand::UnbindShaderResource(ShadowDepthTextureSlot, EShaderBindFlagBits::Pixel);
+	RenderCommand::BeginRenderPass(ShadowInfo.RenderingInfo);
+
+	// 이전 View의 Wireframe·오버레이 상태가 그림자에 영향을 주지 않게 한다.
+	RenderCommand::SetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+	RenderCommand::SetRasterizerState(ERasterizerState::SolidBack);
+
+	// 뎁스를 그린다
+	RenderDepth(ShadowInfo.LightViewProjection);
+	RenderCommand::EndRenderPass(ShadowInfo.RenderingInfo);
+
+	// 화면 렌더링에 사용할 모드를 복원하고 소비한 렌더 목록을 정리한다.
+	SetViewMode(SavedViewMode);
+	RenderPackets.Reset();
+	SortEntries.Reset();
+	FirstTranslucentIndex = 0;
+
 }
 
 // 정렬된 패킷 중 [Begin, End) 범위를 View 행렬과 Section 범위로 그린다.
@@ -563,7 +630,12 @@ void FRenderer::BindMaterial(UMaterial* Material) {
 
 	RenderCommand::BindShaderProgram(Program);
 	if (bDepthOnly)
+	{
 		RenderCommand::GetContext()->PSSetShader(nullptr, nullptr, 0);   // 깊이만 쓰므로 조명 PS를 돌리지 않는다
+		RenderCommand::SetBlendState(EBlendState::Opaque);
+		RenderCommand::SetDepthStencilState(EDepthStencilState::Default);
+		return;
+	}
 	RenderCommand::SetBlendState(Material->BlendState);
 	// 반투명은 뒤에 그려지는 Grid·다른 반투명을 가리지 않도록 깊이를 쓰지 않는다.
 	const bool Translucent{ Material->BlendState != EBlendState::Opaque };

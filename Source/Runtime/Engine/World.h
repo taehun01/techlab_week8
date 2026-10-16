@@ -69,6 +69,10 @@ public:
 		const void* ViewContext = nullptr, FRenderQueue* IconQueue = nullptr,
 		FRenderQueue* ArrowQueue = nullptr);
 
+
+	// BeginRenderViews 이후, 지원하는 모든 Spot의 투영·Caster 작업을 추가한다.
+	void GatherProjectedShadows(TArray<FProjectedShadowInfo>& OutShadows);
+
 	// BeginRenderViews와 SetupProjection 이후, 해당 작업에 한 번 호출한다.
 	// Light Frustum과 CastShadow 조건으로 정적 메시 Caster를 수집한다.
 	void GatherShadowCasters(FProjectedShadowInfo& ShadowInfo);

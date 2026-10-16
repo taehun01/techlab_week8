@@ -19,6 +19,9 @@ public:
         RenderingInfo = InRenderingInfo;
     }
 
+    // 타깃이 있는지 체크
+    bool HasDepthTarget() const { return RenderingInfo.DepthStencil.Texture != nullptr; }
+
     // World가 Caster를 탐색할 범위를 읽기 전용으로 제공한다.
     const FFrustumPlanes& GetCasterFrustum() const { return CasterFrustum; }
 

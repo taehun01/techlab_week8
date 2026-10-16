@@ -9,6 +9,7 @@
 #include "Occlusion/GPUOcclusion.h"
 #include "RenderEnums.h"
 #include "Material.h"
+#include "ProjectedShadowInfo.h"
 
 constexpr uint32 ObjectSlotBytes = 256;
 
@@ -177,7 +178,7 @@ struct alignas(16) FLightGridConstants
 static_assert(sizeof(FLightGridConstants) == 48, "UberLit의 cbuffer LightGrid와 같아야 한다");
 
 struct FLightRenderParameters;
-class FProjectedShadowInfo;
+
 
 class FRenderer
 {
@@ -212,13 +213,9 @@ public:
 	// 같은 VS·행렬이라 깊이가 비트 단위로 같으므로 본 패스는 LESS_EQUAL로 통과한다.
 	void RenderDepth(const FMatrix& ViewProjection);
 
-	// SetupProjection이 성공한 작업의 Depth 타깃과 패스 설정을 준비한다.
-	// 실패하면 false를 반환하며, 호출자는 해당 작업을 제출하지 않는다.
-	bool PrepareShadowDepthTarget(FProjectedShadowInfo& ShadowInfo);
-
-	// 준비된 타깃·라이트 VP로 Caster 큐를 소비해 Shadow Depth를 생성한다.
-	// 카메라 큐를 Gather·정렬하기 전에 호출한다.
-	void RenderShadowDepth(FProjectedShadowInfo& ShadowInfo);
+	// 수집이 끝난 작업 목록을 인수하여 타깃 준비와 그림자 맵 생성을 수행한다.
+	// 목록은 화면 조명·Preview 소비가 끝날 때까지 유지한다.
+	void RenderShadowMaps(TArray<FProjectedShadowInfo>&& InShadows);
 
 	// [측정 전용] RenderOpaque 직후에 호출한다. 불투명 패킷을 깊이 LESS_EQUAL·색 쓰기 없이 다시 그리며
 	// 패킷마다 오클루전 쿼리를 걸어, 최종 화면에 실제로 픽셀을 남긴 물체 수를 센다.
@@ -262,8 +259,12 @@ private:
 	// RenderDepth 동안 true. BindMaterial이 PS를 끈다.
 	bool bDepthOnly = false;
 
-	// 쉐도우맵에 사용하는 Depth 텍스처다.
-	TUniquePtr<FTexture2D> ShadowDepthTarget;
+	// Shadow Depth를 읽는 Pixel Shader 슬롯이다. 조명 관련 텍스처 상수버퍼가 12번까지 사용중이어서 13번으로 맞춤.
+	static constexpr uint32 ShadowDepthTextureSlot = 13;
+
+	// 현재 준비 목록의 작업마다 독립적인 Depth 텍스처를 소유한다.
+	TArray<TUniquePtr<FTexture2D>> ShadowDepthTargets;
+	TArray<FProjectedShadowInfo> ProjectedShadows;
 
 	// FIFO 소비용 배열의 용량만 재사용하며 매 View의 패킷 값은 새로 채운다.
 	FRenderQueue RenderPackets;
@@ -304,4 +305,10 @@ private:
 	uint32 NumLocalLightsThisFrame = 0;
 
 	EViewMode CurrentViewMode = EViewMode::Lit_Lambert;
+
+	// 전체 작업 목록에 독립적인 Depth 타깃을 배정한다.
+	void PrepareShadowDepthTargets(TArray<FProjectedShadowInfo>& ShadowInfos);
+
+	// 타깃이 배정된 투영 작업 하나의 Depth 패스를 실행한다.
+	void RenderShadowDepth(FProjectedShadowInfo& ShadowInfo);
 };

@@ -34,6 +34,11 @@
 #include "Core/EngineLog.h"
 #include "Core/Stats/LightweightStats.h"
 
+// 임시 Shadow 연결을 위한 include
+// TODO : FSceneRenderer 도입 후 옮겨야함
+#include "ProjectedShadowInfo.h"
+#include <utility>
+
 namespace
 {
 	DECLARE_CYCLE_STAT("Viewport Update", STAT_ViewportUpdate);
@@ -396,7 +401,7 @@ void UEditorEngine::TickWorldAndEditor(const float DeltaTime)
 		PlayWorld->GetScene().UpdateAllTransforms();
 }
 
-// View가 그릴 월드가 바뀔 때 렌더 데이터를 준비하고 View별 수집·렌더를 완료한다.
+// 활성 World를 먼저 준비하고 그림자를 생성한 뒤 View별 카메라 수집·렌더를 수행한다.
 void UEditorEngine::RenderMultipleViewports()
 {
 	// PIE 창 크기를 외부 View에 먼저 알려야 카메라 Override의 직교 폭 보정이 맞는다.
@@ -409,6 +414,57 @@ void UEditorEngine::RenderMultipleViewports()
 	UWorld* PreparedWorld = nullptr;
 	Renderer->SetLightDebugMode(SettingsPanel->GetSettings().LightDebugMode);
 	Renderer->SetLightCullingMode(static_cast<ELightCullingMode>(SettingsPanel->GetSettings().LightCullingMode));
+
+	// TODO : FSceneRenderer 도입전 임시
+	// World 갱신 여부와 그림자 필요 여부를 별도로 관리한다.
+	TArray<UWorld*> PreparedWorlds;
+	TArray<UWorld*> ShadowWorlds;
+	const bool bDrawPrimitives = SettingsPanel->GetSettings().bDrawPrimitives;
+
+	const auto PrepareView = [&](int32 ViewIndex)
+		{
+			if (!MultipleViewportsAdapter.IsViewActive(ViewIndex))
+				return;
+
+			UWorld* ViewWorld = GetWorldForView(ViewIndex);
+
+			// Transform·BVH 갱신과 동적 데이터 준비는 활성 World마다 한 번 수행한다.
+			if (PreparedWorlds.Find(ViewWorld) == INDEX_NONE)
+			{
+				SCOPE_CYCLE_COUNTER(STAT_PrepareRenderViews);
+				ViewWorld->BeginRenderViews();
+				PreparedWorlds.Add(ViewWorld);
+			}
+
+			// 이번 그림자 수신 연결 범위는 Lambert·Blinn-Phong이다.
+			const EViewMode ViewMode = MultipleViewportsAdapter.GetViewMode(ViewIndex);
+			const bool bNeedsShadow = bDrawPrimitives
+				&& (ViewMode == EViewMode::Lit_Lambert
+					|| ViewMode == EViewMode::Lit_BlinnPhong);
+
+			// 앞 View가 Unlit이어도 뒤의 Lit View에서 같은 World를 등록할 수 있다.
+			if (bNeedsShadow && ShadowWorlds.Find(ViewWorld) == INDEX_NONE)
+				ShadowWorlds.Add(ViewWorld);
+		};
+
+	// 패널 View는 계속 4개만 순회한다.
+	for (int32 ViewIndex = 0; ViewIndex < 4; ++ViewIndex)
+		PrepareView(ViewIndex);
+
+	// 별도 PIE는 패널과 분리하여 준비하며, 활성 여부는 PrepareView에서 확인한다.
+	if (bRenderPIEWindow)
+		PrepareView(PIEViewIndex);
+
+	// TODO: FSceneRenderer 분리 시 작업 목록 구성과 그림자 패스 호출을 이동한다.
+	TArray<FProjectedShadowInfo> ShadowInfos;
+	for (UWorld* World : ShadowWorlds)
+		World->GatherProjectedShadows(ShadowInfos);
+
+	// 모든 World의 작업을 함께 전달해 타깃을 일괄 준비한다.
+	// 빈 목록도 전달하여 이전 프레임의 작업과 타깃을 정리한다.
+	Renderer->RenderShadowMaps(std::move(ShadowInfos));
+	// 그림자 관련 내용 여기까지
+
 	for (int32 ViewIndex = 0; ViewIndex < 4; ++ViewIndex)
 	{
 		const bool bActive = MultipleViewportsAdapter.IsViewActive(ViewIndex);
@@ -417,10 +473,11 @@ void UEditorEngine::RenderMultipleViewports()
 			continue;
 
 		UWorld* ViewWorld = GetWorldForView(ViewIndex);
+
 		if (ViewWorld != PreparedWorld)
 		{
 			SCOPE_CYCLE_COUNTER(STAT_PrepareRenderViews);
-			ViewWorld->BeginRenderViews();
+
 			// FireBall 라이트 상수는 Renderer 공용 상태라 월드가 바뀌면 다시 올린다.
 			// ViewWorld->GetScene().UpdateFireBallLight(Renderer);
 			ViewWorld->GetScene().UpdateLights(Renderer);
@@ -440,9 +497,6 @@ void UEditorEngine::RenderMultipleViewports()
 			MultipleViewportsAdapter.GetEngineCameraLocation(ViewIndex),
 			MultipleViewportsAdapter.GetEngineCameraForward(ViewIndex),
 			RenderQueue, IconQueue, ArrowQueue);
-
-
-
 	}
 
 	// 별도 PIE 창은 패널 View 뒤에 PlayWorld의 데이터로 그린다.
@@ -452,7 +506,7 @@ void UEditorEngine::RenderMultipleViewports()
 		if (ViewWorld != PreparedWorld)
 		{
 			SCOPE_CYCLE_COUNTER(STAT_PrepareRenderViews);
-			ViewWorld->BeginRenderViews();
+
 			//ViewWorld->GetScene().UpdateFireBallLight(Renderer);
 			ViewWorld->GetScene().UpdateLights(Renderer);
 			PreparedWorld = ViewWorld;

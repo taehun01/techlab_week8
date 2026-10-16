@@ -457,6 +457,32 @@ void UWorld::GatherRenderPackets(FRenderQueue& RenderQueue, const FLODViewContex
 	}
 }
 
+void UWorld::GatherProjectedShadows(TArray<FProjectedShadowInfo>& OutShadows)
+{
+	for (const FLocalLightSceneProxy* LightProxy : Scene.LocalLightProxies)
+	{
+		// TODO : SpotLight 이외의 다른 광원들도 지원해야함.
+		if (LightProxy->GetLightComponent()->GetLightType() != ELightType::Spot)
+		{
+			continue;
+		}
+
+		// Light 설정과 투영 유효성은 기존 계산 함수가 판단한다.
+		FVector ShadowViewOrigin = FVector::ZeroVector;
+		FMatrix LightViewProjection = FMatrix::Identity;
+		if (!LightProxy->GetShadowProjection(ShadowViewOrigin, LightViewProjection))
+		{
+			continue;
+		}
+
+		// Info 하나는 투영 작업 하나이며, Caster 수집은 기존 경로를 사용한다.
+		FProjectedShadowInfo& ShadowInfo = OutShadows.AddDefaulted_GetRef();
+		ShadowInfo.SetupProjection(*LightProxy, ShadowViewOrigin, LightViewProjection);
+		GatherShadowCasters(ShadowInfo);
+	}
+
+}
+
 //void UWorld::GatherRenderPackets(TArray<FRenderPacket>& RenderArray, const FLODViewContext* LODView, const FFrustumPlanes* Frustum)
 //{
 //	for (TObjectIterator<UPrimitiveComponent> Itr; Itr; ++Itr)
@@ -504,6 +530,7 @@ void UWorld::GatherShadowCasters(FProjectedShadowInfo& ShadowInfo)
 	// 한 Gather 안에서 여러 물체의 제출에 같은 임시 큐를 재사용한다.
 	FRenderQueue MeshPackets;
 
+	// QueryCull에서 처리할 함수
 	const auto Visit = [&ShadowInfo, &MeshPackets](FPrimitiveSceneProxy* Proxy)
 		{
 			// 그림자 생성 여부만 확인한다. ReceiveShadow는 Caster 선별과 무관하다.
@@ -524,15 +551,14 @@ void UWorld::GatherShadowCasters(FProjectedShadowInfo& ShadowInfo)
 			{
 				// 불투명 섹션만 그림자 작업에 등록한다.
 				// IndexCount 0은 Renderer에서 전체 인덱스 버퍼를 뜻하므로 제외한다.
-				if (!Packet.Material || Packet.Material->BlendState != EBlendState::Opaque
-					|| Packet.IndexCount == 0)
+				if (!Packet.Material || Packet.Material->BlendState != EBlendState::Opaque || Packet.IndexCount == 0)
 					continue;
 
 				ShadowInfo.AddCasterPacket(Packet);
 			}
 		};
 
-	// 카메라 가시 목록 대신 전체 Scene BVH를 Light Frustum으로 탐색한다.
+	// 전체 Scene BVH를 Light Frustum으로 탐색한다.
 	const FFrustumPlanes& Frustum = ShadowInfo.GetCasterFrustum();
 	Scene.BVH.QueryCull(
 		FrustumAllPlanesMask,
