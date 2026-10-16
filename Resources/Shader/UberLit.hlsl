@@ -57,7 +57,7 @@ struct FLightRenderParameters
     float BarnDoorCos;     // Rect 전용
     float BarnDoorSin;
     float BarnDoorLength;
-    float Padding;
+    int ShadowIndex;
 };
 
 
@@ -83,6 +83,8 @@ cbuffer PerObjectConstants : register(b2)
 {
     matrix World;
     matrix WorldInverseTranspose; // (World^-1)^T
+    uint ReceiveShadow;
+    uint3 ObjectPadding;
 };
 
 // b3는 FireBall이 쓰는 동안 비워 둔다.
@@ -119,6 +121,32 @@ Texture2D DiffuseTexture : register(t0);
 Texture2D NormalTexture : register(t1);
 SamplerState MaterialSampler : register(s0);
 
+#if defined(LIGHTING_MODEL_LAMBERT) || defined(LIGHTING_MODEL_BLINN_PHONG)
+
+// Renderer의 MaxBoundShadowTextures와 같아야 한다.
+// TODO(ShadowAtlas): 개별 텍스처 상한을 Atlas 페이지 구성으로 교체한다.
+#define MAX_BOUND_SHADOW_TEXTURES 8
+
+// C++ FShadowShaderParameters와 동일한 80바이트 레이아웃이다.
+struct FShadowShaderParameters
+{
+    matrix LightViewProjection;
+    float Bias;
+    uint Resolution;
+
+    // TODO(ShadowAtlas): Atlas 페이지와 영역 UV 정보로 저장 위치를 표현한다.
+    int TextureIndex;
+    uint Padding;
+};
+
+// 전체 그림자 정보는 가변 개수로 전달한다.
+StructuredBuffer<FShadowShaderParameters> ShadowParameters : register(t13);
+
+// TODO(ShadowAtlas): 개별 텍스처 배열을 Atlas 페이지 리소스로 교체한다.
+Texture2D<float> ShadowDepthMaps[MAX_BOUND_SHADOW_TEXTURES] : register(t14);
+
+#endif
+
 struct VS_INPUT
 {
     float3 Position : POSITION;
@@ -137,6 +165,10 @@ struct VS_OUTPUT
     float4 Tangent : TANGENT;
     float2 UV : TEXCOORD0;
     float4 Color : COLOR;
+#if defined(LIGHTING_MODEL_LAMBERT) || defined(LIGHTING_MODEL_BLINN_PHONG)
+    // 물체별 정수 설정은 삼각형 내부에서 보간하지 않는다.
+    nointerpolation uint ReceivesShadow : TEXCOORD2;
+#endif
 #if LIGHTING_MODEL_GOURAUD
     float3 VertexDiffuse : COLOR1;   // 정점에서 미리 계산한 Diffuse 조명
 #endif
@@ -148,6 +180,66 @@ struct FLightContribution
     float3 Diffuse;
     float3 Specular;
 };
+
+#if defined(LIGHTING_MODEL_LAMBERT) || defined(LIGHTING_MODEL_BLINN_PHONG)
+
+// 현재 SM5.0 경로에서 텍스처 접근을 정적 인덱스로 만든다.
+// TODO(ShadowAtlas): 개별 텍스처 선택을 Atlas 페이지의 깊이 읽기로 교체한다.
+float LoadShadowDepth(int TextureIndex, int2 Texel)
+{
+#define SHADOW_DEPTH_CASE(Index) case Index: return ShadowDepthMaps[Index].Load(int3(Texel, 0))
+
+    switch (TextureIndex)
+    {
+        SHADOW_DEPTH_CASE(0);SHADOW_DEPTH_CASE(1);SHADOW_DEPTH_CASE(2);SHADOW_DEPTH_CASE(3);
+        SHADOW_DEPTH_CASE(4);SHADOW_DEPTH_CASE(5);SHADOW_DEPTH_CASE(6);SHADOW_DEPTH_CASE(7);
+        default:
+            return 1.0f;
+    }
+
+#undef SHADOW_DEPTH_CASE
+}
+
+// 저장 방식에 따른 좌표 변환과 Hard Shadow 깊이 비교를 담당한다.
+float SampleShadowMap(FShadowShaderParameters Shadow, float3 LightNDC)
+{
+    // D3D 텍스처의 좌상단 원점에 맞춰 Y를 뒤집는다.
+    const float2 UV = LightNDC.xy * float2(0.5f, -0.5f) + 0.5f;
+    const int MaxTexel = int(Shadow.Resolution) - 1;
+    const int2 Texel = min(int2(UV * Shadow.Resolution), int2(MaxTexel, MaxTexel));
+
+    // TODO(ShadowAtlas): 로컬 UV를 Atlas 영역으로 변환하고 페이지 크기로 텍셀을 계산한다.
+    // 논리 그림자 해상도와 물리 페이지 크기를 구분하고 필터 경계를 처리한다.
+    const float StoredDepth = LoadShadowDepth(Shadow.TextureIndex, Texel);
+    return LightNDC.z - Shadow.Bias <= StoredDepth ? 1.0f : 0.0f;
+}
+
+// 월드 위치를 해당 그림자의 투영 공간으로 옮겨 가시성을 구한다.
+float GetShadowVisibility(int ShadowIndex, float3 WorldPos)
+{
+    // 유효한 양수 인덱스의 범위는 CPU의 GetShadowIndex가 보장한다.
+    if (ShadowIndex < 0)
+        return 1.0f;
+
+    const FShadowShaderParameters Shadow = ShadowParameters[ShadowIndex];
+
+    // 타깃 실패·임시 바인딩 상한 초과 작업은 그림자를 적용하지 않는다.
+    if (Shadow.TextureIndex < 0)
+        return 1.0f;
+
+    const float4 LightClip = mul(float4(WorldPos, 1.0f), Shadow.LightViewProjection);
+    if (LightClip.w <= 0.0f)
+        return 1.0f;
+
+    // 라이트 투영 범위 밖에서는 깊이를 읽지 않는다.
+    const float3 LightNDC = LightClip.xyz / LightClip.w;
+    if (any(abs(LightNDC.xy) > 1.0f) || LightNDC.z < 0.0f || LightNDC.z > 1.0f)
+        return 1.0f;
+
+    return SampleShadowMap(Shadow, LightNDC);
+}
+
+#endif
 
 // 원뿔 감쇠량. 0(Outer 밖) ~ 1(Inner 안)
 float GetSpotConeAttenuation(FLightRenderParameters Light, float3 L)
@@ -309,7 +401,8 @@ float3 GetHeatmapColor(uint LightCount)
 // Directional + 로컬 라이트의 Diffuse/Specular를 모두 더한다. Ambient는 포함하지 않는다.
 // bUseLightGrid = true면 SvPosition이 속한 셀의 라이트만, false면 전체 로컬 라이트를 순회한다.
 // VS(Gouraud)는 픽셀 위치가 없어 셀을 쓸 수 없으므로 false로 호출한다.
-FLightContribution AccumulateDirectLighting(float3 N, float3 V, float3 WorldPos, float InShininess, float4 SvPosition, bool bUseLightGrid)
+FLightContribution AccumulateDirectLighting(float3 N, float3 V, float3 WorldPos, float InShininess, float4 SvPosition,
+bool bUseLightGrid, bool bReceiveShadow)
 {
     // Directional Light는 처음에 한 번만 계산
     FLightContribution Total = CalcDirectionalLight(N, V, InShininess);
@@ -332,7 +425,18 @@ FLightContribution AccumulateDirectLighting(float3 N, float3 V, float3 WorldPos,
     for (uint Index = 0; Index < LightCount; ++Index)
     {
         const uint LightIndex = bUseCellList ? CellLightIndices[CellOffset + 1 + Index] : Index;
-        const FLightContribution LightContribution = CalcLocalLight(LocalLights[LightIndex], N, V, WorldPos, InShininess);
+        const FLightRenderParameters Light = LocalLights[LightIndex];
+        FLightContribution LightContribution = CalcLocalLight(Light, N, V, WorldPos, InShininess);
+
+#if defined(LIGHTING_MODEL_LAMBERT) || defined(LIGHTING_MODEL_BLINN_PHONG)
+        if (bReceiveShadow)
+        {
+        // 해당 라이트의 직접광만 가린다. Ambient와 다른 라이트는 유지한다.
+            const float Visibility = GetShadowVisibility(Light.ShadowIndex, WorldPos);
+            LightContribution.Diffuse *= Visibility;
+            LightContribution.Specular *= Visibility;
+        }
+#endif
         Total.Diffuse += LightContribution.Diffuse;
         Total.Specular += LightContribution.Specular;
     }
@@ -355,9 +459,13 @@ VS_OUTPUT mainVS(VS_INPUT Input)
 
     Output.UV = Input.UV;
     Output.Color = Input.Color;
+#if defined(LIGHTING_MODEL_LAMBERT) || defined(LIGHTING_MODEL_BLINN_PHONG)
+    // 기존 b2의 VS 전용 바인딩을 유지하면서 PS에 전달한다.
+    Output.ReceivesShadow = ReceiveShadow;
+#endif
 #if LIGHTING_MODEL_GOURAUD
     const float3 V = normalize(CameraWorldPos - Output.WorldPos);
-    const FLightContribution Contribution = AccumulateDirectLighting(normalize(Output.Normal), V, Output.WorldPos, 1, Output.SvPosition, false);
+    const FLightContribution Contribution = AccumulateDirectLighting(normalize(Output.Normal), V, Output.WorldPos, 1, Output.SvPosition, false, false);
     Output.VertexDiffuse = Contribution.Diffuse;
 #endif
     return Output;
@@ -409,7 +517,7 @@ float4 mainPS(VS_OUTPUT Input) : SV_TARGET
 
 #if defined(LIGHTING_MODEL_LAMBERT) || defined(LIGHTING_MODEL_BLINN_PHONG)
     const float3 V = { normalize(CameraWorldPos - Input.WorldPos) };
-    const FLightContribution Contribution = { AccumulateDirectLighting(N, V, Input.WorldPos, Shininess, Input.SvPosition, true) };
+    const FLightContribution Contribution = { AccumulateDirectLighting(N, V, Input.WorldPos, Shininess, Input.SvPosition, true, Input.ReceivesShadow != 0) };
     DiffuseLighting += Contribution.Diffuse;
     SpecularLighting = Contribution.Specular;
 #elif LIGHTING_MODEL_GOURAUD

@@ -144,11 +144,121 @@ void FRenderer::UploadPerObjectConstants()
 		FRenderPacket& P = RenderPackets[Index];
 		const FMatrix& Model = GetPacketWorld(P);
 		const FMatrix WorldToLocal = P.Proxy ? P.Proxy->GetWorldToLocal() : Model.Inverse();
-		WritePerObjectConstants(Dest + static_cast<size_t>(Index) * ObjectSlotBytes, Model, WorldToLocal);
+		WritePerObjectConstants(Dest + static_cast<size_t>(Index) * ObjectSlotBytes, Model, WorldToLocal, P.Proxy && P.Proxy->IsShadowReceiver());
 		P.Slot = Index;
 	}
 
 	RenderCommand::Unmap(PerObjectSlotCB.get());
+}
+
+bool FRenderer::EnsureShadowParameterCapacity(uint32 RequiredCount)
+{
+	const uint32 CurrentCapacity = ShadowParameterBuffer ? ShadowParameterBuffer->GetMaxCount() : 0;
+
+	if (CurrentCapacity >= RequiredCount)
+	{
+		return true;
+	}
+
+	// 최초에는 필요한 만큼, 이후에는 기존 용량의 두 배 이상으로 확장한다.
+	const uint32 NewCapacity = std::max(RequiredCount, CurrentCapacity * 2);
+	TUniquePtr<FStructuredBuffer> NewBuffer = RenderCommand::CreateDynamicStructuredBuffer(sizeof(FShadowShaderParameters), NewCapacity);
+
+	// 생성 실패 검증은 이 지점에서 담당한다.
+	if (!NewBuffer->GetBuffer() || !NewBuffer->GetSRV())
+	{
+		return false;
+	}
+
+	ShadowParameterBuffer = std::move(NewBuffer);
+	return true;
+}
+
+void FRenderer::PrepareShadowParameters()
+{
+	const uint32 Count = static_cast<uint32>(ProjectedShadows.Num());
+	if (Count == 0 || !EnsureShadowParameterCapacity(Count))
+	{
+		return;
+	}
+
+	// 텍스처 바인딩 한도와 무관하게 모든 작업의 정보를 만든다.
+	TArray<FShadowShaderParameters> Parameters;
+	Parameters.SetNum(static_cast<int32>(Count));
+
+	for (uint32 Index = 0; Index < Count; ++Index)
+	{
+		const FProjectedShadowInfo& ShadowInfo = ProjectedShadows[Index];
+		FShadowShaderParameters& Parameter = Parameters[Index];
+		Parameter.LightViewProjection = ShadowInfo.LightViewProjection;
+
+		// 실패한 작업은 기본 TextureIndex=-1을 유지한다.
+		if (!ShadowInfo.HasDepthTarget())
+		{
+			continue;
+		}
+
+		FTexture2D* DepthTexture = ShadowInfo.RenderingInfo.DepthStencil.Texture;
+		Parameter.Bias = ShadowInfo.LightProxy->GetLightComponent()->GetShadowBias();
+		Parameter.Resolution = DepthTexture->GetWidth();
+
+		// TODO(ShadowAtlas): 개별 텍스처 번호 대신 Atlas 페이지·영역을 배정한다.
+		// 여러 그림자 정보가 같은 Atlas 텍스처를 참조할 수 있게 변경한다.
+		if (ShadowDepthBindings.Num() < static_cast<int32>(MaxBoundShadowTextures))
+		{
+			Parameter.TextureIndex = ShadowDepthBindings.Num();
+			ShadowDepthBindings.Add(DepthTexture);
+		}
+	}
+
+	// 업로드 실패 시 이전 GPU 정보를 현재 작업에 사용하지 않는다.
+	void* Dest = RenderCommand::MapWriteDiscard(ShadowParameterBuffer.get());
+	if (!Dest)
+	{
+		ShadowDepthBindings.Reset();
+		HTR_LOG(Error, "Shadow parameter buffer map failed.");
+		return;
+	}
+
+	std::memcpy(Dest, Parameters.GetData(), sizeof(FShadowShaderParameters) * Count);
+	RenderCommand::Unmap(ShadowParameterBuffer.get());
+
+	// 업로드 성공 후에만 현재 프레임의 유효 개수를 공개한다.
+	NumShadowParameters = Count;
+
+}
+
+void FRenderer::BindShadowResources()
+{
+	// 이번 단계의 그림자 평가 대상은 Lambert·Blinn-Phong이다.
+	if (CurrentViewMode != EViewMode::Lit_Lambert && CurrentViewMode != EViewMode::Lit_BlinnPhong)
+	{
+		return;
+	}
+
+	// StructuredBuffer 바인딩 API는 nullptr이면 해당 SRV를 해제한다.
+	FStructuredBuffer* Parameters = NumShadowParameters > 0 ? ShadowParameterBuffer.get() : nullptr;
+	RenderCommand::BindShaderResource(ShadowParameterSlot, Parameters, EShaderBindFlagBits::Pixel);
+
+	// TODO(ShadowAtlas): 개별 Shadow Map SRV 연결을 Atlas 페이지 SRV 연결로 교체한다.
+	for (uint32 Index = 0; Index < MaxBoundShadowTextures; ++Index)
+	{
+		FTexture2D* Texture = nullptr;
+		if (NumShadowParameters > 0 && Index < static_cast<uint32>(ShadowDepthBindings.Num()))
+		{
+			Texture = ShadowDepthBindings[Index];
+		}
+
+		// Texture 바인딩 API는 nullptr를 받지 않으므로 별도로 해제한다.
+		if (Texture)
+		{
+			RenderCommand::BindShaderResource(ShadowDepthTextureSlot + Index, Texture, EShaderBindFlagBits::Pixel);
+		}
+		else
+		{
+			RenderCommand::UnbindShaderResource(ShadowDepthTextureSlot + Index, EShaderBindFlagBits::Pixel);
+		}
+	}
 }
 
 // 카메라의 ViewProjection을 공통 렌더 경로로 전달한다.
@@ -172,6 +282,7 @@ void FRenderer::RenderOpaque(const FMatrix& ViewProjection)
 	RenderCommand::BindShaderResource(12, TileIndexBuffer.get(), EShaderBindFlagBits::Pixel);
 	RenderCommand::BindConstantBuffer(5, GridLightingCB.get(), EShaderBindFlagBits::Pixel | EShaderBindFlagBits::Vertex);
 
+	BindShadowResources();
 	DrawStaticGroups();
 	DrawPackets(0, FirstTranslucentIndex, ViewProjection);
 }
@@ -186,6 +297,7 @@ void FRenderer::RenderTranslucent(const FMatrix& ViewProjection)
 	FConstantBuffer* GridCB = LightCullingMode == ELightCullingMode::Tiled25D ? GridLightingFallbackCB.get() : GridLightingCB.get();
 	RenderCommand::BindConstantBuffer(5, GridCB, EShaderBindFlagBits::Pixel | EShaderBindFlagBits::Vertex);
 
+	BindShadowResources();
 	DrawPackets(FirstTranslucentIndex, SortEntries.Num(), ViewProjection);
 	RenderPackets.Reset();
 	FirstTranslucentIndex = 0;
@@ -223,7 +335,7 @@ void FRenderer::DrawStaticGroups()
 			else
 			{
 				RenderCommand::BindConstantBuffer(2, PerObjectCB.get(), EShaderBindFlagBits::Vertex);
-				UpdatePerObjectConstants(Item.Proxy->GetLocalToWorld());
+				UpdatePerObjectConstants(Item.Proxy->GetLocalToWorld(), Item.Proxy->IsShadowReceiver());
 			}
 			RenderCommand::DrawIndexed(Item.IndexCount, Item.StartIndex);
 		}
@@ -301,6 +413,8 @@ void FRenderer::PrepareShadowDepthTargets(TArray<FProjectedShadowInfo>& ShadowIn
 
 	// 남는 GPU 텍스처는 해제하되 배열의 저장 용량은 유지한다.
 	// 이전 작업들의 모든 소비가 끝난 시점에만 이 함수를 호출한다.
+	// TODO(ShadowAtlas): 작업별 개별 텍스처 할당을 Atlas 페이지·영역 배정으로 교체한다.
+	// Info는 배정 결과만 참조하고, GPU 자원 소유권은 자원 관리 쪽에 유지한다.
 	ShadowDepthTargets.SetNum(ShadowInfos.Num(), false);
 
 	for (int32 TargetIndex = 0; TargetIndex < ShadowInfos.Num(); ++TargetIndex)
@@ -339,9 +453,13 @@ void FRenderer::PrepareShadowDepthTargets(TArray<FProjectedShadowInfo>& ShadowIn
 
 		// 이 작업에 배정한 텍스처와 전체 렌더 영역을 연결한다.
 		FRenderingInfo RenderingInfo{};
+		// TODO(ShadowAtlas): 기존 StartX·StartY·Width·Height를 배정된 Atlas 영역으로 설정한다.
 		RenderingInfo.ViewportSetting.Width = Resolution;
 		RenderingInfo.ViewportSetting.Height = Resolution;
 		RenderingInfo.DepthStencil.Texture = DepthTarget.get();
+		// TODO(ShadowAtlas): 공유 DSV는 Viewport와 무관하게 전체가 Clear된다.
+		// 전체 갱신은 페이지당 한 번 Clear한 뒤 영역별 Load로 처리한다.
+		// 캐시와 함께 사용할 부분 갱신은 변경 영역만 초기화하는 정책을 별도로 구현한다.
 		RenderingInfo.DepthStencil.LoadOp = ERenderTargetLoadOp::Clear;
 		RenderingInfo.DepthStencil.StoreOp = ERenderTargetStoreOp::Store;
 		RenderingInfo.DepthStencil.ClearValue.DepthClearValue = 1.0f;
@@ -352,25 +470,48 @@ void FRenderer::PrepareShadowDepthTargets(TArray<FProjectedShadowInfo>& ShadowIn
 
 void FRenderer::RenderShadowMaps(TArray<FProjectedShadowInfo>&& InShadows)
 {
-	// 이전 프레임의 소비가 끝난 뒤, 새 작업 목록의 소유권을 인수한다.
-	ProjectedShadows = std::move(InShadows);
+	// 이전 화면의 SRV를 자원 교체·Depth 기록 전에 해제한다.
+	RenderCommand::UnbindShaderResource(ShadowParameterSlot, EShaderBindFlagBits::Pixel);
 
-	// 빈 목록도 전달하여 이전 타깃을 정리한다.
+	// TODO(ShadowAtlas): 개별 맵 슬롯 범위 대신 실제 Atlas SRV 슬롯을 해제한다.
+	for (uint32 Index = 0; Index < MaxBoundShadowTextures; ++Index)
+	{
+		RenderCommand::UnbindShaderResource(ShadowDepthTextureSlot + Index, EShaderBindFlagBits::Pixel);
+	}
+
+	// 타깃이 교체되기 전에 비소유 참조와 이전 업로드 상태를 비운다.
+	ShadowDepthBindings.Reset();
+	NumShadowParameters = 0;
+
+	ProjectedShadows = std::move(InShadows);
 	PrepareShadowDepthTargets(ProjectedShadows);
 
 	for (FProjectedShadowInfo& ShadowInfo : ProjectedShadows)
 	{
-		// 타깃 생성에 실패한 작업만 제외한다.
-		if (!ShadowInfo.HasDepthTarget())
-			continue;
-
-		RenderShadowDepth(ShadowInfo);
+		// 기존 Depth 실행 경로를 유지한다.
+		if (ShadowInfo.HasDepthTarget())
+		{
+			RenderShadowDepth(ShadowInfo);
+		}
 	}
+	PrepareShadowParameters();
+}
+
+int32 FRenderer::GetShadowIndex(const FLightSceneProxy& LightProxy) const
+{
+	for (uint32 Index = 0; Index < NumShadowParameters; ++Index)
+	{
+		// EditorWorld와 PlayWorld의 같은 배열 번호가 충돌하지 않도록 Proxy로 비교한다.
+		if (ProjectedShadows[Index].LightProxy == &LightProxy)
+			return static_cast<int32>(Index);
+	}
+
+	return INDEX_NONE;
 }
 
 void FRenderer::RenderShadowDepth(FProjectedShadowInfo& ShadowInfo)
 {
-	// PrepareShadowDepthTarget 성공 후, 카메라 패스와 큐 수집 전에 호출한다.
+	// 타깃이 배정된 작업만 실행한다.
 	// 이전 카메라의 묶음과 상수 준비 상태를 그림자 작업에 재사용하지 않는다.
 	ResetStaticDrawGroups();
 	bObjectConstantsPrepared = false;
@@ -383,8 +524,7 @@ void FRenderer::RenderShadowDepth(FProjectedShadowInfo& ShadowInfo)
 	const EViewMode SavedViewMode = CurrentViewMode;
 	SetViewMode(EViewMode::Unlit);
 
-	// 동일 텍스처를 SRV와 DSV로 동시에 바인딩하지 않는다.
-	RenderCommand::UnbindShaderResource(ShadowDepthTextureSlot, EShaderBindFlagBits::Pixel);
+	// Shadow DSV·Viewport를 연결하고 LoadOp에 따라 Depth를 초기화한다.
 	RenderCommand::BeginRenderPass(ShadowInfo.RenderingInfo);
 
 	// 이전 View의 Wireframe·오버레이 상태가 그림자에 영향을 주지 않게 한다.
@@ -542,7 +682,7 @@ FOcclusionMeasureResult FRenderer::MeasureOpaqueOcclusion(const FMatrix& ViewPro
 		else
 		{
 			RenderCommand::BindConstantBuffer(2, PerObjectCB.get(), EShaderBindFlagBits::Vertex);
-			UpdatePerObjectConstants(*Draw.World);
+			UpdatePerObjectConstants(*Draw.World, false);
 		}
 
 		ID3D11Query* Query = OcclusionQueries[Index].Get();
@@ -697,16 +837,15 @@ void FRenderer::UpdatePerObjectConstants(const FRenderPacket& RenderPacket, cons
 	// rp.Transform 과 Camera VP 행렬 곱
 	// 행렬곱의 결과 (MVP Matrix) Constant Buffer 업데이트 필요
 
-	UpdatePerObjectConstants(GetPacketWorld(RenderPacket));
+	UpdatePerObjectConstants(GetPacketWorld(RenderPacket),	RenderPacket.Proxy && RenderPacket.Proxy->IsShadowReceiver());
 }
 
-void FRenderer::UpdatePerObjectConstants(const FMatrix& World)
+void FRenderer::UpdatePerObjectConstants(const FMatrix& World, bool bReceiveShadow)
 {
-	FPerObjectConstants Constants;
-
+	FPerObjectConstants Constants{};
 	Constants.World = World;
 	Constants.NormalMatrix = World.Inverse().GetTransposed();
-
+	Constants.ReceiveShadow = static_cast<uint32>(bReceiveShadow);
 	RenderCommand::UpdateBufferData(PerObjectCB.get(), &Constants);
 }
 

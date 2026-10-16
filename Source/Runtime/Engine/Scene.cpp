@@ -181,6 +181,7 @@ void FScene::UpdateLights(FRenderer* Renderer)
 	{
 		FLightRenderParameters& P = LocalLightParameters[Proxy->PackedIndex];
 		Proxy->GetLightShaderParameters(P);
+		P.ShadowIndex = Renderer->GetShadowIndex(*Proxy);
 		if (!Proxy->IsVisible())
 			P.Radius = 0.0f;                              // 칸은 유지하고 영향만 없앤다
 			/*FTransform Transform;

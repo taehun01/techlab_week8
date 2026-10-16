@@ -20,12 +20,15 @@ struct FPerObjectConstants
 	FMatrix World;
 	// (World^-1)^T. 비균등 스케일에서도 노멀이 표면에 수직으로 남도록 노멀 변환에 쓴다.
 	FMatrix NormalMatrix;
+	uint32 ReceiveShadow = 0;
+	uint32 Padding[3]{};
 };
+static_assert(sizeof(FPerObjectConstants) == 144);
 
 // 오브젝트 칸 하나를 채운다. 프록시는 WorldToLocal을 이미 들고 있어 역행렬 계산을 건너뛸 수 있다.
-inline void WritePerObjectConstants(uint8* Dest, const FMatrix& World, const FMatrix& WorldToLocal)
+inline void WritePerObjectConstants(uint8* Dest, const FMatrix& World, const FMatrix& WorldToLocal, bool bReceiveShadow)
 {
-	const FPerObjectConstants Constants{ World, WorldToLocal.GetTransposed() };
+	const FPerObjectConstants Constants{ World, WorldToLocal.GetTransposed(), static_cast<uint32>(bReceiveShadow),{} };
 	std::memcpy(Dest, &Constants, sizeof(Constants));
 }
 
@@ -39,6 +42,21 @@ struct alignas(16) FViewConstants
 static_assert(sizeof(FViewConstants) == 80, "UberLit.hlsl cbuffer ViewConstants 크기와 맞아야 한다");
 
 constexpr uint32 MaxLocalLights = 1024;
+
+// StructuredBuffer 항목의 GPU 메모리 배치다.
+// Light의 ShadowIndex와 실제 텍스처 위치를 분리한다.
+struct alignas(16) FShadowShaderParameters
+{
+	FMatrix LightViewProjection = FMatrix::Identity;
+	float Bias = 0.0f;
+	uint32 Resolution = 0;
+
+	// TODO(ShadowAtlas): Atlas 페이지 번호와 영역 UV 정보로 저장 위치를 표현한다.
+	// 현재 단계에서는 개별 텍스처 번호만 사용한다.
+	int32 TextureIndex = -1;
+	uint32 Padding = 0;
+};
+static_assert(sizeof(FShadowShaderParameters) == 80);
 
 // 컬링 방식별 셀 크기. Tiled는 슬라이스 1개인 Clustered와 같다.
 constexpr uint32 TiledTileSize = 16;
@@ -217,6 +235,9 @@ public:
 	// 목록은 화면 조명·Preview 소비가 끝날 때까지 유지한다.
 	void RenderShadowMaps(TArray<FProjectedShadowInfo>&& InShadows);
 
+	// 현재 라이트의 GPU 그림자 정보 번호를 반환한다. 없으면 INDEX_NONE이다.
+	int32 GetShadowIndex(const FLightSceneProxy& LightProxy) const;
+
 	// [측정 전용] RenderOpaque 직후에 호출한다. 불투명 패킷을 깊이 LESS_EQUAL·색 쓰기 없이 다시 그리며
 	// 패킷마다 오클루전 쿼리를 걸어, 최종 화면에 실제로 픽셀을 남긴 물체 수를 센다.
 	// GPU 결과를 기다리므로 매우 느리다. 버튼 등으로 한 프레임만 실행할 것.
@@ -242,10 +263,10 @@ public:
 private:
 	void DrawPackets(uint32 Begin, uint32 End, const FMatrix& ViewProjection);
 	void DrawStaticGroups();
-	void UpdatePerObjectConstants(const FMatrix& World);
 	void BindMaterial(UMaterial* Material);
 	void UpdateMaterialParams(const FRenderPacket& RenderPacket);
 	void UpdatePerObjectConstants(const FRenderPacket& RenderPacket, const FMatrix& ViewProjection);
+	void UpdatePerObjectConstants(const FMatrix& World, bool bReceiveShadow);
 	void EnsurePerObjectSlotCapacity(uint32 SlotCount);
 	void UploadPerObjectConstants();
 
@@ -259,12 +280,36 @@ private:
 	// RenderDepth 동안 true. BindMaterial이 PS를 끈다.
 	bool bDepthOnly = false;
 
-	// Shadow Depth를 읽는 Pixel Shader 슬롯이다. 조명 관련 텍스처 상수버퍼가 12번까지 사용중이어서 13번으로 맞춤.
-	static constexpr uint32 ShadowDepthTextureSlot = 13;
+	// 그림자 정보와 Depth 텍스처는 서로 다른 SRV를 사용한다. 조명 관련 텍스처 상수버퍼가 12번까지 사용중이어서 13번으로 맞춤.
+	static constexpr uint32 ShadowParameterSlot = 13;
+	static constexpr uint32 ShadowDepthTextureSlot = 14;
 
-	// 현재 준비 목록의 작업마다 독립적인 Depth 텍스처를 소유한다.
+	// TODO(ShadowAtlas): 개별 Shadow Map 바인딩 상한을 Atlas 페이지 바인딩으로 교체한다.
+	// 정보 버퍼 개수 제한이 아닌, 현재의 임시 텍스처 바인딩 한도다.
+	static constexpr uint32 MaxBoundShadowTextures = 8;
+
+	// 기존 작업과 GPU Depth 자원의 소유권을 유지한다.
 	TArray<TUniquePtr<FTexture2D>> ShadowDepthTargets;
 	TArray<FProjectedShadowInfo> ProjectedShadows;
+
+	// 그림자 작업 수에 맞춰 용량을 늘리는 GPU 정보 버퍼다.
+	TUniquePtr<FStructuredBuffer> ShadowParameterBuffer;
+
+	// 이번 프레임에 업로드까지 성공한 항목 수다. 확보 용량과는 다르다.
+	uint32 NumShadowParameters = 0;
+
+	// 이번 화면 패스에서 사용할 텍스처의 비소유 참조다.
+	// 타깃 교체 전에 초기화한다.
+	TArray<FTexture2D*> ShadowDepthBindings;
+
+	// 필요한 항목 수가 기존 용량을 초과했을 때 GPU 버퍼를 교체한다.
+	bool EnsureShadowParameterCapacity(uint32 RequiredCount);
+
+	// 전체 그림자 정보를 만들고 현재 저장 방식에 맞춰 텍스처를 배정한다.
+	void PrepareShadowParameters();
+
+	// 현재 화면 패스에 그림자 정보와 텍스처를 연결한다.
+	void BindShadowResources();
 
 	// FIFO 소비용 배열의 용량만 재사용하며 매 View의 패킷 값은 새로 채운다.
 	FRenderQueue RenderPackets;
