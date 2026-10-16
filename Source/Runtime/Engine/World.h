@@ -56,7 +56,18 @@ public:
 
 	void ClearWorld();
 
-	void GatherRenderPackets(FRenderQueue& RenderArray, const FLODViewContext* LODView = nullptr, const FFrustumPlanes* Frustum = nullptr, FRenderer* Renderer = nullptr);
+	// 캡처 구간을 시작하고 첫 가시 View에서 동적 렌더 스냅샷을 준비하게 한다.
+	void BeginRenderViews();
+	// 메인 스레드에서 Proxy를 준비하고 World의 작업 버퍼로 동적 패킷을 추가한다.
+	bool GatherDynamicRenderPackets(FPrimitiveSceneProxy& Proxy, FRenderQueue& RenderQueue,
+		const FVector& CameraLocation, FBillboardMatrixBuilder ResolveBillboard,
+		const void* ViewContext, FRenderQueue* IconQueue = nullptr);
+	// Resolver가 있는 View 호출은 LODView와 사전 BeginRenderViews 호출을 전제로 한다.
+	void GatherRenderPackets(FRenderQueue& RenderArray, const FLODViewContext* LODView = nullptr,
+		const FFrustumPlanes* Frustum = nullptr, FRenderer* Renderer = nullptr,
+		FBillboardMatrixBuilder ResolveBillboard = nullptr,
+		const void* ViewContext = nullptr, FRenderQueue* IconQueue = nullptr,
+		FRenderQueue* ArrowQueue = nullptr);
 
 	void CreateMainCamera();
 
@@ -141,6 +152,9 @@ private:
 	TArray<FPrimitiveSceneProxy*> VisibleProxies;
 	TArray<FLODSelectionInput> LODInputs;
 	TArray<uint8> SelectedLODs;
+	// 메인 스레드의 동적 수집에서 View마다 내용을 바꾸고 용량은 재사용한다.
+	TArray<int32> ParticleOrder;
+	TArray<float> ParticleDistances;
 
 	FRenderStats RenderStats;
 

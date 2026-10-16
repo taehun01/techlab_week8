@@ -6,6 +6,7 @@
 
 #include "GameFramework/Actor.h"
 #include "Engine/World.h"
+#include "Engine/BillboardSceneProxy.h"
 
 // Billboard 컴포넌트의 초기 상태를 구성한다.
 UBillboardComponent::UBillboardComponent()
@@ -17,6 +18,12 @@ UBillboardComponent::UBillboardComponent()
 // Billboard 컴포넌트의 소멸을 처리한다.
 UBillboardComponent::~UBillboardComponent()
 {
+}
+
+// Scene이 이 Proxy를 등록하고 Component의 렌더 상태가 끝날 때 삭제한다.
+FPrimitiveSceneProxy* UBillboardComponent::CreateSceneProxy()
+{
+	return new FBillboardSceneProxy(this);
 }
 
 // 기본 Mesh와 Material을 에셋 관리자에서 가져온다.

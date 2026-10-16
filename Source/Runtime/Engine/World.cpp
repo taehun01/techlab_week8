@@ -160,16 +160,53 @@ void UWorld::ClearWorld()
 	HTR_LOG(Info, "{} : ", PersistentLevel->GetActorNum());
 }
 
-void UWorld::GatherRenderPackets(FRenderQueue& RenderQueue, const FLODViewContext* LODView, const FFrustumPlanes* Frustum, FRenderer* Renderer)
+// Tick 이후의 Scene 상태를 반영하고 새 캡처 구간의 동적 데이터 준비를 예약한다.
+void UWorld::BeginRenderViews()
 {
+	Scene.UpdateAllTransforms();
+	for (FPrimitiveSceneProxy* Proxy : Scene.PrimitiveSceneProxies)
+		Proxy->InvalidateDynamicData();
+}
+
+// Adapter와 World Gather가 같은 Proxy 수집을 사용하며 Queue에는 추가만 한다.
+bool UWorld::GatherDynamicRenderPackets(FPrimitiveSceneProxy& Proxy, FRenderQueue& RenderQueue,
+	const FVector& CameraLocation, FBillboardMatrixBuilder ResolveBillboard,
+	const void* ViewContext, FRenderQueue* IconQueue)
+{
+	Proxy.PrepareDynamicData();
+	return Proxy.GatherDynamicRenderPackets(RenderQueue, IconQueue, CameraLocation,
+		ResolveBillboard, ViewContext, ParticleOrder, ParticleDistances);
+}
+
+// 기존 정적 수집을 유지하고 View 입력이 있으면 동적 Proxy 수집을 연결한다.
+void UWorld::GatherRenderPackets(FRenderQueue& RenderQueue, const FLODViewContext* LODView,
+	const FFrustumPlanes* Frustum, FRenderer* Renderer, FBillboardMatrixBuilder ResolveBillboard,
+	const void* ViewContext, FRenderQueue* IconQueue, FRenderQueue* ArrowQueue)
+{
+	assert(!ResolveBillboard || LODView != nullptr);
 	// 멤버로 두어 매 프레임 용량을 재사용한다.
 	RenderStats.Reset();
 	VisibleProxies.Reset();
 
 	{
 		SCOPE_CYCLE_COUNTER(STAT_FrustumCull);
-		// 컬링 단계에서는 프록시 포인터만 모으고, 컴포넌트 역참조(가시성 확인)는 어차피 컴포넌트를 읽는 Gather로 미룬다.
-		const auto Visit = [&](FPrimitiveSceneProxy* Proxy) { VisibleProxies.Add(Proxy); };
+		// BVH 방문은 호출 스레드에서 동기 실행하므로 에디터 Arrow도 여기서 제출한다.
+		const auto Visit = [&](FPrimitiveSceneProxy* Proxy)
+		{
+			if (ArrowQueue && Proxy->GetMesh())
+			{
+				UStaticMeshComponent* StaticComponent = Cast<UStaticMeshComponent>(Proxy->GetComponent());
+				if (StaticComponent && StaticComponent->IsEditorIcon())
+				{
+					// TODO: 모든 프리미티브를 공통 큐로 수집하고 렌더 패스로 분류하도록 통합한 뒤 임시 ArrowQueue 분기를 제거한다.
+					if (Proxy->IsVisible())
+						StaticComponent->SubmitToRenderQueue(*ArrowQueue, 0);
+					return;
+				}
+			}
+			// 일반 프리미티브는 기존 병렬·동적 수집 경로에서 처리한다.
+			VisibleProxies.Add(Proxy);
+		};
 
 		if (Frustum)
 		{
@@ -372,16 +409,22 @@ void UWorld::GatherRenderPackets(FRenderQueue& RenderQueue, const FLODViewContex
 
 				const uint32 FirstNew = RenderQueue.Num();
 
-				// 프록시 캐시가 없는 스태틱 메시는 기존처럼 LOD를 골라 제출하고, 그 외는 컴포넌트에 맡긴다.
-				UStaticMeshComponent* StaticMeshComponent = LODView ? Cast<UStaticMeshComponent>(Primitive) : nullptr;
-				if (StaticMeshComponent && StaticMeshComponent->GetStaticMesh())
+				// 동적 수집은 병렬 정적 경로가 끝난 뒤 메인 스레드에서만 실행한다.
+				const bool bHandled = ResolveBillboard && GatherDynamicRenderPackets(*Proxy,
+					RenderQueue, LODView->CameraPosition, ResolveBillboard, ViewContext, IconQueue);
+				if (!bHandled)
 				{
-					const uint32 LOD = SelectedLODs[VisibleIndex];
-					StaticMeshComponent->SubmitToRenderQueue(RenderQueue, LOD);
-				}
-				else
-				{
-					Primitive->SubmitToRenderQueue(RenderQueue);
+					// 기본 호출과 미지원 Proxy는 기존 Component 제출 경로를 유지한다.
+					UStaticMeshComponent* StaticMeshComponent = LODView ? Cast<UStaticMeshComponent>(Primitive) : nullptr;
+					if (StaticMeshComponent && StaticMeshComponent->GetStaticMesh())
+					{
+						const uint32 LOD = SelectedLODs[VisibleIndex];
+						StaticMeshComponent->SubmitToRenderQueue(RenderQueue, LOD);
+					}
+					else
+					{
+						Primitive->SubmitToRenderQueue(RenderQueue);
+					}
 				}
 
 				// continue 없이 항상 여기까지 와서 새 패킷에 여유 칸을 배정한다.

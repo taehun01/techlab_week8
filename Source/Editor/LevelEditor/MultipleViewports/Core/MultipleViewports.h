@@ -1,29 +1,16 @@
-// 다중 뷰포트의 레이아웃·카메라·가시성 계산을 제공한다.
+// 다중 뷰포트의 레이아웃·카메라·빌보드 계산을 제공한다.
 #pragma once
 
 #include "Core/Types.h"
-#include "Containers/Array.h"
-#include "Containers/Map.h"
 #include "Math/Vector.h"
 #include "Math/Vector2.h"
 #include "Math/Quat.h"
 #include "Math/Matrix.h"
-#include "Math/Frustum.h"
 #include "Collision/Ray.h"
 
 // 좌표 규약: +X Forward, +Y Right, +Z Up.
-using ObjectId = uint32;
-inline constexpr ObjectId InvalidObjectId = 0;
 inline constexpr int32 InvalidViewIndex = -1;
-
-// 화면상의 2차원 좌표나 크기를 담는다.
-// 위 엔진 헤더의 동일 값 타입을 직접 사용한다(중복 정의 없음).
-// 월드의 3차원 위치나 방향을 담는다.
-// 위 엔진 헤더의 동일 값 타입을 직접 사용한다(중복 정의 없음).
-// 3차원 회전을 나타내는 단위 quaternion 성분을 담는다.
-// 위 엔진 헤더의 동일 값 타입을 직접 사용한다(중복 정의 없음).
 // 행렬은 엔진 FMatrix의 row-vector 규약을 사용하며 이동은 M[3][0..2]에 둔다.
-
 
 // 화면상의 좌상단 위치와 너비·높이를 담는다.
 struct FRect { float X, Y, Width, Height; };
@@ -55,16 +42,6 @@ struct FViewCamera
     FCameraProjection Projection;
 };
 
-// 레이아웃 모드와 최대 네 View의 카메라 상태를 담는다.
-struct FViewSet
-{
-    ELayoutMode Mode;
-    FViewCamera Cameras[4];
-};
-
-// 월드 공간 광선의 시작점과 정규화 방향을 담는다.
-// 위 엔진 헤더의 동일 값 타입을 직접 사용한다(중복 정의 없음).
-
 // 한 프레임의 카메라 회전·이동·줌 입력을 담는다.
 struct FCameraMoveInput
 {
@@ -84,8 +61,6 @@ FViewCamera ApplyCameraMovement(const FViewCamera& Current, const FCameraMoveInp
 
 // Rect의 너비와 높이가 모두 양수인지 검사한다.
 bool IsViewRectValid(const FRect& Rect);
-// 레이아웃 모드와 Rect 유효성으로 해당 View의 활성 여부를 판정한다.
-bool IsViewActive(const FViewSet& Views, int32 ViewIndex, const FRect ViewRects[4]);
 
 // 현재 Hover View와 우클릭으로 Capture한 View 인덱스를 담는다.
 struct FViewInputState
@@ -96,8 +71,6 @@ struct FViewInputState
 
 // 화면 좌표를 포함하는 첫 번째 유효 View Rect를 찾는다.
 int32 DetermineHoveredView(FVector2 ScreenPos, const FRect ViewRects[4]);
-// Capture가 있으면 고정 View를, 없으면 Hover View를 활성 View로 고른다.
-int32 DetermineActiveView(const FViewInputState& State, FVector2 ScreenPos, const FRect ViewRects[4]);
 // 지정한 View를 입력 Capture 대상으로 설정한 새 상태를 반환한다.
 FViewInputState BeginCapture(const FViewInputState& Current, int32 ViewIndex);
 // 입력 Capture를 해제한 새 상태를 반환한다.
@@ -119,46 +92,6 @@ FSplitRatio ClampSplitRatio(const FSplitRatio& Raw, float MinRatio);
 // Split 비율과 창 크기로 2x2 View Rect 네 개를 계산한다.
 void ComputeViewRects(const FSplitRatio& Ratio, FVector2 WindowSize, FRect OutRects[4]);
 
-// 축 정렬 Bounding Box의 중심과 반크기를 담는다.
-
-// 렌더 대상의 식별자와 월드 행렬·월드 경계를 담는다.
-struct FRenderableObject
-{
-    ObjectId Id;
-    FMatrix WorldMatrix{0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0};
-    FAABB WorldBounds;
-};
-
-
-// 같은 월드 스냅샷에서 절두체를 통과한 Object ID만 출력 버퍼에 쓴다.
-void CullForView(const TArray<FRenderableObject>& WorldObjects, const FFrustumPlanes& Frustum, TArray<ObjectId>& OutVisibleIds);
-
-// 삼각형의 월드 공간 세 꼭짓점을 담는다.
-struct FTriangle { FVector V0, V1, V2; };
-
-// 피킹 후보의 식별자와 Broad Phase용 월드 AABB를 담는다.
-struct FPickableObject
-{
-    ObjectId Id;
-    FAABB WorldBounds;
-};
-
-// 가장 가까운 피킹 결과의 성공 여부·대상·거리·교차점을 담는다.
-struct FPickHit
-{
-    bool bHit = false;
-    ObjectId Id = InvalidObjectId;
-    float Distance = 0.0f;
-    FVector HitPoint;
-};
-
-// Ray와 AABB의 slab 교차로 Narrow Phase 후보 ID를 출력한다.
-void FindPickCandidates(const FRay& WorldRay, const TArray<FPickableObject>& Objects, TArray<ObjectId>& OutCandidates);
-// 후보 삼각형에 Möller–Trumbore 교차를 적용해 가장 가까운 Hit를 찾는다.
-FPickHit PickNarrowPhase(const FRay& WorldRay, const TArray<ObjectId>& Candidates, const TMap<ObjectId, TArray<FTriangle>>& TrianglesById);
-// AABB Broad Phase 뒤 삼각형 Narrow Phase를 수행해 가장 가까운 대상을 고른다.
-FPickHit Pick(const FRay& WorldRay, const TArray<FPickableObject>& Objects, const TMap<ObjectId, TArray<FTriangle>>& TrianglesById);
-
 // Billboard의 월드 위치와 화면에 보일 너비·높이를 담는다.
 struct FBillboardComputeInput
 {
@@ -172,14 +105,5 @@ struct FBillboardTransform
     FMatrix WorldMatrix{0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0};
 };
 
-// 파티클 식별자와 정렬 기준이 되는 월드 위치를 담는다.
-struct FParticleSortInput
-{
-    ObjectId Id;
-    FVector WorldPosition;
-};
-
 // 카메라 기저로 Billboard의 Right·Up·Forward 축을 만들어 월드 행렬을 계산한다.
 FBillboardTransform ComputeBillboardTransform(const FBillboardComputeInput& Input, const FCameraTransform& ViewCamera);
-// 카메라와의 거리 제곱을 기준으로 파티클 ID를 먼 순서부터 안정 정렬한다.
-void SortParticlesByCameraDistance(const TArray<FParticleSortInput>& Particles, const FVector& CameraLocation, TArray<ObjectId>& OutSortedBackToFront);

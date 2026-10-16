@@ -10,7 +10,7 @@ void FScene::AddPrimitive(UPrimitiveComponent* Component)
 {
 	if (!Component || Component->SceneProxy) return;
 
-	FPrimitiveSceneProxy* Proxy = new FPrimitiveSceneProxy(Component);
+	FPrimitiveSceneProxy* Proxy = Component->CreateSceneProxy();
 	Proxy->Scene = this;
 	Proxy->PackedIndex = PrimitiveSceneProxies.Num();
 	Component->SceneProxy = Proxy;

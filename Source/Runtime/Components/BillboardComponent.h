@@ -32,6 +32,8 @@ public:
 
 	virtual void BeginPlay() override;
 	virtual void TickComponent(float DeltaTime) override;
+	// View별 렌더 상태는 Billboard 전용 Proxy가 준비한다.
+	FPrimitiveSceneProxy* CreateSceneProxy() override;
 
 	virtual bool LineTraceComponent(const FRay& WorldRay, FHitResult& OutHit) override;
 	// 클릭한 View의 실제 렌더 행렬로 Quad Mesh 교차를 판정한다.
@@ -48,7 +50,7 @@ public:
 	void GetWorldTransformedMatrix(FMatrix* OutWorldMatrix) const;
 	// 기본 카메라 기준 월드 행렬로 Billboard 렌더 패킷을 제출한다.
 	virtual void SubmitToRenderQueue(FRenderQueue& RenderQueue) override;
-	// View별 Adapter가 계산한 Billboard 행렬을 사용해 같은 렌더 패킷 형식으로 제출한다.
+	// 지정 행렬로 기본 카메라 경로의 렌더 패킷을 구성한다.
 	void SubmitToRenderQueue(FRenderQueue& RenderQueue, const FMatrix& BillboardWorldMatrix);
 
 	virtual void Serialize(json& Handle, bool bIsLoading) override;
@@ -65,6 +67,7 @@ protected:
 	UStaticMesh* QuadMesh = nullptr;
 	FSubUVConstants IconParams{ 0.0f, 1.0f, 1.0f, 1.0f };	// CurrentFrame, RowSize, ColSize, Alpha
 private:
+	friend class FBillboardSceneProxy;
 	const ULightComponentBase* TintSource = nullptr;
 	bool bEditorIcon = false;
 	float IconSize = 1.0f;
