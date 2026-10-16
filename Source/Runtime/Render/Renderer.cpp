@@ -298,7 +298,7 @@ bool FRenderer::PrepareShadowDepthTarget(FProjectedShadowInfo& ShadowInfo)
 	const uint32 Resolution = static_cast<uint32>(ShadowInfo.LightProxy->GetLightComponent()->GetShadowMapResolution());
 
 	// 텍스쳐 크기가 달라질때 GPU 재할당
-	if (!ShadowDepthTarget || ShadowDepthTarget->GetWidth() != Resolution || ShadowDepthTarget->GetWidth() != Resolution)
+	if (!ShadowDepthTarget || ShadowDepthTarget->GetWidth() != Resolution || ShadowDepthTarget->GetHeight() != Resolution)
 	{
 		D3D11_TEXTURE2D_DESC Desc{};
 		Desc.Width = Resolution;
