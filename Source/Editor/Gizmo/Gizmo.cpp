@@ -184,8 +184,8 @@ void FGizmo::BeginDrag(int Axis, const FRay& MouseRay, const FVector2& MousePos)
 {
 	DragStartMousePos = MousePos;
 	DraggingAxis = Axis;
-	DragStartLocation = GetLocation();
-	DragStartRenderLocation = GetRenderLocation();    
+	DragStartLocation = Target->GetWorldLocation();
+	DragStartRenderLocation = Mode == EGizmoMode::Location ? DragStartLocation : GetRenderLocation();
 	DragStartRotation = GetRotation();
 	DragStartScale = GetScale();
 
@@ -245,7 +245,7 @@ void FGizmo::UpdateDrag(const FRay& MouseRay, const FVector2& MousePos)
 	if (DraggingAxis == AXIS_SCREEN && Mode != EGizmoMode::Rotation)
 	{
 		if (Mode == EGizmoMode::Location)
-			Target->SetRelativeLocation(DragStartLocation + (current - DragStartPoint));
+			Target->SetWorldLocation(DragStartLocation + (current - DragStartPoint), false);
 		else
 		{
 			float dx = MousePos.X - DragStartMousePos.X;
@@ -279,7 +279,7 @@ void FGizmo::UpdateDrag(const FRay& MouseRay, const FVector2& MousePos)
 	float amount = delta.Dot(DragAxisDirection);
 
 	if (Mode == EGizmoMode::Location)
-		Target->SetRelativeLocation(DragStartLocation + DragAxisDirection * amount);
+		Target->SetWorldLocation(DragStartLocation + DragAxisDirection * amount, false);
 	else   // Scale
 	{
 		float factor = 1.0f + amount;
@@ -338,7 +338,7 @@ FVector FGizmo::GetAxisDirection(int Axis) const
 
 	if (bUseLocal && Target)
 	{
-		FMatrix rot = Target->GetRelativeRotation().Quaternion().ToFMatrix();
+		FMatrix rot = GetRotation().Quaternion().ToFMatrix();
 		FVector4 v = rot.TransformVector(AxisDirs[Axis]);
 		return FVector(v.X, v.Y, v.Z).Normalized();
 	}
