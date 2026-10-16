@@ -17,11 +17,11 @@
 #define LIGHT_DEBUG_MODE_SLICES       3
 
 // 조명 모델은 C++(FRenderResourceManager::LoadUberLit)이 매크로로 하나만 넘긴다.
-// 아무 매크로 없이 컴파일될 때(기존 머티리얼이 쓰는 기본 키)만 Lambert를 켠다.
+// 아무 매크로 없이 컴파일될 때(기존 머티리얼이 쓰는 기본 키)만 BlinnPhong을 켠다.
 #if !defined(LIGHTING_MODEL_UNLIT) && !defined(LIGHTING_MODEL_GOURAUD) && \
     !defined(LIGHTING_MODEL_LAMBERT) && !defined(LIGHTING_MODEL_BLINN_PHONG) && \
     !defined(WORLD_NORMAL)
-#define LIGHTING_MODEL_LAMBERT 1
+#define LIGHTING_MODEL_BLINN_PHONG 1
 #endif
 
 // 아래 구조체와 cbuffer Lighting은 Renderer.h의 FLightingConstants와 바이트 단위로 같아야 한다.

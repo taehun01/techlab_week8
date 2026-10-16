@@ -45,6 +45,8 @@ public:
     const FCachedMeshLOD& GetLOD(uint32 Index) const { return RenderState->LODs[Index]; }
     const FCachedMeshSection& GetSection(uint32 Index) const { return RenderState->Sections[Index]; }
     FScene* GetScene() const { return Scene; }
+    bool IsCastShadow() const { return bCastShadow; }
+    bool IsReceiveShadow() const { return bReceivesShadow; }
 
 protected:
     // 파생 Proxy만 자신의 렌더 스냅샷을 갱신한다.
@@ -64,5 +66,7 @@ private:
     bool bQueuedForUpdate = false;
     bool bRenderStateQueued = false;
     bool bVisible = true;
+    bool bCastShadow = true;
+    bool bReceivesShadow = true;
     bool bDynamicDataPrepared = false;
 };
