@@ -27,6 +27,9 @@ protected:
 	virtual void CreateRenderState() override;
 	virtual void DestroyRenderState() override;
 private:
-
+	float ShadowResolutionScale;
+	float ShadowBias;
+	float ShadowSlopeBias;
+	float ShadowSharpen;
 
 };

@@ -33,6 +33,7 @@ protected:
 	float Intensity = 1.0f;
 	FColor LightColor = FColor(255, 255, 255, 255);
 	bool bVisible = true;
+	bool bCastShadow = true;
 
 private:
 
