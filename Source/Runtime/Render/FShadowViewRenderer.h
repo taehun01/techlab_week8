@@ -8,11 +8,8 @@
 
 struct FShadowViewConstants
 {
-	FMatrix InverseViewProjection;
-	FVector CameraPosition;
-	float   VisualizeRange;
-	FVector CameraForward;
-	float   Padding;
+	FMatrix LightSpaceMatrix;
+	FMatrix WorldMatrix;
 };
 
 class FShadowViewRenderer
@@ -25,7 +22,7 @@ public:
 	FShadowViewRenderer operator=(const FShadowViewRenderer&) = delete;
 
 	bool Init();
-	void OnRender(FTexture2D* depthTexture, const FMatrix& ViewProjection, const FVector& LightPosition, const FVector& ViewLightForward);
+	void OnRender(FTexture2D* depthTexture, const FMatrix& ViewProjection, const FMatrix& WorldMatrix);
 private:
 	FPipelineState PipelineState;
 	FShaderProgram* Shader = nullptr;

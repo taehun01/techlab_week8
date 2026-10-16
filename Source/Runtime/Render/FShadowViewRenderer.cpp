@@ -24,15 +24,13 @@ bool FShadowViewRenderer::Init()
 	return true;
 }
 
-void FShadowViewRenderer::OnRender(FTexture2D* depthTexture, const FMatrix& ViewProjection, const FVector& LightPosition, const FVector& ViewLightForward)
+void FShadowViewRenderer::OnRender(FTexture2D* depthTexture, const FMatrix& LightSpaceMatrix, const FMatrix& WorldMatrix)
 {
 	FShadowViewConstants Constants;
-	Constants.InverseViewProjection = ViewProjection.Inverse();
-	Constants.CameraPosition = LightPosition;
-	Constants.VisualizeRange = 50;
-	Constants.CameraForward = ViewLightForward;
+	Constants.LightSpaceMatrix = LightSpaceMatrix;
+	Constants.WorldMatrix = WorldMatrix;
 
 	RenderCommand::BindPipelineState(PipelineState);
 	RenderCommand::UpdateBufferData(ConstantBuffer.get(), &Constants);
-	RenderCommand::BindConstantBuffer(0, ConstantBuffer.get(), EShaderBindFlagBits::Pixel);
+	RenderCommand::BindConstantBuffer(0, ConstantBuffer.get(), EShaderBindFlagBits::Vertex);
 }
