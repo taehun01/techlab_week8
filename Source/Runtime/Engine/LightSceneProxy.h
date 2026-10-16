@@ -1,8 +1,8 @@
 #pragma once
 
 #include "Components/LightComponent.h"
-
 #include "SceneManagement.h"
+#include "Math/Frustum.h"
 
 //MSVC 전용 최적화
 //vftable을 만들게 되면 8byte를 먼저 쓰게 되는데
@@ -13,6 +13,17 @@ class FLightSceneProxyFixLayout
 {
 public:
 	virtual ~FLightSceneProxyFixLayout() = default;
+};
+
+// 그림자 Depth pass 한 번에 필요한 시점 정보
+struct FShadowViewInfo
+{
+	FMatrix View;
+	FMatrix Projection;
+	FMatrix ViewProjection;
+	FFrustumPlanes Frustum;
+	float NearZ = 0.f;
+	float FarZ = 0.f;
 };
 
 class FLightSceneProxy : public FLightSceneProxyFixLayout
@@ -26,6 +37,9 @@ public:
 
 	const ULightComponent* GetLightComponent() const { return LightComponent; }
 	bool IsVisible() const { return LightComponent->IsVisible(); }
+	bool IsCastShadows() const { return LightComponent->IsCastShadows(); }
+	virtual uint32 GetNumShadowViews() const { return 0; }
+	virtual bool GetShadowView(uint32 ViewIndex, FShadowViewInfo& Out) const { return false; }
 
 protected:
 	const ULightComponent* LightComponent = nullptr;
