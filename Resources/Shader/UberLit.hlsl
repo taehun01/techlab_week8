@@ -209,14 +209,14 @@ float SampleShadowMap(FShadowShaderParameters Shadow, float3 LightNDC)
     if (all(UV >= 0.0.xx) && all(UV <= 1.0.xx))
     {
         float texel = 1.0f / max(Shadow.Resolution, 1.0f); // Texture에서 한칸의 크기
-        float r = max(Shadow.ShadowPCFRadius,0.0f); // 평균할 Pixel 반경, radius * radius 개수만큼의 Pixel 평균을 냄
+        int r = max(int(Shadow.ShadowPCFRadius), 0); // 평균할 Pixel 반경, radius * radius 개수만큼의 Pixel 평균을 냄
         float sum = 0.0f;
         int taps = 0;   // 평균 나눌때 분모, 픽셀 연산 횟수
             [loop]
         for (int dy = -r; dy <= r; ++dy)
         {
                 [loop]
-            for (int dx = -r; dx <= r; ++dx)
+            for (int dx = -r; dx <= r;  ++dx) 
             {
                 float2 uvOff = UV + float2(dx, dy) * texel; // 초기 UV + texel 단위로 dx, dy 이동량
                 const int MaxTexel = int(Shadow.Resolution) - 1;    // Texture 끝점
