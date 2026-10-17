@@ -9,6 +9,7 @@
 #include "Occlusion/GPUOcclusion.h"
 #include "RenderEnums.h"
 #include "Material.h"
+#include "ShadowMapManager.h"
 
 constexpr uint32 ObjectSlotBytes = 256;
 

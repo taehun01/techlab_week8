@@ -21,7 +21,7 @@ FShadowMapArray::FShadowMapArray(ID3D11Device* Device, uint32 InResolution, uint
     HRESULT hr = Device->CreateTexture2D(&Desc, nullptr, (ID3D11Texture2D**)Texture.GetAddressOf());
     if (FAILED(hr)) 
     { 
-        //HTR_LOG(ELogVerbosity::Error, "[ShadowMapArray] CreateTexture2D failed (hr=0x{:08X})", (uint32)hr); 
+        HTR_LOG(Error, "[ShadowMapArray] CreateTexture2D failed (hr=0x{:08X})", (uint32)hr); 
         return; 
     }
 

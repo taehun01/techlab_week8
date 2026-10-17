@@ -5,6 +5,7 @@
 #include "Components/SpotLightComponent.h"
 #include "Components/SkyLightComponent.h"
 #include "Components/RectLightComponent.h"
+#include "Render/Material.h"
 
 void FScene::AddPrimitive(UPrimitiveComponent* Component)
 {
@@ -216,6 +217,7 @@ void FScene::UpdateLights(FRenderer* Renderer)
 		}
 	}
 
+	GatherShadowCasters();
 	Renderer->SetLighting(Constants, LocalLightParameters);
 }
 
@@ -351,4 +353,51 @@ void FScene::MarkRenderStateDirty(FPrimitiveSceneProxy* Proxy)
 	if (!Proxy || Proxy->bRenderStateQueued) return;
 	Proxy->bRenderStateQueued = true;
 	RenderStateDirtyProxies.Add(Proxy);
+}
+
+
+void FScene::GatherShadowCasters()
+{
+	ShadowCasters.Reset();   // 용량은 유지
+
+	for (FShadowRequest& Request : ShadowRequests)
+	{
+		Request.FirstCaster = ShadowCasters.Num();
+		const FFrustumPlanes& LightFrustum = Request.View.Frustum;
+
+		BVH.QueryCull(
+			FrustumAllPlanesMask,
+			[&LightFrustum](const FBox& Bounds, uint32& Mask)
+			{
+				return static_cast<EBVHCullResult>(ClassifyBoxInFrustum(Bounds, LightFrustum, Mask));
+			},
+			[this](FPrimitiveSceneProxy* Proxy)
+			{
+				if (!Proxy->IsVisible() || !Proxy->IsCastShadow())
+					return;
+
+				// 메시가 없는 프록시(빌보드·파티클·텍스트)는 View마다 형상이 달라 그림자 대상이 아니다
+				UStaticMesh* Mesh = Proxy->GetMesh();
+				if (!Mesh || !Proxy->GetRenderState())
+					return;
+
+				constexpr uint8 ShadowLOD = 0;
+				const FCachedMeshLOD& CachedLOD = Proxy->GetLOD(ShadowLOD);
+				for (uint32 i = 0; i < CachedLOD.NumSections; ++i)
+				{
+					const FCachedMeshSection& Section = Proxy->GetSection(CachedLOD.FirstSection + i);
+					// 반투명 섹션은 깊이를 쓰지 않는다 (카메라 RenderDepth와 같은 규칙)
+					if (!Section.Material || Section.Material->BlendState != EBlendState::Opaque)
+						continue;
+					ShadowCasters.Add({ Proxy, Mesh, Section.StartIndex, Section.IndexCount, ShadowLOD });
+				}
+			});
+
+		Request.NumCasters = ShadowCasters.Num() - Request.FirstCaster;
+
+		// 5단계에서 BindMesh가 덜 바뀌도록 구간 안을 메시·LOD 순으로 정렬
+		std::sort(ShadowCasters.begin() + Request.FirstCaster, ShadowCasters.end(),
+			[](const FShadowDrawItem& A, const FShadowDrawItem& B)
+			{ return A.Mesh != B.Mesh ? A.Mesh < B.Mesh : A.LODIndex < B.LODIndex; });
+	}
 }

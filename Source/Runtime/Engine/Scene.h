@@ -12,7 +12,6 @@
 #include "Math/BVH.h"
 #include "Render/FogInfo.h"
 #include "Render/Renderer.h"
-#include "Render/ShadowMapManager.h"
  
 struct FExponentialHeightFogSceneInfo
 {
@@ -26,12 +25,23 @@ struct FLightSceneInfo
 	
 };
 
+struct FShadowDrawItem
+{
+	const FPrimitiveSceneProxy* Proxy = nullptr;
+	UStaticMesh* Mesh = nullptr;
+	uint32 StarIndex = 0;
+	uint32 IndexCount = 0;
+	uint8 LODIndex = 0;
+};
+
 struct FShadowRequest
 {
 	FLightSceneProxy* Proxy = nullptr;
 	int32 LightIndex = INDEX_NONE;
 	FShadowViewInfo View;
 	FShadowAllocation Allocation;
+	uint32 FirstCaster = 0;
+	uint32 NumCasters = 0;
 };
 
 class FScene
@@ -59,6 +69,8 @@ public:
 	void MarkDirty(FPrimitiveSceneProxy* Proxy);
 	void MarkRenderStateDirty(FPrimitiveSceneProxy* Proxy);
 
+	void GatherShadowCasters();
+
 	TArray<FPrimitiveSceneProxy*> PrimitiveSceneProxies;
 	TArray<FPrimitiveSceneProxy*> DirtyProxies;
 	TArray<FPrimitiveSceneProxy*> RenderStateDirtyProxies;
@@ -67,6 +79,7 @@ public:
 	
 	TArray<FExponentialHeightFogSceneInfo> FogInfos;
 	TArray<FShadowRequest> ShadowRequests;
+	TArray<FShadowDrawItem> ShadowCasters;
 
 	// 컬링 결과로 프록시를 바로 내보내 컴포넌트를 역참조하지 않는다. 경계는 Build/Refit 때만 계산한다.
 	TBVH<FPrimitiveSceneProxy*> BVH{
