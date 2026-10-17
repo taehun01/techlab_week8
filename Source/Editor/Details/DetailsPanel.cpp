@@ -857,16 +857,18 @@ void FDetailsPanel::DrawShadowMapPreview(const ULightComponent& Light)
 		? Renderer->GetShadowDepthTexture(*Light.SceneProxy)
 		: nullptr;
 
-	if (!DepthTexture)
+	FViewportSettings ShadowViewport;
+	if (!DepthTexture || !Renderer->GetShadowDepthViewport(*Light.SceneProxy, ShadowViewport))
 	{
 		// Unlit만 활성화된 경우나 지원하지 않는 라이트 종류도 여기에 해당한다.
 		ImGui::TextDisabled("No shadow map generated this frame.");
 		return;
 	}
 
-	// 요청값이 아니라 실제 생성된 GPU 타깃의 크기를 표시한다.
-	ImGui::Text("Rendered: %u x %u", DepthTexture->GetWidth(), DepthTexture->GetHeight());
-	if (DepthTexture->GetWidth() != static_cast<uint32>(Light.GetShadowMapResolution()))
+	// 물리 Atlas 크기와 선택한 라이트의 실제 타일 해상도를 구분한다.
+	ImGui::Text("Rendered: %u x %u", ShadowViewport.Width, ShadowViewport.Height);
+	ImGui::TextDisabled("Atlas: %u x %u", DepthTexture->GetWidth(), DepthTexture->GetHeight());
+	if (ShadowViewport.Width != static_cast<uint32>(Light.GetShadowMapResolution()))
 		ImGui::TextDisabled("Resolution applies next frame.");
 
 	// 현재 Spot Shadow Map은 정사각형이며, 패널 폭 안에서 표시한다.
@@ -874,9 +876,13 @@ void FDetailsPanel::DrawShadowMapPreview(const ULightComponent& Light)
 	if (PreviewSize <= 0.0f)
 		return;
 
-	// 단일 채널 Depth SRV를 그대로 표시하므로 붉은 계열로 보인다.
-	// TODO(ShadowAtlas): 선택한 라이트에 배정된 Atlas 영역의 UV를 지정한다.
-	ImGui::Image((ImTextureID)DepthTexture->GetSRV(), ImVec2(PreviewSize, PreviewSize));
+	// 동일한 SRV를 사용하되 선택한 라이트에 배정된 타일만 표시한다.
+	const float InvWidth = 1.0f / DepthTexture->GetWidth();
+	const float InvHeight = 1.0f / DepthTexture->GetHeight();
+	const ImVec2 UVMin(ShadowViewport.StartX * InvWidth, ShadowViewport.StartY * InvHeight);
+	const ImVec2 UVMax((ShadowViewport.StartX + ShadowViewport.Width) * InvWidth,
+		(ShadowViewport.StartY + ShadowViewport.Height) * InvHeight);
+	ImGui::Image((ImTextureID)DepthTexture->GetSRV(), ImVec2(PreviewSize, PreviewSize), UVMin, UVMax);
 }
 
 bool FDetailsPanel::Init()

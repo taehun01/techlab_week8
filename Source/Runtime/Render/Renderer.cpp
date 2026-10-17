@@ -1,5 +1,6 @@
 #include "EnginePCH.h"
 #include "Renderer.h"
+#include "FShadowViewRenderer.h"
 #include "Shader.h"
 #include "Mesh.h"
 
@@ -194,7 +195,7 @@ void FRenderer::PrepareShadowParameters()
 		FShadowShaderParameters& Parameter = Parameters[Index];
 		Parameter.LightViewProjection = ShadowInfo.LightViewProjection;
 
-		// 실패한 작업은 기본 TextureIndex=-1을 유지한다.
+		// 실패한 작업은 기본 AtlasPageIndex=-1을 유지한다.
 		if (!ShadowInfo.HasDepthTarget())
 		{
 			continue;
@@ -202,15 +203,18 @@ void FRenderer::PrepareShadowParameters()
 
 		FTexture2D* DepthTexture = ShadowInfo.RenderingInfo.DepthStencil.Texture;
 		Parameter.Bias = ShadowInfo.LightProxy->GetLightComponent()->GetShadowBias();
-		Parameter.Resolution = DepthTexture->GetWidth();
+		const FViewportSettings& Viewport = ShadowInfo.RenderingInfo.ViewportSetting;
+		Parameter.Resolution = Viewport.Width;
+		Parameter.TileIndex = (Viewport.StartY / Viewport.Height) * ShadowAtlasTilesPerRow
+			+ Viewport.StartX / Viewport.Width;
 
-		// TODO(ShadowAtlas): 개별 텍스처 번호 대신 Atlas 페이지·영역을 배정한다.
-		// 여러 그림자 정보가 같은 Atlas 텍스처를 참조할 수 있게 변경한다.
-		if (ShadowDepthBindings.Num() < static_cast<int32>(MaxBoundShadowTextures))
+		// 같은 페이지의 타일들은 SRV 하나를 공유한다.
+		int32 PageIndex = ShadowDepthBindings.Find(DepthTexture);
+		if (PageIndex == INDEX_NONE && ShadowDepthBindings.Num() < static_cast<int32>(MaxBoundShadowAtlases))
 		{
-			Parameter.TextureIndex = ShadowDepthBindings.Num();
-			ShadowDepthBindings.Add(DepthTexture);
+			PageIndex = static_cast<int32>(ShadowDepthBindings.Add(DepthTexture));
 		}
+		Parameter.AtlasPageIndex = PageIndex;
 	}
 
 	// 업로드 실패 시 이전 GPU 정보를 현재 작업에 사용하지 않는다.
@@ -242,8 +246,8 @@ void FRenderer::BindShadowResources()
 	FStructuredBuffer* Parameters = NumShadowParameters > 0 ? ShadowParameterBuffer.get() : nullptr;
 	RenderCommand::BindShaderResource(ShadowParameterSlot, Parameters, EShaderBindFlagBits::Pixel);
 
-	// TODO(ShadowAtlas): 개별 Shadow Map SRV 연결을 Atlas 페이지 SRV 연결로 교체한다.
-	for (uint32 Index = 0; Index < MaxBoundShadowTextures; ++Index)
+	// 타일 수와 무관하게 각 Atlas 페이지의 SRV를 한 번만 연결한다.
+	for (uint32 Index = 0; Index < MaxBoundShadowAtlases; ++Index)
 	{
 		FTexture2D* Texture = nullptr;
 		if (NumShadowParameters > 0 && Index < static_cast<uint32>(ShadowDepthBindings.Num()))
@@ -305,15 +309,15 @@ void FRenderer::UpdateShadowStats()
 	}
 
 	uint64 DepthBytes = 0;
-	for (const auto& Target : ShadowDepthTargets)
+	for (const FShadowAtlas& Atlas : ShadowViewRenderer->ShadowAtlasArray)
 	{
+		const auto& Target = Atlas.Texture;
 		if (!Target)
 		{
 			continue;
 		}
 
 		// 현재 정책은 비압축·1 mip·1 slice·MSAA 1이다.
-		// TODO(ShadowAtlas): 소유한 물리 Atlas 자원의 크기로 계속 집계한다.
 		DepthBytes += static_cast<uint64>(Target->GetWidth()) * Target->GetHeight() * FormatToBytes(Target->GetFormat());
 	}
 
@@ -474,6 +478,8 @@ void FRenderer::RenderDepth(const FMatrix& ViewProjection)
 // 유효한 프로젝션이 설정된 섀도우 맵 타깃을 준비한다.
 void FRenderer::PrepareShadowDepthTargets(TArray<FProjectedShadowInfo>& ShadowInfos)
 {
+	static_assert(ShadowAtlasTilesPerRow == FShadowViewRenderer::TilesPerRow);
+	static_assert(FShadowViewRenderer::TilesPerAtlas == ShadowAtlasTilesPerRow * ShadowAtlasTilesPerRow);
 	// 타깃을 교체하기 전에 전달받은 작업들의 이전 비소유 참조를 비운다.
 	// 투영 결과와 Caster 큐는 유지한다.
 	for (FProjectedShadowInfo& ShadowInfo : ShadowInfos)
@@ -481,71 +487,46 @@ void FRenderer::PrepareShadowDepthTargets(TArray<FProjectedShadowInfo>& ShadowIn
 		ShadowInfo.SetRenderingInfo(FRenderingInfo{});
 	}
 
-	// 남는 GPU 텍스처는 해제하되 배열의 저장 용량은 유지한다.
-	// 이전 작업들의 모든 소비가 끝난 시점에만 이 함수를 호출한다.
-	// TODO(ShadowAtlas): 작업별 개별 텍스처 할당을 Atlas 페이지·영역 배정으로 교체한다.
-	// Info는 배정 결과만 참조하고, GPU 자원 소유권은 자원 관리 쪽에 유지한다.
-	ShadowDepthTargets.SetNum(ShadowInfos.Num(), false);
+	TSet<uint32> ActiveLightUUIDs;
+	for (const FProjectedShadowInfo& ShadowInfo : ShadowInfos)
+		ActiveLightUUIDs.Add(ShadowInfo.LightProxy->GetLightComponent()->GetUUID());
+	ShadowViewRenderer->ReleaseUnusedShadowInfos(ActiveLightUUIDs);
 
-	for (int32 TargetIndex = 0; TargetIndex < ShadowInfos.Num(); ++TargetIndex)
+	// 기존 Atlas는 프레임 시작에 한 번 지우고 타일을 그릴 때는 Load한다.
+	for (FShadowAtlas& Atlas : ShadowViewRenderer->ShadowAtlasArray)
+		RenderCommand::ClearDepthStencil(Atlas.Texture.get(), 1.0f, 0);
+
+	for (FProjectedShadowInfo& ShadowInfo : ShadowInfos)
 	{
-		FProjectedShadowInfo& ShadowInfo = ShadowInfos[TargetIndex];
-		TUniquePtr<FTexture2D>& DepthTarget = ShadowDepthTargets[TargetIndex];
+		const ULightComponent* Light = ShadowInfo.LightProxy->GetLightComponent();
+		const uint32 UUID = Light->GetUUID();
+		const uint32 Resolution = static_cast<uint32>(Light->GetShadowMapResolution());
+		if (!ShadowViewRenderer->AllocateShadowInfo(UUID, ShadowInfo.LightViewProjection, Resolution))
+			continue;
 
-		// 투영의 유효성은 작업을 구성한 호출자가 보장한다.
-		const uint32 Resolution = static_cast<uint32>(ShadowInfo.LightProxy->GetLightComponent()->GetShadowMapResolution());
-
-		// 같은 슬롯의 크기가 같으면 GPU 자원을 재사용한다.
-		if (!DepthTarget
-			|| DepthTarget->GetWidth() != Resolution
-			|| DepthTarget->GetHeight() != Resolution)
-		{
-			D3D11_TEXTURE2D_DESC Desc{};
-			Desc.Width = Resolution;
-			Desc.Height = Resolution;
-			Desc.MipLevels = 1;
-			Desc.ArraySize = 1;
-			Desc.Format = DXGI_FORMAT_R24G8_TYPELESS;
-			Desc.SampleDesc.Count = 1;
-			Desc.Usage = D3D11_USAGE_DEFAULT;
-			Desc.BindFlags = D3D11_BIND_DEPTH_STENCIL | D3D11_BIND_SHADER_RESOURCE;
-
-			// 새 자원의 필요한 View가 모두 생성된 경우에만 슬롯을 교체한다.
-			TUniquePtr<FTexture2D> NewTarget = RenderCommand::CreateTexture2D(Desc);
-			if (!NewTarget->GetDSV() || !NewTarget->GetSRV())
-			{
-				HTR_LOG(Error, "Shadow Depth target {} creation failed: {}x{}",	TargetIndex, Resolution, Resolution);
-				continue;
-			}
-
-			DepthTarget = std::move(NewTarget);
-		}
-
-		// 이 작업에 배정한 텍스처와 전체 렌더 영역을 연결한다.
+		// UUID가 있으면 기존 AtlasIndex·TileIndex를 사용하고 행렬만 갱신한 상태다.
+		const FShadowData& Data = *ShadowViewRenderer->ShadowInfoMap.Find(UUID);
 		FRenderingInfo RenderingInfo{};
-		// TODO(ShadowAtlas): 기존 StartX·StartY·Width·Height를 배정된 Atlas 영역으로 설정한다.
+		RenderingInfo.ViewportSetting.StartX = (Data.TileIndex % ShadowAtlasTilesPerRow) * Resolution;
+		RenderingInfo.ViewportSetting.StartY = (Data.TileIndex / ShadowAtlasTilesPerRow) * Resolution;
 		RenderingInfo.ViewportSetting.Width = Resolution;
 		RenderingInfo.ViewportSetting.Height = Resolution;
-		RenderingInfo.DepthStencil.Texture = DepthTarget.get();
-		// TODO(ShadowAtlas): 공유 DSV는 Viewport와 무관하게 전체가 Clear된다.
-		// 전체 갱신은 페이지당 한 번 Clear한 뒤 영역별 Load로 처리한다.
-		// 캐시와 함께 사용할 부분 갱신은 변경 영역만 초기화하는 정책을 별도로 구현한다.
-		RenderingInfo.DepthStencil.LoadOp = ERenderTargetLoadOp::Clear;
+		RenderingInfo.DepthStencil.Texture = ShadowViewRenderer->ShadowAtlasArray[Data.AtlasIndex].Texture.get();
+		// 페이지 전체를 이미 초기화했으므로 다른 타일의 깊이는 보존한다.
+		RenderingInfo.DepthStencil.LoadOp = ERenderTargetLoadOp::Load;
 		RenderingInfo.DepthStencil.StoreOp = ERenderTargetStoreOp::Store;
-		RenderingInfo.DepthStencil.ClearValue.DepthClearValue = 1.0f;
-
 		ShadowInfo.SetRenderingInfo(RenderingInfo);
 	}
 }
 
-void FRenderer::RenderShadowMaps(TArray<FProjectedShadowInfo>&& InShadows)
+void FRenderer::RenderShadowMaps(TArray<FProjectedShadowInfo>&& InShadows, FShadowViewRenderer& InShadowViewRenderer)
 {
 	SCOPE_CYCLE_COUNTER(ShadowStats::STAT_RenderCPU);
 	// 이전 화면의 SRV를 자원 교체·Depth 기록 전에 해제한다.
 	RenderCommand::UnbindShaderResource(ShadowParameterSlot, EShaderBindFlagBits::Pixel);
 
-	// TODO(ShadowAtlas): 개별 맵 슬롯 범위 대신 실제 Atlas SRV 슬롯을 해제한다.
-	for (uint32 Index = 0; Index < MaxBoundShadowTextures; ++Index)
+	// 이전 프레임의 모든 Atlas 페이지 슬롯을 해제한다.
+	for (uint32 Index = 0; Index < MaxBoundShadowAtlases; ++Index)
 	{
 		RenderCommand::UnbindShaderResource(ShadowDepthTextureSlot + Index, EShaderBindFlagBits::Pixel);
 	}
@@ -553,6 +534,7 @@ void FRenderer::RenderShadowMaps(TArray<FProjectedShadowInfo>&& InShadows)
 	// 타깃이 교체되기 전에 비소유 참조와 이전 업로드 상태를 비운다.
 	ShadowDepthBindings.Reset();
 	NumShadowParameters = 0;
+	ShadowViewRenderer = &InShadowViewRenderer;
 
 	ProjectedShadows = std::move(InShadows);
 	PrepareShadowDepthTargets(ProjectedShadows);
@@ -597,6 +579,20 @@ const FTexture2D* FRenderer::GetShadowDepthTexture(const FLightSceneProxy& Light
 
 	// 이번 프레임에 해당 라이트의 Depth 타깃이 준비되지 않았다.
 	return nullptr;
+}
+
+bool FRenderer::GetShadowDepthViewport(const FLightSceneProxy& LightProxy, FViewportSettings& OutViewport) const
+{
+	OutViewport = FViewportSettings{};
+	for (const FProjectedShadowInfo& ShadowInfo : ProjectedShadows)
+	{
+		if (ShadowInfo.LightProxy == &LightProxy && ShadowInfo.HasDepthTarget())
+		{
+			OutViewport = ShadowInfo.RenderingInfo.ViewportSetting;
+			return true;
+		}
+	}
+	return false;
 }
 
 void FRenderer::RenderShadowDepth(FProjectedShadowInfo& ShadowInfo)
