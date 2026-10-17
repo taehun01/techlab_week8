@@ -57,7 +57,17 @@ struct FLightRenderParameters
     float BarnDoorCos;     // Rect 전용
     float BarnDoorSin;
     float BarnDoorLength;
-    float Padding;
+    int ShadowIndex;       // 이전 Padding 자리. -1 = 그림자 없음, 0 이상 = SpotShadowMaps 슬라이스·ShadowDatas 번호
+};
+
+// ShadowMapManager.h의 FShadowShaderData와 바이트 단위로 같아야 한다.
+struct FShadowData
+{
+    matrix LightViewProjection; // 월드 → 라이트 클립 공간
+    float UVScale;              // 해상도를 줄인 라이트는 슬라이스의 왼쪽 위 일부만 쓴다
+    float DepthBias;
+    float SlopeBias;
+    float TexelSize;            // 1 / 슬라이스 크기
 };
 
 
@@ -114,6 +124,11 @@ cbuffer LightGrid : register(b5)
 StructuredBuffer<FLightRenderParameters> LocalLights : register(t10);
 // 셀마다 [개수][라이트 번호 x MAX_LIGHTS_PER_CELL] 형태로 CELL_STRIDE칸씩 이어져 있다.
 StructuredBuffer<uint> CellLightIndices : register(t12);
+
+// 그림자. 슬롯은 ShadowMapManager.h의 ShadowMapSRVSlot / ShadowDataSRVSlot / ShadowSamplerSlot과 같아야 한다.
+Texture2DArray<float> SpotShadowMaps : register(t13);
+StructuredBuffer<FShadowData> ShadowDatas : register(t14);
+SamplerComparisonState ShadowSampler : register(s1);
 
 Texture2D DiffuseTexture : register(t0);
 Texture2D NormalTexture : register(t1);

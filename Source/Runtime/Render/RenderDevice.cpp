@@ -403,4 +403,22 @@ void FRenderDevice::CreateStates()
 
 		Device->CreateSamplerState(&Desc, SamplerStates[(uint8)ESamplerState::LinearWrap].GetAddressOf());
 	}
+
+	// 그림자 비교 샘플러. SampleCmp가 주변 2x2 텍셀을 각각 비교한 결과(0/1)를 보간한다 (하드웨어 PCF).
+	// 비교 결과 1 = 밝음: 내 깊이 <= 저장 깊이면 가리는 물체가 없다.
+	// 프러스텀 밖(UV가 0~1 밖)은 Border 1.0 = 가장 먼 깊이로 읽혀 그림자가 생기지 않는다.
+	{
+		D3D11_SAMPLER_DESC Desc = {};
+		Desc.Filter = D3D11_FILTER_COMPARISON_MIN_MAG_LINEAR_MIP_POINT;
+		Desc.AddressU = D3D11_TEXTURE_ADDRESS_BORDER;
+		Desc.AddressV = D3D11_TEXTURE_ADDRESS_BORDER;
+		Desc.AddressW = D3D11_TEXTURE_ADDRESS_BORDER;
+		Desc.BorderColor[0] = Desc.BorderColor[1] = Desc.BorderColor[2] = Desc.BorderColor[3] = 1.0f;
+		Desc.MaxAnisotropy = 1;
+		Desc.ComparisonFunc = D3D11_COMPARISON_LESS_EQUAL;
+		Desc.MinLOD = 0.0f;
+		Desc.MaxLOD = D3D11_FLOAT32_MAX;
+
+		Device->CreateSamplerState(&Desc, SamplerStates[(uint8)ESamplerState::ShadowCompare].GetAddressOf());
+	}
 }

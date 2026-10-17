@@ -218,6 +218,20 @@ void FScene::UpdateLights(FRenderer* Renderer)
 	}
 
 	GatherShadowCasters();
+
+	// 셰이더가 라이트 번호로 자기 Shadow Map을 찾도록 슬라이스 번호를 써 넣는다.
+	// 칸 배정에 실패해 빠진 라이트는 프록시가 채운 기본값 -1(그림자 없음)로 남는다.
+	for (FShadowRequest& Request : ShadowRequests)
+	{
+		LocalLightParameters[Request.LightIndex].ShadowIndex = static_cast<int32>(Request.Allocation.Slice);
+
+		const ULightComponent* Light = Request.Proxy->GetLightComponent();
+		Request.DepthBias = Light->GetShadowBias();
+		Request.SlopeBias = Light->GetShadowSlopeBias();
+	}
+
+	// ShadowIndex가 들어간 LocalLightParameters를 SetLighting이 올리기 전에 그림자 데이터도 맞춰 둔다.
+	Renderer->SetShadowData(ShadowRequests);
 	Renderer->SetLighting(Constants, LocalLightParameters);
 }
 

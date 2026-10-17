@@ -26,7 +26,7 @@ struct FLightRenderParameters
     float BarnDoorCos;     // Rect 전용. 컬링에는 안 쓰지만 stride를 맞추기 위해 둔다
     float BarnDoorSin;
     float BarnDoorLength;
-    float Padding;
+    int ShadowIndex;       // 이전 Padding 자리. 컬링에는 안 쓰지만 stride(96B)를 맞추기 위해 둔다
 };
 
 cbuffer FLightCullingConstants : register(b0)

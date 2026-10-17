@@ -214,6 +214,11 @@ void RenderCommand::BindShaderResource(uint32 Slot, UTexture2D* Texture2D, EShad
 	BindShaderResource(Slot, Texture2D->GetResource(), FlagBits);
 }
 
+void RenderCommand::BindShaderResourceView(uint32 Slot, ID3D11ShaderResourceView* SRV, EShaderBindFlagBits FlagBits)
+{
+	BindShaderResource(Slot, SRV, FlagBits);
+}
+
 void RenderCommand::UnbindShaderResource(uint32 Slot, EShaderBindFlagBits FlagBits)
 {
 	ID3D11ShaderResourceView* NullSRV = nullptr;

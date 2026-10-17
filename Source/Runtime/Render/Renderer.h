@@ -240,7 +240,13 @@ public:
 	// 그림자 요청마다 배정된 슬라이스에 Caster 깊이를 그린다. 월드마다 UpdateLights 직후, 그 월드의 View를 그리기 전에 한 번 부른다.
 	// 그림자는 카메라와 무관하므로 Multiple Viewports가 같은 결과를 함께 쓴다.
 	void RenderShadowDepths(const TArray<FShadowRequest>& Requests, const TArray<FShadowDrawItem>& Casters);
+
+	// 요청별 LightVP·UV 배율·Bias를 t14 버퍼에 올린다. 인덱스 = 슬라이스 = FLightRenderParameters::ShadowIndex.
+	// UpdateLights에서 SetLighting 직전에 부른다.
+	void SetShadowData(const TArray<FShadowRequest>& Requests);
 private:
+	// UberLit이 그림자를 읽도록 t13(Shadow Map 배열)·t14(그림자 데이터)·s1(비교 샘플러)을 VS·PS에 묶는다.
+	void BindShadowResources();
 	void DrawPackets(uint32 Begin, uint32 End, const FMatrix& ViewProjection);
 	void DrawStaticGroups();
 	void UpdatePerObjectConstants(const FMatrix& World);
@@ -307,4 +313,6 @@ private:
 	bool bShadowDepthProgramResolved = false;
 	// b0에 LightVP를 올리는 버퍼. 카메라 ViewCB와 분리해 어느 값이 들어갔는지 헷갈리지 않게 한다.
 	TUniquePtr<FConstantBuffer> ShadowViewCB;
+	// UberLit t14. FShadowShaderData x MaxSpotShadowSlices
+	TUniquePtr<FStructuredBuffer> ShadowDataBuffer;
 };

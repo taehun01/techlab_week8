@@ -23,7 +23,9 @@ struct FLightRenderParameters
 	float BarnDoorCos;
 	float BarnDoorSin;
 	float BarnDoorLength;
-	float Padding;
+	// 이전 Padding 자리. -1 = 그림자 없음, 0 이상 = Spot Shadow Map 슬라이스이자 ShadowDatas 번호.
+	// 프록시가 매 프레임 FLightRenderParameters{}로 초기화하므로 기본값 -1이 곧 "이번 프레임 그림자 없음"이다.
+	int32 ShadowIndex = -1;
 };
 
 static_assert(sizeof(FLightRenderParameters) == 96,"sizeof(UberLit / TileBasedLightCulling) == sizeof(FLightRenderParameters)");

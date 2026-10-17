@@ -84,6 +84,7 @@ bool FRenderer::Init()
 	GridLightingFallbackCB = RenderCommand::CreateConstantBuffer(sizeof(FLightGridConstants));
 
 	LocalLightBuffer = RenderCommand::CreateDynamicStructuredBuffer(sizeof(FLightRenderParameters), MaxLocalLights);
+	ShadowDataBuffer = RenderCommand::CreateDynamicStructuredBuffer(sizeof(FShadowShaderData), MaxSpotShadowSlices);
 	const FLightGridConstants GridConstants{};
 	RenderCommand::UpdateBufferData(GridLightingCB.get(), &GridConstants, sizeof(FLightGridConstants));
 	RenderCommand::UpdateBufferData(GridLightingFallbackCB.get(), &GridConstants, sizeof(FLightGridConstants));
@@ -170,6 +171,7 @@ void FRenderer::RenderOpaque(const FMatrix& ViewProjection)
 	RenderCommand::BindShaderResource(10, LocalLightBuffer.get(), EShaderBindFlagBits::Pixel | EShaderBindFlagBits::Vertex);
 	RenderCommand::BindShaderResource(12, TileIndexBuffer.get(), EShaderBindFlagBits::Pixel);
 	RenderCommand::BindConstantBuffer(5, GridLightingCB.get(), EShaderBindFlagBits::Pixel | EShaderBindFlagBits::Vertex);
+	BindShadowResources();
 
 	DrawStaticGroups();
 	DrawPackets(0, FirstTranslucentIndex, ViewProjection);
@@ -184,6 +186,7 @@ void FRenderer::RenderTranslucent(const FMatrix& ViewProjection)
 	// 2.5D 목록은 불투명 깊이 범위만 담으므로, 불투명보다 앞에 있는 반투명은 전체 순회로 그린다.
 	FConstantBuffer* GridCB = LightCullingMode == ELightCullingMode::Tiled25D ? GridLightingFallbackCB.get() : GridLightingCB.get();
 	RenderCommand::BindConstantBuffer(5, GridCB, EShaderBindFlagBits::Pixel | EShaderBindFlagBits::Vertex);
+	BindShadowResources();
 
 	DrawPackets(FirstTranslucentIndex, SortEntries.Num(), ViewProjection);
 	RenderPackets.Reset();
@@ -607,7 +610,8 @@ void FRenderer::RenderShadowDepths(const TArray<FShadowRequest>& Requests, const
 		return;
 
 	// ① 같은 리소스가 SRV와 DSV로 동시에 묶이면 D3D가 SRV를 강제로 푼다. 그림자 SRV 슬롯을 먼저 비운다.
-	RenderCommand::UnbindShaderResource(ShadowMapSRVSlot, EShaderBindFlagBits::Pixel);
+	//    6단계부터 Gouraud(VS 조명)를 위해 VS에도 묶으므로 두 스테이지 모두 비운다.
+	RenderCommand::UnbindShaderResource(ShadowMapSRVSlot, EShaderBindFlagBits::Pixel | EShaderBindFlagBits::Vertex);
 
 	// ② 파이프라인: 그림자 VS만 쓰고 PS는 끈다 (BindShaderProgram이 PS를 요구해서 빈 mainPS를 바인딩 직후 해제)
 	RenderCommand::BindShaderProgram(ShadowDepthProgram);
@@ -660,6 +664,45 @@ void FRenderer::RenderShadowDepths(const TArray<FShadowRequest>& Requests, const
 	RenderCommand::GetContext()->OMSetRenderTargets(0, nullptr, nullptr);
 	LastMesh = nullptr;
 	LastMaterial = nullptr;
+}
+
+void FRenderer::SetShadowData(const TArray<FShadowRequest>& Requests)
+{
+	const FShadowMapArray* ShadowMaps = ShadowMapManager.GetSpotShadowMaps();
+	if (Requests.IsEmpty() || !ShadowMaps || !ShadowDataBuffer)
+		return;   // 모든 ShadowIndex가 -1이라 셰이더가 버퍼를 읽지 않는다
+
+	FShadowShaderData Data[MaxSpotShadowSlices]{};
+	const float TexelSize = 1.0f / static_cast<float>(ShadowMaps->GetResolution());
+	uint32 Count = 0;
+	for (const FShadowRequest& Request : Requests)
+	{
+		const uint32 Slice = Request.Allocation.Slice;
+		if (Slice >= MaxSpotShadowSlices)
+			continue;
+
+		FShadowShaderData& Out = Data[Slice];   // 인덱스 = 슬라이스
+		Out.LightViewProjection = Request.View.ViewProjection;   // 행 벡터 그대로 (셰이더 row_major + mul(v, M))
+		Out.UVScale = Request.Allocation.UVScale;
+		Out.DepthBias = Request.DepthBias;
+		Out.SlopeBias = Request.SlopeBias;
+		Out.TexelSize = TexelSize;
+		Count = std::max(Count, Slice + 1);
+	}
+
+	// 슬라이스는 0부터 연속으로 배정되므로 앞쪽 Count개만 올리면 된다.
+	if (Count > 0)
+		RenderCommand::UpdateBufferData(ShadowDataBuffer.get(), Data, Count * sizeof(FShadowShaderData));
+}
+
+void FRenderer::BindShadowResources()
+{
+	// Gouraud는 조명을 VS에서 계산하므로 VS에도 묶는다. 7단계에서 VS 그림자를 쓸지 정한다.
+	const EShaderBindFlagBits Stages = EShaderBindFlagBits::Pixel | EShaderBindFlagBits::Vertex;
+	FShadowMapArray* ShadowMaps = ShadowMapManager.GetSpotShadowMaps();
+	RenderCommand::BindShaderResourceView(ShadowMapSRVSlot, ShadowMaps ? ShadowMaps->GetSRV() : nullptr, Stages);
+	RenderCommand::BindShaderResource(ShadowDataSRVSlot, ShadowDataBuffer.get(), Stages);
+	RenderCommand::BindSamplerState(ShadowSamplerSlot, ESamplerState::ShadowCompare, Stages);
 }
 
 void FRenderer::SetViewMode(EViewMode InViewMode)
