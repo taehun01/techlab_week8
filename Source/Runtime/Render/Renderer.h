@@ -50,12 +50,13 @@ struct alignas(16) FShadowShaderParameters
 	FMatrix LightViewProjection = FMatrix::Identity;
 	float Bias = 0.0f;
 	uint32 Resolution = 0;
-
 	// 같은 해상도의 그림자 네 개가 Atlas 페이지 한 장을 공유한다.
 	int32 AtlasPageIndex = -1;
 	uint32 TileIndex = 0;
+	float ShadowPCFRadius;
+	float pad[3];
 };
-static_assert(sizeof(FShadowShaderParameters) == 80);
+static_assert(sizeof(FShadowShaderParameters) == 96);
 
 // 컬링 방식별 셀 크기. Tiled는 슬라이스 1개인 Clustered와 같다.
 constexpr uint32 TiledTileSize = 16;
