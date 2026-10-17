@@ -166,7 +166,7 @@ float ShadowCalculation(float4 PixelPos)
     int2 Texel = int2(UV * float2(1920, 1080));
     float closestDepth = ShadowTexture.Load(int3(Texel, 0)).r;
     float currentDepth = NDCLightSpace.z;
-    float shadow = currentDepth > closestDepth ? 1.0 : 0.0;
+    float shadow = currentDepth > closestDepth ? 0.0 : 1.0;
     return shadow;
 }
 
@@ -354,8 +354,8 @@ FLightContribution AccumulateDirectLighting(float3 N, float3 V, float3 WorldPos,
     {
         const uint LightIndex = bUseCellList ? CellLightIndices[CellOffset + 1 + Index] : Index;
         FLightContribution LightContribution = CalcLocalLight(LocalLights[LightIndex], N, V, WorldPos, InShininess);
-        LightContribution.Diffuse *= (1 - ShadowCalculation(float4(WorldPos, 1.0f)));
-        LightContribution.Specular *= (1 - ShadowCalculation(float4(WorldPos, 1.0f)));
+        LightContribution.Diffuse *= ShadowCalculation(float4(WorldPos, 1.0f));
+        LightContribution.Specular *= ShadowCalculation(float4(WorldPos, 1.0f));
         Total.Diffuse += LightContribution.Diffuse;
         Total.Specular += LightContribution.Specular;
     }
@@ -438,7 +438,6 @@ float4 mainPS(VS_OUTPUT Input) : SV_TARGET
 #elif LIGHTING_MODEL_GOURAUD
     DiffuseLighting += Input.VertexDiffuse;
 #endif
-    float shadow = ShadowCalculation(float4(Input.WorldPos, 1.0f));
     return float4(Albedo.rgb * DiffuseLighting + SpecularLighting, Alpha);
 #endif
 }
