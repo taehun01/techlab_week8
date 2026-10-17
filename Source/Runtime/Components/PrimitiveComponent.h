@@ -59,6 +59,9 @@ public:
 		MarkRenderStateDirty();
 	}
 
+	bool IsCast() const { return bCastShadow; }
+	bool IsReceive() const { return bReceiveShadow; }
+
 	// Details에서 직접 바꾼 가시성도 Proxy의 렌더 상태에 반영한다.
 	void PostEditChangeProperty(const FProperty& Property) override;
 
@@ -94,6 +97,8 @@ protected:
 	bool TraceMesh(const FRay& WorldRay, const FStaticMeshData& Mesh, const FMatrix& WorldMatrix, FHitResult& OutResult);
 	bool TraceMeshLocal(const FRay& LocalRay, const FStaticMeshData& Mesh, float& OutT);
 	bool bVisible = true;
+	bool bCastShadow = true;
+	bool bReceiveShadow = true;
 
 private:
 	friend class FScene;

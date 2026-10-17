@@ -60,7 +60,14 @@ struct FLightRenderParameters
     float Padding;
 };
 
-
+// ShadowMapRenderer.h의 FShadowData
+struct FShadowData
+{
+    float4x4 LightVP;
+    int TextureSlice;
+    float Bias;
+    float2 ShadowDataPadding;
+};
 
 // Renderer.h의 FViewConstants와 바이트 단위로 같아야 한다. VS와 PS 둘 다 b0에 바인딩된다.
 cbuffer ViewConstants : register(b0)
@@ -111,6 +118,13 @@ cbuffer LightGrid : register(b5)
     uint2 LightGridPadding;
 };
 
+cbuffer LightViewConstants : register(b6)
+{
+    matrix LightVP;
+    float3 LightWorldPos; // Specular의 V = normalize(CameraWorldPos - WorldPos)
+    float LightPadding;
+};
+
 StructuredBuffer<FLightRenderParameters> LocalLights : register(t10);
 // 셀마다 [개수][라이트 번호 x MAX_LIGHTS_PER_CELL] 형태로 CELL_STRIDE칸씩 이어져 있다.
 StructuredBuffer<uint> CellLightIndices : register(t12);
@@ -118,6 +132,11 @@ StructuredBuffer<uint> CellLightIndices : register(t12);
 Texture2D DiffuseTexture : register(t0);
 Texture2D NormalTexture : register(t1);
 SamplerState MaterialSampler : register(s0);
+
+Texture2D<float> ShadowMapTexture : register(t13);
+SamplerState ShadowSampler : register(s1);
+
+StructuredBuffer<FShadowData> ShadowDatas : register(t14);
 
 struct VS_INPUT
 {
@@ -368,6 +387,7 @@ float4 mainPS(VS_OUTPUT Input) : SV_TARGET
     const float2 UV = Input.UV + UVOffset;
     const float4 TexColor = DiffuseTexture.Sample(MaterialSampler, UV);
     float4 Albedo = TexColor * BaseColor;
+    
 #if !defined(EDITOR_ARROW_SHADER)
     // 씬은 HDR 타깃에 선형으로 쌓이므로 sRGB로 인코딩된 디퓨즈 텍스처와 BaseColor를 각각 선형으로 바꾼다.
     // 에디터 화살표는 톤 매핑 이후 LDR 타깃에 그려지므로 sRGB 그대로 둔다.
@@ -416,6 +436,34 @@ float4 mainPS(VS_OUTPUT Input) : SV_TARGET
     DiffuseLighting += Input.VertexDiffuse;
 #endif
 
-    return float4(Albedo.rgb * DiffuseLighting + SpecularLighting, Alpha);
+    float4 FinalColor = float4(Albedo.rgb * DiffuseLighting + SpecularLighting, Alpha);
+    
+    const float4 Shadow = { 0.1f, 0.1f, 0.1f, 1.0f };
+    const float Bias = 0.001f;
+    
+    float4 LightClip = mul(float4(Input.WorldPos, 1.0f), LightVP);
+    
+    if (LightClip.w <= 0)
+        return FinalColor;
+    
+    float3 LightNDC = LightClip.xyz / LightClip.w;
+    float2 ShadowUV = LightNDC.xy * float2(0.5f, -0.5f) + float2(0.5f, 0.5f);
+    
+    if (ShadowUV.x < 0 || ShadowUV.x > 1 ||
+        ShadowUV.y < 0 || ShadowUV.y > 1 ||
+        LightNDC.z < 0 || LightNDC.z > 1)
+    {
+        return FinalColor;
+    }
+    
+    const float4 ShadowDepth = ShadowMapTexture.Sample(ShadowSampler, ShadowUV);
+    
+    if(LightNDC.z - Bias > ShadowDepth.r )
+    {
+        return 
+        float4(0.0f, 0.0f, 0.0f, 1.0f);
+    }
+
+    return FinalColor;
 #endif
 }

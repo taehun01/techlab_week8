@@ -909,7 +909,19 @@ void FDetailsPanel::OnRender()
 				}
 
 				PendingDeleteComponent = nullptr;
-			}			
+			}	
+
+			// 깊이 텍스처 콜백
+			
+			if (TargetComponent->IsA<USpotLightComponent>())
+			{
+				if(ShadowCallback)
+				{
+					ShadowMap = ShadowCallback(Cast<ULightComponent>(TargetComponent));
+				}
+				DrawShadowMap();
+			}
+			
 		}		
 	}	
 	ImGui::End();
@@ -1134,6 +1146,17 @@ void FDetailsPanel::TryReparent(USceneComponent* DroppedComponent, USceneCompone
 	}
 }
 
+void FDetailsPanel::DrawShadowMap()
+{
+	const float ThumbnailSize = 640.0f;
+
+	if (ShadowMap && ShadowMap->GetSRV())
+	{
+		ImGui::Image(
+			(ImTextureID)ShadowMap->GetSRV(),
+			{ ThumbnailSize, ThumbnailSize });
+	}
+}
 
 FDetailsPanel::~FDetailsPanel()
 {

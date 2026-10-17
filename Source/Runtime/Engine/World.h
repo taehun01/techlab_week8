@@ -116,6 +116,11 @@ public:
 
 	using Super::Serialize;
 	virtual void Serialize(FStructuredArchive::FRecord Record) override;
+
+	// Shadow
+	void GatherShadowCasters(FMatrix LightVP, FRenderQueue& Queue);
+
+
 private:
 	EWorldType WorldType = EWorldType::None;
 
@@ -158,4 +163,5 @@ private:
 
 	FRenderStats RenderStats;
 
+	TArray<FPrimitiveSceneProxy*> ShadowCasterProxies;
 };

@@ -8,6 +8,7 @@
 #include "Core/StatOverlay.h"
 #include "Input/InputSystem.h"
 
+#include "Serialization/StructuredArchive.h"
 
 #include "Render/GeometryGenerator.h"
 
@@ -118,6 +119,8 @@ bool UEditorEngine::Init()
 	ToneMapRenderer = MakeUnique<FToneMapRenderer>();
 	ToneMapRenderer->Init();
 
+	ShadowMapRenderer = MakeUnique<FShadowMapRenderer>();
+	ShadowMapRenderer->Init();
 
 	// 필요한 Panel들 추가후 raw pointer 반환(소유권 = EditorUI)
 	DetailsPanel = EditorUI->AddEditorPanel<FDetailsPanel>();
@@ -210,6 +213,13 @@ bool UEditorEngine::Init()
 		[this](UActorComponent* Component)
 		{
 			DeleteComponent(Component);
+		}
+	);
+	DetailsPanel->SetShadowMapCallback(
+		[this](ULightComponent* Component) -> FTexture2D*
+		{
+			// 해당 컴포넌트에 해당하는 텍스처 반환하도록 수정 필요
+			return ShadowMapRenderer->GetTexture();
 		}
 	);
 
@@ -424,6 +434,10 @@ void UEditorEngine::RenderMultipleViewports()
 			// FireBall 라이트 상수는 Renderer 공용 상태라 월드가 바뀌면 다시 올린다.
 			// ViewWorld->GetScene().UpdateFireBallLight(Renderer);
 			ViewWorld->GetScene().UpdateLights(Renderer);
+
+			ShadowMapRenderer->PrepareShadows(ViewWorld->GetScene());
+			ShadowMapRenderer->RenderShadows(ViewWorld, Renderer);
+
 			PreparedWorld = ViewWorld;
 		}
 
@@ -608,6 +622,8 @@ void UEditorEngine::RenderOpaquePass(const int32 ViewIndex, const FRenderingInfo
 			RenderCommand::BeginRenderPass(ResumeInfo);
 		}
 
+		ShadowMapRenderer->BindShadows();
+
 		Renderer->RenderOpaque(ViewProjection);
 		// 장면 Wireframe이 Grid·Gizmo·UI로 전파되지 않도록 복원한다.
 		RenderCommand::SetRasterizerState(ERasterizerState::SolidBack);
@@ -624,7 +640,7 @@ void UEditorEngine::RenderOpaquePass(const int32 ViewIndex, const FRenderingInfo
 		RenderCommand::SetRasterizerState(ERasterizerState::SolidBack);
 	}
 
-
+	ShadowMapRenderer->UnbindShadows();
 
 	RenderCommand::EndRenderPass(HDRInfo);
 }
@@ -895,6 +911,11 @@ void UEditorEngine::RenderDepthPass(const int32 ViewIndex, const FRenderingInfo&
 	RenderCommand::BeginRenderPass(PassInfo);
 	DepthViewRenderer->OnRender(ViewRenderingInfo.DepthStencil.Texture, ViewProjection, ViewCameraLocation, ViewCameraForward);
 	RenderCommand::EndRenderPass(PassInfo);
+}
+
+void UEditorEngine::RenderShadowPass(const int32 ViewIndex, const FRenderingInfo& ViewRenderingInfo, const FMatrix& ViewProjection, const FVector& ViewCameraLocation, const FVector& ViewCameraForward, FRenderQueue& RenderQueue)
+{
+
 }
 
 // 입력 View의 Ray와 피킹으로 Gizmo·공유 선택을 갱신한다.

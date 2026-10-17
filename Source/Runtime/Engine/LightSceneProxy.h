@@ -26,6 +26,9 @@ public:
 
 	const ULightComponent* GetLightComponent() const { return LightComponent; }
 	bool IsVisible() const { return LightComponent->IsVisible(); }
+	bool IsCastShadow() const { return LightComponent->IsCastShadow(); }
+
+	const int32 GetIndex() const { return PackedIndex; }
 
 protected:
 	const ULightComponent* LightComponent = nullptr;

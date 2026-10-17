@@ -710,3 +710,47 @@ void FRenderer::SetLightDebugMode(uint32 Mode)
 {
 	LightDebugMode = Mode;
 }
+
+void FRenderer::RenderShadowDepth(FMatrix VP, FRenderQueue& Queue)
+{
+	FViewConstants ViewConstants;
+	ViewConstants.ViewProjection = VP;
+	ViewConstants.CameraWorldPos = FVector(0,0,0);
+	RenderCommand::UpdateBufferData(ViewCB.get(), &ViewConstants);
+
+	LastMesh = nullptr;
+	LastMaterial = nullptr;
+	uint8 LastLODIndex = 0;
+
+	RenderCommand::BindConstantBuffer(0, ViewCB.get(), EShaderBindFlagBits::Vertex | EShaderBindFlagBits::Pixel);
+
+	for (const FRenderPacket& RenderPacket : Queue)      
+	{
+		if (RenderPacket.Mesh == nullptr || RenderPacket.Material == nullptr) continue;
+		if (RenderPacket.Mesh != LastMesh || RenderPacket.LODIndex != LastLODIndex) {
+			RenderCommand::BindMesh(RenderPacket.Mesh, RenderPacket.LODIndex);
+		}
+		if (RenderPacket.Material != LastMaterial) {
+			BindMaterial(RenderPacket.Material);
+		}
+		if (RenderPacket.Material != LastMaterial || RenderPacket.MaterialParamData)
+			UpdateMaterialParams(RenderPacket);
+		if (bUsePerObjectSlots && RenderPacket.Slot != InvalidObjectSlot)
+		{
+			RenderCommand::BindConstantBufferRange(2, PerObjectSlotCB.get(), RenderPacket.Slot * PerObjectSlotConstants, PerObjectSlotConstants, EShaderBindFlagBits::Vertex);
+		}
+		else
+		{
+			RenderCommand::BindConstantBuffer(2, PerObjectCB.get(), EShaderBindFlagBits::Vertex);
+			UpdatePerObjectConstants(RenderPacket, VP);
+		}
+
+		RenderCommand::DrawIndexed(
+			RenderPacket.IndexCount ? RenderPacket.IndexCount : RenderPacket.Mesh->GetIndexBuffer(RenderPacket.LODIndex)->GetIndexCount(),
+			RenderPacket.StartIndex
+		);
+		LastMaterial = RenderPacket.Material;
+		LastMesh = RenderPacket.Mesh;
+		LastLODIndex = RenderPacket.LODIndex;
+	}
+}

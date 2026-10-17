@@ -44,5 +44,5 @@ protected:
 	ComPtr<ID3D11ShaderResourceView> SRV;
 	ComPtr<ID3D11RenderTargetView> RTV;
 	ComPtr<ID3D11DepthStencilView> DSV;
-
+	
 };

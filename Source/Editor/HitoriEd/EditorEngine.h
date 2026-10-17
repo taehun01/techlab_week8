@@ -15,6 +15,7 @@
 #include "Render/FXAARenderer.h"
 #include "Render/ToneMapRenderer.h"
 #include "Render/DepthViewRenderer.h"
+#include "Render/ShadowMapRenderer.h"
 
 
 #include "Editor/EditorUI/EditorUI.h"
@@ -118,6 +119,8 @@ private:
 	void RenderNormalPass(const int32 ViewIndex, const FRenderingInfo& ViewRenderingInfo, const FMatrix& ViewProjection, const FVector& ViewCameraLocation, const FVector& ViewCameraForward);
 	//ToneMap Pass
 	void RenderToneMapPass(const int32 ViewIndex, const FRenderingInfo& ViewRenderingInfo);
+	//ShadowMap Pass
+	void RenderShadowPass(const int32 ViewIndex, const FRenderingInfo& ViewRenderingInfo, const FMatrix& ViewProjection, const FVector& ViewCameraLocation, const FVector& ViewCameraForward, FRenderQueue& RenderQueue);
 
 	//Icon Pass
 	void RenderIconPass(int32 ViewIndex, UWorld& ViewWorld, const FRenderingInfo& ViewRenderingInfo, const FMatrix& ViewProjection, const FVector& ViewCameraLocation, const FVector& ViewCameraForward, FRenderQueue& RenderIconQueue, FRenderQueue& ArrowQueue);
@@ -150,6 +153,7 @@ private:
 	TUniquePtr<FFXAARenderer> FXAARenderer;
 	TUniquePtr<FToneMapRenderer> ToneMapRenderer;
 	TUniquePtr<FDepthViewRenderer> DepthViewRenderer;
+	TUniquePtr<FShadowMapRenderer> ShadowMapRenderer;
 
 	UFont* SystemFont;
 

@@ -2,6 +2,7 @@
 
 #include "Core/Types.h"
 #include "Math/EngineMath.h"
+#include "Serialization/StructuredArchive.h"
 
 struct FColor;
 struct FLinearColor;

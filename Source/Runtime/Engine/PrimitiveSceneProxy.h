@@ -3,10 +3,11 @@
 #include "Containers/Array.h"
 #include "Math/Frustum.h"
 #include "Render/MeshRenderData.h"
+#include "Components/PrimitiveComponent.h"
 
 class FScene;
 class FRenderQueue;
-class UPrimitiveComponent;
+//class UPrimitiveComponent;
 class UStaticMesh;
 class UMaterial;
 
@@ -39,6 +40,8 @@ public:
     const FLODSphere& GetLODSphere() const { return LODSphere; }
     UStaticMesh* GetMesh() const { return Mesh; }
     bool IsVisible() const { return bVisible; }
+    bool IsCast() const { return Component->IsCast(); }
+    bool IsReceive() const { return Component->IsReceive(); }
     uint8 GetLODCount() const { return RenderState ? RenderState->LODCount : 1; }
     const FMeshRenderState* GetRenderState() const { return RenderState.get(); }
     const float* GetLODThresholdsSq() const { return RenderState->LODThresholdSq; }

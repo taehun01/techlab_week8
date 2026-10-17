@@ -791,3 +791,54 @@ void UWorld::Serialize(FStructuredArchive::FRecord Record)
 	// (선택) 메인 카메라는 레벨에 속하지 않아 따로 쓴다. PIE 시작 시점이나 에디터 시점을 복원할 때 쓸 수 있다.
 	// MainCamera->GetCameraComponent()->Serialize(Record.EnterRecord("MainCamera"));
 }
+
+void UWorld::GatherShadowCasters(FMatrix LightVP, FRenderQueue& Queue)
+{
+	ShadowCasterProxies.Reset();
+	Queue.Reset();
+
+	FFrustumPlanes Frustum = ExtractFrustumPlanes(LightVP);
+
+	const auto Visit = [&](FPrimitiveSceneProxy* Proxy)
+		{
+			if (Proxy->IsVisible() && Proxy->IsCast() && Proxy->GetMesh())
+			{
+				ShadowCasterProxies.Add(Proxy);
+			}
+		};
+
+	Scene.BVH.QueryCull(
+		FrustumAllPlanesMask,
+		[Frustum](const FBox& Bounds, uint32& Mask)
+		{
+			return static_cast<EBVHCullResult>(ClassifyBoxInFrustum(Bounds, Frustum, Mask));
+		},
+		Visit);
+	
+	uint32 LODIndex = 0;
+
+	for (FPrimitiveSceneProxy* Proxy : ShadowCasterProxies)
+	{
+		const FMeshRenderState* State = Proxy->GetRenderState();
+		if (!State) continue;
+		if (LODIndex >= State->LODCount) LODIndex = 0;
+		const FCachedMeshLOD& LOD = State->LODs[LODIndex];
+		for (uint32 I = 0; I < LOD.NumSections; ++I)
+		{
+			const FCachedMeshSection& Section = State->Sections[LOD.FirstSection + I];
+
+			if (Section.Material && Section.Material->BlendState == EBlendState::Opaque)
+			{
+				FRenderPacket Packet;
+				Packet.Proxy = Proxy;
+				Packet.Mesh = Proxy->GetMesh();
+				Packet.Material = Section.Material;
+				Packet.StartIndex = Section.StartIndex;
+				Packet.IndexCount = Section.IndexCount;
+				Packet.LODIndex = static_cast<uint8>(LODIndex);
+
+				Queue.Add(Packet);
+			}
+		}
+	}
+}

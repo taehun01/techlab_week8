@@ -19,6 +19,7 @@ public:
 
 private:
 	void CreateViews(ID3D11Device* Device, const D3D11_TEXTURE2D_DESC& InDesc);
+	TArray<ComPtr<ID3D11DepthStencilView>> SliceDSVs;
 };
 
 class UTexture2D : public URenderAsset
@@ -38,6 +39,6 @@ private:
 	void SetResource(TUniquePtr<FTexture2D> InResource) { Texture = std::move(InResource); }
 
 	TUniquePtr<FTexture2D> Texture;
-
+	
 };
 

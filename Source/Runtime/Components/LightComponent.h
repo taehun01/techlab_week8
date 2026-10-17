@@ -20,6 +20,8 @@ public:
 		return NULL;
 	}
 	FLightSceneProxy* SceneProxy = nullptr;
+
+	virtual FMatrix CreateProjectionMatrix() const { return FMatrix(); };
 protected:
 	virtual bool ShouldCreateRenderState() const override
 	{ return true; }

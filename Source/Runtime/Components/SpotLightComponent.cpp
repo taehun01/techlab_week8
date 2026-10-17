@@ -81,6 +81,28 @@ FLightSceneProxy* USpotLightComponent::CreateSceneProxy() const
 	return new FSpotLightSceneProxy(this);
 }
 
+FMatrix USpotLightComponent::CreateProjectionMatrix() const
+{
+	float HalfFOV = FMath::DegreesToRadians(OuterConeAngle);
+	float AspectRatio = 1.0f;
+	float NearClipPlane = 0.1f;
+	float FarClipPlane = GetAttenuationRadius();
+
+	const float YScale = 1.0f / tan(HalfFOV);
+	const float XScale = YScale / AspectRatio;
+
+	const float ZScale = FarClipPlane / (FarClipPlane - NearClipPlane);
+	const float ZOffset = -NearClipPlane * FarClipPlane / (FarClipPlane - NearClipPlane);
+
+	//Forward가 X인 좌표
+	return FMatrix(
+		0.0f, 0.0f, ZScale, 1.0f,
+		XScale, 0.0f, 0.0f, 0.0f,
+		0.0f, YScale, 0.0f, 0.0f,
+		0.0f, 0.0f, ZOffset, 0.0f
+	);
+}
+
 void USpotLightComponent::DrawDebug(FLineBatcher* LineBatcher) const
 {
 	if (LineBatcher == nullptr) return;

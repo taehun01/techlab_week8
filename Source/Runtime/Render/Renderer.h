@@ -233,6 +233,10 @@ public:
 	void SetLightDebugMode(uint32 Mode);
 	void SetLightCullingMode(ELightCullingMode Mode) { LightCullingMode = Mode; }
 	ELightCullingMode GetLightCullingMode() const { return LightCullingMode; }
+
+	// Shadows
+	void RenderShadowDepth(FMatrix VP, FRenderQueue& Queue);
+
 private:
 	void DrawPackets(uint32 Begin, uint32 End, const FMatrix& ViewProjection);
 	void DrawStaticGroups();

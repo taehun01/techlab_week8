@@ -12,6 +12,7 @@ class ULightComponentBase : public USceneComponent
 		PROPERTY(Intensity)
 		PROPERTY(LightColor)
 		PROPERTY(bVisible)
+		PROPERTY(bCastShadow)
 	REFLECT_END()
 public:
 	ULightComponentBase();
@@ -22,6 +23,7 @@ public:
 	float GetIntensity() const { return Intensity; }
 	FColor GetLightColor() const { return LightColor; }
 	bool IsVisible() const { return bVisible; }
+	bool IsCastShadow() const { return bCastShadow; }
 
 	// Setter
 	void SetIntensity(float InIntensity) { Intensity = InIntensity; }

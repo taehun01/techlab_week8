@@ -9,6 +9,7 @@ struct FTransform;
 
 using DetailsSelectionCallback = std::function<void(UActorComponent*)>;
 using DetailsDeleteComponentCallback = std::function<void(UActorComponent*)>;
+using DetailsShadowMapCallback = std::function<FTexture2D*(ULightComponent*)>;
 
 class FDetailsPanel : public IEditorPanel
 {
@@ -34,10 +35,13 @@ public:
 
 	void SetSelectionCallback(DetailsSelectionCallback InCallback) { Callback = InCallback; }
 	void SetDeleteComponentCallback(DetailsDeleteComponentCallback InCallback) { DeleteCallback = InCallback; }
+	void SetShadowMapCallback(DetailsShadowMapCallback InCallback) { ShadowCallback = InCallback; }
 
 	void SetWorld(UWorld* InWorld) { World = InWorld; }
 
 	ImFont* GetCustomFont() { return CustomFont; }
+
+	void DrawShadowMap();
 
 private:
 	void DrawSceneComponentNode(USceneComponent* Component, USceneComponent* Root, UActorComponent*& OutSelectedComponent);
@@ -50,6 +54,7 @@ private:
 	UActorComponent* TargetComponent = nullptr;
 	DetailsSelectionCallback Callback;
 	DetailsDeleteComponentCallback DeleteCallback;
+	DetailsShadowMapCallback ShadowCallback;
 
 	UActorComponent* PendingDeleteComponent = nullptr;
 	UActorComponent* EditingNameComponent = nullptr;
@@ -59,5 +64,7 @@ private:
 
 	USceneComponent* PendingDroppedComponent = nullptr;
 	USceneComponent* PendingDragComponent = nullptr;
+
+	FTexture2D* ShadowMap;
 };
 
