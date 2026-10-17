@@ -51,10 +51,9 @@ struct alignas(16) FShadowShaderParameters
 	float Bias = 0.0f;
 	uint32 Resolution = 0;
 
-	// TODO(ShadowAtlas): Atlas 페이지 번호와 영역 UV 정보로 저장 위치를 표현한다.
-	// 현재 단계에서는 개별 텍스처 번호만 사용한다.
-	int32 TextureIndex = -1;
-	uint32 Padding = 0;
+	// 같은 해상도의 그림자 네 개가 Atlas 페이지 한 장을 공유한다.
+	int32 AtlasPageIndex = -1;
+	uint32 TileIndex = 0;
 };
 static_assert(sizeof(FShadowShaderParameters) == 80);
 
@@ -196,6 +195,7 @@ struct alignas(16) FLightGridConstants
 static_assert(sizeof(FLightGridConstants) == 48, "UberLit의 cbuffer LightGrid와 같아야 한다");
 
 struct FLightRenderParameters;
+class FShadowViewRenderer;
 
 
 class FRenderer
@@ -233,14 +233,16 @@ public:
 
 	// 수집이 끝난 작업 목록을 인수하여 타깃 준비와 그림자 맵 생성을 수행한다.
 	// 목록은 화면 조명·Preview 소비가 끝날 때까지 유지한다.
-	void RenderShadowMaps(TArray<FProjectedShadowInfo>&& InShadows);
+	void RenderShadowMaps(TArray<FProjectedShadowInfo>&& InShadows, FShadowViewRenderer& InShadowViewRenderer);
 
 	// 현재 라이트의 GPU 그림자 정보 번호를 반환한다. 없으면 INDEX_NONE이다.
 	int32 GetShadowIndex(const FLightSceneProxy& LightProxy) const;
 
-	// 현재 프레임에 생성한 Spot Shadow Depth 타깃을 읽기 전용으로 제공한다.
-	// 반환한 텍스처는 Renderer 소유이며, 다음 프레임까지 보관하지 않는다.
+	// 현재 프레임에 생성한 Spot Shadow Atlas를 읽기 전용으로 제공한다.
+	// 텍스처는 Engine의 ShadowViewRenderer 소유이며 다음 프레임까지 보관하지 않는다.
 	const FTexture2D* GetShadowDepthTexture(const FLightSceneProxy& LightProxy) const;
+	// Preview에서 Atlas 전체 대신 해당 라이트의 타일만 표시한다.
+	bool GetShadowDepthViewport(const FLightSceneProxy& LightProxy, FViewportSettings& OutViewport) const;
 
 	// [측정 전용] RenderOpaque 직후에 호출한다. 불투명 패킷을 깊이 LESS_EQUAL·색 쓰기 없이 다시 그리며
 	// 패킷마다 오클루전 쿼리를 걸어, 최종 화면에 실제로 픽셀을 남긴 물체 수를 센다.
@@ -288,12 +290,13 @@ private:
 	static constexpr uint32 ShadowParameterSlot = 13;
 	static constexpr uint32 ShadowDepthTextureSlot = 14;
 
-	// TODO(ShadowAtlas): 개별 Shadow Map 바인딩 상한을 Atlas 페이지 바인딩으로 교체한다.
-	// 정보 버퍼 개수 제한이 아닌, 현재의 임시 텍스처 바인딩 한도다.
-	static constexpr uint32 MaxBoundShadowTextures = 8;
+	// SM5.0의 정적 텍스처 선택 분기와 동일한 페이지 바인딩 한도다.
+	// 같은 해상도라면 페이지당 네 개, 총 32개 그림자를 읽을 수 있다.
+	static constexpr uint32 MaxBoundShadowAtlases = 8;
+	static constexpr uint32 ShadowAtlasTilesPerRow = 2;
 
-	// 기존 작업과 GPU Depth 자원의 소유권을 유지한다.
-	TArray<TUniquePtr<FTexture2D>> ShadowDepthTargets;
+	// Engine이 소유한 UUID Map·Atlas 관리자를 빌려 타깃과 GPU 정보를 연결한다.
+	FShadowViewRenderer* ShadowViewRenderer = nullptr;
 	TArray<FProjectedShadowInfo> ProjectedShadows;
 
 	// 그림자 작업 수에 맞춰 용량을 늘리는 GPU 정보 버퍼다.
@@ -302,7 +305,7 @@ private:
 	// 이번 프레임에 업로드까지 성공한 항목 수다. 확보 용량과는 다르다.
 	uint32 NumShadowParameters = 0;
 
-	// 이번 화면 패스에서 사용할 텍스처의 비소유 참조다.
+	// 이번 화면 패스에서 사용할 Atlas 페이지의 비소유 참조다.
 	// 타깃 교체 전에 초기화한다.
 	TArray<FTexture2D*> ShadowDepthBindings;
 
@@ -357,7 +360,7 @@ private:
 
 	EViewMode CurrentViewMode = EViewMode::Lit_Lambert;
 
-	// 전체 작업 목록에 독립적인 Depth 타깃을 배정한다.
+	// UUID별 기존 타일을 조회하거나 새로 배정해 작업에 연결한다.
 	void PrepareShadowDepthTargets(TArray<FProjectedShadowInfo>& ShadowInfos);
 
 	// 타깃이 배정된 투영 작업 하나의 Depth 패스를 실행한다.

@@ -119,6 +119,8 @@ bool UEditorEngine::Init()
 
 	DepthViewRenderer = MakeUnique<FDepthViewRenderer>();
 	DepthViewRenderer->Init();
+	ShadowViewRenderer = MakeUnique<FShadowViewRenderer>();
+	ShadowViewRenderer->Init();
 
 	ToneMapRenderer = MakeUnique<FToneMapRenderer>();
 	ToneMapRenderer->Init();
@@ -465,7 +467,7 @@ void UEditorEngine::RenderMultipleViewports()
 
 	// 모든 World의 작업을 함께 전달해 타깃을 일괄 준비한다.
 	// 빈 목록도 전달하여 이전 프레임의 작업과 타깃을 정리한다.
-	Renderer->RenderShadowMaps(std::move(ShadowInfos));
+	Renderer->RenderShadowMaps(std::move(ShadowInfos), *ShadowViewRenderer);
 	// 그림자 관련 내용 여기까지
 
 	for (int32 ViewIndex = 0; ViewIndex < 4; ++ViewIndex)
