@@ -492,10 +492,6 @@ void FRenderer::PrepareShadowDepthTargets(TArray<FProjectedShadowInfo>& ShadowIn
 		ActiveLightUUIDs.Add(ShadowInfo.LightProxy->GetLightComponent()->GetUUID());
 	ShadowViewRenderer->ReleaseUnusedShadowInfos(ActiveLightUUIDs);
 
-	// 기존 Atlas는 프레임 시작에 한 번 지우고 타일을 그릴 때는 Load한다.
-	for (FShadowAtlas& Atlas : ShadowViewRenderer->ShadowAtlasArray)
-		RenderCommand::ClearDepthStencil(Atlas.Texture.get(), 1.0f, 0);
-
 	for (FProjectedShadowInfo& ShadowInfo : ShadowInfos)
 	{
 		const ULightComponent* Light = ShadowInfo.LightProxy->GetLightComponent();
@@ -512,10 +508,18 @@ void FRenderer::PrepareShadowDepthTargets(TArray<FProjectedShadowInfo>& ShadowIn
 		RenderingInfo.ViewportSetting.Width = Resolution;
 		RenderingInfo.ViewportSetting.Height = Resolution;
 		RenderingInfo.DepthStencil.Texture = ShadowViewRenderer->ShadowAtlasArray[Data.AtlasIndex].Texture.get();
-		// 페이지 전체를 이미 초기화했으므로 다른 타일의 깊이는 보존한다.
+		// 배정 완료 후 페이지를 한 번 초기화하고, 각 타일 패스에서는 다른 영역의 깊이를 보존한다.
 		RenderingInfo.DepthStencil.LoadOp = ERenderTargetLoadOp::Load;
 		RenderingInfo.DepthStencil.StoreOp = ERenderTargetStoreOp::Store;
 		ShadowInfo.SetRenderingInfo(RenderingInfo);
+	}
+	// 사용하는 페이지만 한번씩 초기화 하는 구문
+	TSet<FTexture2D*> ClearedAtlases;
+	for (const FProjectedShadowInfo& ShadowInfo : ShadowInfos)
+	{
+		FTexture2D* AtlasTexture = ShadowInfo.RenderingInfo.DepthStencil.Texture;
+		if (AtlasTexture && ClearedAtlases.Add(AtlasTexture))
+			RenderCommand::ClearDepthStencil(AtlasTexture, 1.0f, 0);
 	}
 }
 

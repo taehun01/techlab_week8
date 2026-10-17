@@ -27,8 +27,6 @@ bool FShadowViewRenderer::AddNewAtlas(uint32 TileResolution)
 		return false;
 	}
 	Atlas.TileResolution = TileResolution;
-	// 이번 프레임의 전체 Clear 이후 추가되는 페이지도 초기 깊이를 보장한다.
-	RenderCommand::ClearDepthStencil(Atlas.Texture.get(), 1.0f, 0);
 	ShadowAtlasArray.Add(std::move(Atlas));
 	return true;
 }
@@ -59,6 +57,7 @@ bool FShadowViewRenderer::AllocateShadowInfo(uint32 UUID, const FMatrix& LightSp
 	for (int32 AtlasIndex = 0; AtlasIndex < ShadowAtlasArray.Num(); ++AtlasIndex)
 	{
 		FShadowAtlas& Atlas = ShadowAtlasArray[AtlasIndex];
+		// 해상도가 달라지면 다른 아틀라스 페이지를 씀 -> 빈페이지는 회수해야될거같음.
 		if (Atlas.TileResolution != TileResolution)
 			continue;
 
