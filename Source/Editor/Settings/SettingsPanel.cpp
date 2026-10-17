@@ -50,6 +50,20 @@ void FSettingsPanel::OnRender()
 	ImGui::Combo("Light Culling", &Settings.LightCullingMode, "Tiled\0Clustered\0Tiled 2.5D\0");
 	const char* Models[] = { "Gouraud", "Lambert", "Blinn-Phong" };
 	ImGui::Combo("Lighting Model", &Settings.LightingModel, Models, IM_ARRAYSIZE(Models));
+
+	// Shadow Map 해상도. 2의 거듭제곱만 고르게 해 텍셀 정렬과 Atlas 전환을 단순하게 유지한다.
+	{
+		static constexpr int32 ShadowResolutions[] = { 256, 512, 1024, 2048, 4096 };
+		static const char* ShadowResolutionNames[] = { "256", "512", "1024", "2048", "4096" };
+		int32 ShadowResolutionIndex = 2;
+		for (int32 i = 0; i < IM_ARRAYSIZE(ShadowResolutions); ++i)
+		{
+			if (ShadowResolutions[i] == Settings.ShadowMapResolution)
+				ShadowResolutionIndex = i;
+		}
+		if (ImGui::Combo("Shadow Map Resolution", &ShadowResolutionIndex, ShadowResolutionNames, IM_ARRAYSIZE(ShadowResolutionNames)))
+			Settings.ShadowMapResolution = ShadowResolutions[ShadowResolutionIndex];
+	}
 	//////////////////////////////////////////////////////////
 
 	ImGui::Dummy(ImVec2(0.0f, SectionGap));
@@ -126,6 +140,7 @@ bool FSettingsPanel::SaveSettings() const
 	File << "DrawPSGrid=" << Settings.bDrawPSGrid << "\n";
 	File << "EnableFXAA=" << Settings.bEnableFXAA << "\n";
 	File << "LightingModel=" << Settings.LightingModel << "\n";
+	File << "ShadowMapResolution=" << Settings.ShadowMapResolution << "\n";
 	File << "\n";
 
 	File << "[Editor]\n";
@@ -248,6 +263,13 @@ bool FSettingsPanel::LoadSettings()
 				else if (Key == "DrawPSGrid") Settings.bDrawPSGrid = std::stoi(ValueStr);
 				else if (Key == "EnableFXAA") Settings.bEnableFXAA = std::stoi(ValueStr);
 				else if (Key == "LightingModel") Settings.LightingModel = std::stoi(ValueStr);
+				else if (Key == "ShadowMapResolution")
+				{
+					// 256~4096 사이의 2의 거듭제곱만 받는다. 손으로 고친 잘못된 값은 기본값으로 되돌린다.
+					const int32 Value = std::stoi(ValueStr);
+					const bool bPowerOfTwo = Value > 0 && (Value & (Value - 1)) == 0;
+					Settings.ShadowMapResolution = (bPowerOfTwo && Value >= 256 && Value <= 4096) ? Value : 1024;
+				}
 
 				else if (Key == "CameraMoveSpeed") Settings.CameraSpeed = std::stof(ValueStr);
 				else if (Key == "CameraRotateSensitivity") Settings.MouseSensitivity = std::stof(ValueStr);

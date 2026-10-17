@@ -48,6 +48,8 @@ struct FEditorSettings
 
 	int32 LightDebugMode = 0;
 	int32 LightCullingMode = 1;	// ELightCullingMode: 0 Tiled 1 Clustered 2 Tiled 2.5D
+
+	int32 ShadowMapResolution = 1024;
 };
 
 

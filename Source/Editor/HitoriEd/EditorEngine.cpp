@@ -409,6 +409,8 @@ void UEditorEngine::RenderMultipleViewports()
 	UWorld* PreparedWorld = nullptr;
 	Renderer->SetLightDebugMode(SettingsPanel->GetSettings().LightDebugMode);
 	Renderer->SetLightCullingMode(static_cast<ELightCullingMode>(SettingsPanel->GetSettings().LightCullingMode));
+	// 값이 바뀌면 다음 FShadowMapManager::BeginFrame이 해상도 차이를 감지해 배열을 다시 만든다.
+	Renderer->GetShadowMapManager().SetBaseResolution(static_cast<uint32>(SettingsPanel->GetSettings().ShadowMapResolution));
 	for (int32 ViewIndex = 0; ViewIndex < 4; ++ViewIndex)
 	{
 		const bool bActive = MultipleViewportsAdapter.IsViewActive(ViewIndex);

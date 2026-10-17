@@ -233,6 +233,8 @@ public:
 	void SetLightDebugMode(uint32 Mode);
 	void SetLightCullingMode(ELightCullingMode Mode) { LightCullingMode = Mode; }
 	ELightCullingMode GetLightCullingMode() const { return LightCullingMode; }
+
+	FShadowMapManager& GetShadowMapManager() { return ShadowMapManager; }
 private:
 	void DrawPackets(uint32 Begin, uint32 End, const FMatrix& ViewProjection);
 	void DrawStaticGroups();
@@ -292,4 +294,6 @@ private:
 	uint32 NumLocalLightsThisFrame = 0;
 
 	EViewMode CurrentViewMode = EViewMode::Lit_Lambert;
+
+	FShadowMapManager ShadowMapManager;
 };
