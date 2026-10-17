@@ -509,6 +509,22 @@ int32 FRenderer::GetShadowIndex(const FLightSceneProxy& LightProxy) const
 	return INDEX_NONE;
 }
 
+const FTexture2D* FRenderer::GetShadowDepthTexture(const FLightSceneProxy& LightProxy) const
+{
+	// 전체 작업에서 조회한다. 화면 조명용 텍스처 바인딩 상한과는 독립적이다.
+	for (const FProjectedShadowInfo& ShadowInfo : ProjectedShadows)
+	{
+		// EditorWorld와 PlayWorld의 라이트를 실제 Proxy로 구분한다.
+		if (ShadowInfo.LightProxy == &LightProxy && ShadowInfo.HasDepthTarget())
+		{
+			return ShadowInfo.RenderingInfo.DepthStencil.Texture;
+		}
+	}
+
+	// 이번 프레임에 해당 라이트의 Depth 타깃이 준비되지 않았다.
+	return nullptr;
+}
+
 void FRenderer::RenderShadowDepth(FProjectedShadowInfo& ShadowInfo)
 {
 	// 타깃이 배정된 작업만 실행한다.

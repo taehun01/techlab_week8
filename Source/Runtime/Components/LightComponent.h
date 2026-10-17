@@ -17,7 +17,7 @@ public:
 
 	virtual ELightType GetLightType() const = 0;
 	virtual void DrawDebug(FLineBatcher* LineBatcher) const;
-
+	void PostEditChangeProperty(const FProperty& Property) override;
 	bool CastsShadows() const { return bCastShadows; }
 	int32 GetShadowMapResolution() const { return FMath::Clamp(ShadowMapResolution, 128, 4096); }
 	float GetShadowBias() const { return FMath::Max(ShadowBias, 0.0f); }

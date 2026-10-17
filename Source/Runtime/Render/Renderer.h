@@ -238,6 +238,10 @@ public:
 	// 현재 라이트의 GPU 그림자 정보 번호를 반환한다. 없으면 INDEX_NONE이다.
 	int32 GetShadowIndex(const FLightSceneProxy& LightProxy) const;
 
+	// 현재 프레임에 생성한 Spot Shadow Depth 타깃을 읽기 전용으로 제공한다.
+	// 반환한 텍스처는 Renderer 소유이며, 다음 프레임까지 보관하지 않는다.
+	const FTexture2D* GetShadowDepthTexture(const FLightSceneProxy& LightProxy) const;
+
 	// [측정 전용] RenderOpaque 직후에 호출한다. 불투명 패킷을 깊이 LESS_EQUAL·색 쓰기 없이 다시 그리며
 	// 패킷마다 오클루전 쿼리를 걸어, 최종 화면에 실제로 픽셀을 남긴 물체 수를 센다.
 	// GPU 결과를 기다리므로 매우 느리다. 버튼 등으로 한 프레임만 실행할 것.
