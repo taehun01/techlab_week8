@@ -204,30 +204,30 @@ float LoadShadowDepth(int AtlasPageIndex, int2 Texel)
 float SampleShadowMap(FShadowShaderParameters Shadow, float3 LightNDC)
 {
     // D3D 텍스처의 좌상단 원점에 맞춰 Y를 뒤집는다.
-    const float2 UV = LightNDC.xy * float2(0.5f, -0.5f) + 0.5f;
+    const float2 UV = LightNDC.xy * float2(0.5f, -0.5f) + 0.5f; // 카메라기준 LightSpace 변환한 NDC 좌표 UV 좌표 범위로 변환
     const uint2 Tile = uint2(Shadow.TileIndex % SHADOW_ATLAS_TILES_PER_ROW, Shadow.TileIndex / SHADOW_ATLAS_TILES_PER_ROW);
     if (all(UV >= 0.0.xx) && all(UV <= 1.0.xx))
     {
-        float texel = 1.0f / max(Shadow.Resolution, 1.0f);
-        float r = max(Shadow.ShadowPCFRadius,0.0f);
+        float texel = 1.0f / max(Shadow.Resolution, 1.0f); // Texture에서 한칸의 크기
+        float r = max(Shadow.ShadowPCFRadius,0.0f); // 평균할 Pixel 반경, radius * radius 개수만큼의 Pixel 평균을 냄
         float sum = 0.0f;
-        int taps = 0;
+        int taps = 0;   // 평균 나눌때 분모, 픽셀 연산 횟수
             [loop]
         for (int dy = -r; dy <= r; ++dy)
         {
                 [loop]
             for (int dx = -r; dx <= r; ++dx)
             {
-                float2 uvOff = UV + float2(dx, dy) * texel;
-                const int MaxTexel = int(Shadow.Resolution) - 1;
-                const int2 LocalTexel = clamp(int2(uvOff * Shadow.Resolution), int2(0, 0), int2(MaxTexel, MaxTexel));
-                const int2 Texel = int2(Tile * Shadow.Resolution) + LocalTexel;
-                float d = LoadShadowDepth(Shadow.AtlasPageIndex, Texel);
-                sum += (LightNDC.z - Shadow.Bias<= d) ? 1.0f : 0.0f;
+                float2 uvOff = UV + float2(dx, dy) * texel; // 초기 UV + texel 단위로 dx, dy 이동량
+                const int MaxTexel = int(Shadow.Resolution) - 1;    // Texture 끝점
+                const int2 LocalTexel = clamp(int2(uvOff * Shadow.Resolution), int2(0, 0), int2(MaxTexel, MaxTexel));   // 한 Tile(Atlas 4등분 구역) 기준 Texel 좌표값
+                const int2 Texel = int2(Tile * Shadow.Resolution) + LocalTexel; // Tile 위치 반영한 전체 Atlas 기준 Texel 좌표값
+                float d = LoadShadowDepth(Shadow.AtlasPageIndex, Texel); // 카메라 기준으로 계산한 조명 좌표에서의 ShadowMap Depth 값
+                sum += (LightNDC.z - Shadow.Bias<= d) ? 1.0f : 0.0f; // CurrentDepth <= Closest Depth일 경우 그림자가 아니므로 1, 반대일경우 0, Bias는 편차값
                 taps++;
             }
         }
-        float vis = sum / max(taps, 1);
+        float vis = sum / max(taps, 1); // 전체 계산 후 그림자 계수에 대한 평균
         return vis;
     }  
     return 1.0f;
