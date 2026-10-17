@@ -123,9 +123,9 @@ SamplerState MaterialSampler : register(s0);
 
 #if defined(LIGHTING_MODEL_LAMBERT) || defined(LIGHTING_MODEL_BLINN_PHONG)
 
-// Renderer의 MaxBoundShadowTextures와 같아야 한다.
-// TODO(ShadowAtlas): 개별 텍스처 상한을 Atlas 페이지 구성으로 교체한다.
-#define MAX_BOUND_SHADOW_TEXTURES 8
+// Renderer의 MaxBoundShadowAtlases·ShadowAtlasTilesPerRow와 같아야 한다.
+#define MAX_BOUND_SHADOW_ATLASES 8
+#define SHADOW_ATLAS_TILES_PER_ROW 2
 
 // C++ FShadowShaderParameters와 동일한 80바이트 레이아웃이다.
 struct FShadowShaderParameters
@@ -134,16 +134,15 @@ struct FShadowShaderParameters
     float Bias;
     uint Resolution;
 
-    // TODO(ShadowAtlas): Atlas 페이지와 영역 UV 정보로 저장 위치를 표현한다.
-    int TextureIndex;
-    uint Padding;
+    int AtlasPageIndex;
+    uint TileIndex;
 };
 
 // 전체 그림자 정보는 가변 개수로 전달한다.
 StructuredBuffer<FShadowShaderParameters> ShadowParameters : register(t13);
 
-// TODO(ShadowAtlas): 개별 텍스처 배열을 Atlas 페이지 리소스로 교체한다.
-Texture2D<float> ShadowDepthMaps[MAX_BOUND_SHADOW_TEXTURES] : register(t14);
+// 같은 페이지에 배정된 타일들은 하나의 SRV를 공유한다.
+Texture2D<float> ShadowAtlases[MAX_BOUND_SHADOW_ATLASES] : register(t14);
 
 #endif
 
@@ -184,12 +183,11 @@ struct FLightContribution
 #if defined(LIGHTING_MODEL_LAMBERT) || defined(LIGHTING_MODEL_BLINN_PHONG)
 
 // 현재 SM5.0 경로에서 텍스처 접근을 정적 인덱스로 만든다.
-// TODO(ShadowAtlas): 개별 텍스처 선택을 Atlas 페이지의 깊이 읽기로 교체한다.
-float LoadShadowDepth(int TextureIndex, int2 Texel)
+float LoadShadowDepth(int AtlasPageIndex, int2 Texel)
 {
-#define SHADOW_DEPTH_CASE(Index) case Index: return ShadowDepthMaps[Index].Load(int3(Texel, 0))
+#define SHADOW_DEPTH_CASE(Index) case Index: return ShadowAtlases[Index].Load(int3(Texel, 0))
 
-    switch (TextureIndex)
+    switch (AtlasPageIndex)
     {
         SHADOW_DEPTH_CASE(0);SHADOW_DEPTH_CASE(1);SHADOW_DEPTH_CASE(2);SHADOW_DEPTH_CASE(3);
         SHADOW_DEPTH_CASE(4);SHADOW_DEPTH_CASE(5);SHADOW_DEPTH_CASE(6);SHADOW_DEPTH_CASE(7);
@@ -206,11 +204,12 @@ float SampleShadowMap(FShadowShaderParameters Shadow, float3 LightNDC)
     // D3D 텍스처의 좌상단 원점에 맞춰 Y를 뒤집는다.
     const float2 UV = LightNDC.xy * float2(0.5f, -0.5f) + 0.5f;
     const int MaxTexel = int(Shadow.Resolution) - 1;
-    const int2 Texel = min(int2(UV * Shadow.Resolution), int2(MaxTexel, MaxTexel));
-
-    // TODO(ShadowAtlas): 로컬 UV를 Atlas 영역으로 변환하고 페이지 크기로 텍셀을 계산한다.
-    // 논리 그림자 해상도와 물리 페이지 크기를 구분하고 필터 경계를 처리한다.
-    const float StoredDepth = LoadShadowDepth(Shadow.TextureIndex, Texel);
+    // 타일 안에서 좌표를 제한해 UV=1에서도 이웃 조명의 깊이를 읽지 않는다.
+    const int2 LocalTexel = clamp(int2(UV * Shadow.Resolution), int2(0, 0), int2(MaxTexel, MaxTexel));
+    const uint2 Tile = uint2(Shadow.TileIndex % SHADOW_ATLAS_TILES_PER_ROW,
+                            Shadow.TileIndex / SHADOW_ATLAS_TILES_PER_ROW);
+    const int2 Texel = int2(Tile * Shadow.Resolution) + LocalTexel;
+    const float StoredDepth = LoadShadowDepth(Shadow.AtlasPageIndex, Texel);
     return LightNDC.z - Shadow.Bias <= StoredDepth ? 1.0f : 0.0f;
 }
 
@@ -224,7 +223,7 @@ float GetShadowVisibility(int ShadowIndex, float3 WorldPos)
     const FShadowShaderParameters Shadow = ShadowParameters[ShadowIndex];
 
     // 타깃 실패·임시 바인딩 상한 초과 작업은 그림자를 적용하지 않는다.
-    if (Shadow.TextureIndex < 0)
+    if (Shadow.AtlasPageIndex < 0 || Shadow.Resolution == 0)
         return 1.0f;
 
     const float4 LightClip = mul(float4(WorldPos, 1.0f), Shadow.LightViewProjection);
