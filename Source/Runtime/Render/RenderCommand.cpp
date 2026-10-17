@@ -127,6 +127,7 @@ void RenderCommand::Draw(uint32 VertexCount, uint32 StartIndexLocation)
 void RenderCommand::DrawIndexed(uint32 IndexCount, uint32 StartIndexLocation, int32 BaseVertexLocation)
 {
 	RenderDevice->GetContext()->DrawIndexed(IndexCount, StartIndexLocation, BaseVertexLocation);
+	++DrawIndexedCount;
 }
 
 void RenderCommand::DrawInstance(uint32 IndexCount, uint32 StartIndexLocation, int32 BaseVertexLocation)

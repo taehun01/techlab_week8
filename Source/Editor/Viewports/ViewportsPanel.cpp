@@ -11,6 +11,7 @@
 #include <format>
 
 #include "Core/Stats/EditorStats.h"
+#include "Core/Stats/ShadowStats.h"
 
 namespace
 {
@@ -417,6 +418,34 @@ void FViewportsPanel::DrawStatOverlay(ImDrawList* DrawList, const ImVec2& ViewMi
 			FStatOverlay::GetObjectAllocationCount()), ValueColor});
 		Lines.Add({std::format("  Process {:.2f} MB",
 			static_cast<double>(FStatOverlay::GetProcessWorkingSetBytes()) / BytesPerMegabyte), ValueColor});
+	}
+
+	// 현재 프레임 전체 World의 그림자 통계를 기존 줄 목록에 추가한다.
+	if (FStatOverlay::IsEnabled(EStatFlags::Shadow))
+	{
+		Lines.Add({ "Shadow / CPU time", TitleColor });
+		Lines.Add({ std::format("  Renderer: {:.3f} ms", FStatRegistry::GetCurrentFrameMs(ShadowStats::STAT_RenderCPU)), ValueColor });
+
+		Lines.Add({ "Shadow / Frame counters", TitleColor });
+		Lines.Add({ std::format("  Prepared lights Directional / Point / Spot: {} / {} / {}",
+			FStatRegistry::GetCounter(ShadowStats::STAT_DirectionalLights),
+			FStatRegistry::GetCounter(ShadowStats::STAT_PointLights),
+			FStatRegistry::GetCounter(ShadowStats::STAT_SpotLights)), ValueColor });
+
+		Lines.Add({ std::format("  Maps: {}  Bound SRVs: {}",
+			FStatRegistry::GetCounter(ShadowStats::STAT_Maps),
+			FStatRegistry::GetCounter(ShadowStats::STAT_BoundTextures)), ValueColor });
+
+		Lines.Add({ std::format("  Draws: {}  Map updates: {}",
+			FStatRegistry::GetCounter(ShadowStats::STAT_DrawCalls),
+			FStatRegistry::GetCounter(ShadowStats::STAT_MapUpdates)), ValueColor });
+
+		const uint64 DepthBytes = FStatRegistry::GetMemory(ShadowStats::STAT_DepthMemory);
+		const uint64 ParameterBytes = FStatRegistry::GetMemory(ShadowStats::STAT_ParameterMemory);
+
+		Lines.Add({ "Shadow / GPU resource memory", TitleColor });
+		Lines.Add({ std::format("  Total: {:.2f} MiB", static_cast<double>(DepthBytes + ParameterBytes) / BytesPerMegabyte), ValueColor });
+		Lines.Add({ std::format("  Depth: {:.2f} MiB  Info: {} B", static_cast<double>(DepthBytes) / BytesPerMegabyte, ParameterBytes), ValueColor });
 	}
 
 	struct FProfileStatLine

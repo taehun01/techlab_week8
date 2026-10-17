@@ -5,6 +5,8 @@
 
 #include "Core/EngineTimer.h"
 #include "Core/Stats/LightweightStats.h"
+#include "Core/Stats/ShadowStats.h"
+#include "Containers/Set.h"
 
 #include "Engine/PrimitiveSceneProxy.h"
 #include "Engine/SceneManagement.h"
@@ -261,6 +263,74 @@ void FRenderer::BindShadowResources()
 	}
 }
 
+// 논리 그림자 작업 수와 물리 자원 메모리를 분리해 집계한다.
+void FRenderer::UpdateShadowStats()
+{
+	uint64 DirectionalLights = 0;
+	uint64 PointLights = 0;
+	uint64 SpotLights = 0;
+	uint64 MapCount = 0;
+
+	// Point의 여러 면이나 CSM Cascade에서 같은 라이트를 중복 계산하지 않는다.
+	TSet<const FLightSceneProxy*> CountedLights;
+	CountedLights.Reserve(ProjectedShadows.Num());
+
+	for (const FProjectedShadowInfo& ShadowInfo : ProjectedShadows)
+	{
+		if (!ShadowInfo.HasDepthTarget())
+		{
+			continue;
+		}
+
+		++MapCount;
+		if (!CountedLights.Add(ShadowInfo.LightProxy))
+		{
+			continue;
+		}
+
+		switch (ShadowInfo.LightProxy->GetLightComponent()->GetLightType())
+		{
+		case ELightType::Directional:
+			++DirectionalLights;
+			break;
+		case ELightType::Point:
+			++PointLights;
+			break;
+		case ELightType::Spot:
+			++SpotLights;
+			break;
+		default:
+			break;
+		}
+	}
+
+	uint64 DepthBytes = 0;
+	for (const auto& Target : ShadowDepthTargets)
+	{
+		if (!Target)
+		{
+			continue;
+		}
+
+		// 현재 정책은 비압축·1 mip·1 slice·MSAA 1이다.
+		// TODO(ShadowAtlas): 소유한 물리 Atlas 자원의 크기로 계속 집계한다.
+		DepthBytes += static_cast<uint64>(Target->GetWidth()) * Target->GetHeight() * FormatToBytes(Target->GetFormat());
+	}
+
+	// 실제 사용 항목 수가 아니라 확보한 버퍼 용량이다.
+	const uint64 ParameterBytes = ShadowParameterBuffer
+		? ShadowParameterBuffer->GetBufferSize() : 0;
+
+	FStatRegistry::SetCounter(ShadowStats::STAT_DirectionalLights, DirectionalLights);
+	FStatRegistry::SetCounter(ShadowStats::STAT_PointLights, PointLights);
+	FStatRegistry::SetCounter(ShadowStats::STAT_SpotLights, SpotLights);
+	FStatRegistry::SetCounter(ShadowStats::STAT_Maps, MapCount);
+	FStatRegistry::SetCounter(ShadowStats::STAT_BoundTextures, ShadowDepthBindings.Num());
+
+	FStatRegistry::SetMemory(ShadowStats::STAT_DepthMemory, DepthBytes);
+	FStatRegistry::SetMemory(ShadowStats::STAT_ParameterMemory, ParameterBytes);
+}
+
 // 카메라의 ViewProjection을 공통 렌더 경로로 전달한다.
 void FRenderer::RenderAll(FRenderQueue& InQueue, UCameraComponent* CameraComponent)
 {
@@ -470,6 +540,7 @@ void FRenderer::PrepareShadowDepthTargets(TArray<FProjectedShadowInfo>& ShadowIn
 
 void FRenderer::RenderShadowMaps(TArray<FProjectedShadowInfo>&& InShadows)
 {
+	SCOPE_CYCLE_COUNTER(ShadowStats::STAT_RenderCPU);
 	// 이전 화면의 SRV를 자원 교체·Depth 기록 전에 해제한다.
 	RenderCommand::UnbindShaderResource(ShadowParameterSlot, EShaderBindFlagBits::Pixel);
 
@@ -492,9 +563,12 @@ void FRenderer::RenderShadowMaps(TArray<FProjectedShadowInfo>&& InShadows)
 		if (ShadowInfo.HasDepthTarget())
 		{
 			RenderShadowDepth(ShadowInfo);
+			FStatRegistry::AddCounter(ShadowStats::STAT_MapUpdates);
 		}
 	}
 	PrepareShadowParameters();
+
+	UpdateShadowStats();
 }
 
 int32 FRenderer::GetShadowIndex(const FLightSceneProxy& LightProxy) const
@@ -548,7 +622,9 @@ void FRenderer::RenderShadowDepth(FProjectedShadowInfo& ShadowInfo)
 	RenderCommand::SetRasterizerState(ERasterizerState::SolidBack);
 
 	// 뎁스를 그린다
+	const uint64 DrawStart = RenderCommand::GetDrawIndexedCount();
 	RenderDepth(ShadowInfo.LightViewProjection);
+	FStatRegistry::AddCounter(ShadowStats::STAT_DrawCalls,	RenderCommand::GetDrawIndexedCount() - DrawStart);
 	RenderCommand::EndRenderPass(ShadowInfo.RenderingInfo);
 
 	// 화면 렌더링에 사용할 모드를 복원하고 소비한 렌더 목록을 정리한다.

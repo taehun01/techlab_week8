@@ -62,6 +62,7 @@ struct FCycleStatData
 };
 
 // UE는 이 집계를 외부 프로파일러(Insights)에 맡기지만 우리는 직접 모은다.
+// 시간 이력·프레임 카운터·메모리 현재값을 보관
 class FStatRegistry
 {
 public:
@@ -72,6 +73,11 @@ public:
 			Stats[Name].PushFrame(Cycles);
 		}
 		PendingStatCycles.Reset();
+
+		for (auto& [Name, Value] : Counters)
+		{
+			Value = 0;
+		}
 	}
 
 	static void AddCycles(TStatId StatId, uint64 Cycles)
@@ -87,6 +93,36 @@ public:
 			Data = FCycleStatData{};
 		}
 	}
+	static double GetCurrentFrameMs(TStatId StatId)
+	{
+		return FPlatformTime::ToMilliseconds64(
+			PendingStatCycles.FindRef(StatId.GetName()));
+	}
+
+	static void SetCounter(TStatId StatId, uint64 Value)
+	{
+		Counters[StatId.GetName()] = Value;
+	}
+
+	static void AddCounter(TStatId StatId, uint64 Amount = 1)
+	{
+		Counters[StatId.GetName()] += Amount;
+	}
+
+	static uint64 GetCounter(TStatId StatId)
+	{
+		return Counters.FindRef(StatId.GetName());
+	}
+
+	static void SetMemory(TStatId StatId, uint64 Bytes)
+	{
+		MemoryStats[StatId.GetName()] = Bytes;
+	}
+
+	static uint64 GetMemory(TStatId StatId)
+	{
+		return MemoryStats.FindRef(StatId.GetName());
+	}
 
 	static const FCycleStatData* Find(TStatId StatId) { return Stats.Find(StatId.GetName()); }
 	static const TMap<const char*, FCycleStatData>& GetAll() { return Stats; }
@@ -98,7 +134,9 @@ public:
 private:
 	inline static bool bEnabled = true;
 	inline static TMap<const char*, FCycleStatData> Stats;
-	inline static TMap<const char*, uint64> PendingStatCycles;
+	inline static TMap<const char*, uint64> PendingStatCycles;	// 시간
+	inline static TMap<const char*, uint64> Counters;		// 프레임 개수
+	inline static TMap<const char*, uint64> MemoryStats;	// 메모리
 };
 
 // 생성 시 시작 사이클을 기록하고, 스코프를 벗어날 때 경과 사이클을 FStatRegistry에 보고한다.
@@ -147,7 +185,12 @@ private:
 #define DECLARE_CYCLE_STAT(CounterName, StatId) \
 	inline constexpr char StatId##_Name[] = CounterName; \
 	inline constexpr TStatId StatId{ StatId##_Name }
-
+#define DECLARE_COUNTER_STAT(CounterName, StatId) \
+    inline constexpr char StatId##_Name[] = CounterName; \
+    inline constexpr TStatId StatId{ StatId##_Name }
+#define DECLARE_MEMORY_STAT(CounterName, StatId) \
+    inline constexpr char StatId##_Name[] = CounterName; \
+    inline constexpr TStatId StatId{ StatId##_Name }
 #define GET_STATID(StatId) (StatId)
 
 #define STATS_JOIN_INNER(A, B) A##B

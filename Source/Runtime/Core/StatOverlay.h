@@ -10,6 +10,7 @@ enum class EStatFlags : uint32
 	FPS     = 1 << 0,
 	Memory  = 1 << 1,
 	Profile = 1 << 2,
+	Shadow = 1 << 3,
 };
 DEFINE_ENUM_OPERATORS(EStatFlags)
 

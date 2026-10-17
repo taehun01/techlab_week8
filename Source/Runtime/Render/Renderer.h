@@ -314,6 +314,8 @@ private:
 
 	// 현재 화면 패스에 그림자 정보와 텍스처를 연결한다.
 	void BindShadowResources();
+	// 그림자 작업 및 자원에 대해 통계를 갱신한다.
+	void UpdateShadowStats();
 
 	// FIFO 소비용 배열의 용량만 재사용하며 매 View의 패킷 값은 새로 채운다.
 	FRenderQueue RenderPackets;
