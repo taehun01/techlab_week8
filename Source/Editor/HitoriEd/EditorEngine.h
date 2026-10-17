@@ -130,6 +130,7 @@ private:
 	UWorld* GetWorldForView(int32 ViewIndex) const { return PlayWorld && ViewIndex == PIEViewIndex ? PlayWorld : EditorWorld; }
 	// PIE 중이고 일시정지가 아닌 View는 Gizmo·Picking 등 에디터 상호작용을 하지 않는다.
 	bool IsPlayingView(int32 ViewIndex) const { return PlayWorld && ViewIndex == PIEViewIndex && !bIsPaused; }
+	FMatrix CalculateLightSpaceMatrix(FScene ViewWorldScene, FRenderingInfo PassInfo, int32 index);
 
 	// FEngineLoop 소유. OnInit에서 받아 둔다.
 	FWindow* MainWindow = nullptr;

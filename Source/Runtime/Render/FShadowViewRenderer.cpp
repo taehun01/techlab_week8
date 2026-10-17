@@ -35,8 +35,11 @@ void FShadowViewRenderer::OnRender(FTexture2D* depthTexture, const FMatrix& Ligh
 }
 
 
-void FShadowViewRenderer::AddShadowMap(int32 index, TUniquePtr<FTexture2D> ShadowMap)
+void FShadowViewRenderer::AddShadowInfo(int32 index, TUniquePtr<FTexture2D> ShadowMap, FMatrix LightSpaceMatrix)
 {
-	ShadowTextureMap[index] = std::move(ShadowMap);
+	FShadowData ShadowInfo;
+	ShadowInfo.LightSpaceMatrix = LightSpaceMatrix;
+	ShadowInfo.ShadowTextureMap = std::move(ShadowMap);
+	ShadowTextureMap[index] = std::move(ShadowInfo);
 }
 

@@ -12,6 +12,12 @@ struct FShadowViewConstants
 	FMatrix WorldMatrix;
 };
 
+struct FShadowData
+{
+	FMatrix LightSpaceMatrix;
+	TUniquePtr<FTexture2D> ShadowTextureMap;
+};
+
 class FShadowViewRenderer
 {
 public:
@@ -23,11 +29,11 @@ public:
 
 	bool Init();
 	void OnRender(FTexture2D* depthTexture, const FMatrix& ViewProjection, const FMatrix& WorldMatrix);
-	void AddShadowMap(int32 index, TUniquePtr<FTexture2D> ShadowMap);
-	FTexture2D* GetShadowMapbyUUID(int32 UUID) { return ShadowTextureMap[UUID].get(); }
+	void AddShadowInfo(int32 index, TUniquePtr<FTexture2D> ShadowMap, FMatrix LightSpaceMatrix);
+	FTexture2D* GetShadowMapbyUUID(int32 UUID) { return ShadowTextureMap[UUID].ShadowTextureMap.get(); }
 	void ResetCurrentShadowMap();
 
-	TMap<int32, TUniquePtr<FTexture2D>> ShadowTextureMap;
+	TMap<int32, FShadowData> ShadowTextureMap;
 private:
 	FPipelineState PipelineState;
 	FShaderProgram* Shader = nullptr;
