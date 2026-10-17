@@ -23,6 +23,7 @@
 DECLARE_CYCLE_STAT("Draw Render Packets", STAT_DrawRenderPackets);
 DECLARE_CYCLE_STAT("Render Queue Sorting", STAT_RenderQueueSorting);
 DECLARE_CYCLE_STAT("Upload Per-Object CB", STAT_UploadPerObjectCB);
+DECLARE_CYCLE_STAT("Shadow Depth Pass", STAT_ShadowDepthPass);
 
 namespace
 {
@@ -75,6 +76,7 @@ bool FRenderer::Init()
 	bUsePerObjectSlots = RenderCommand::SupportsConstantBufferOffsets();
 	PerObjectCB = RenderCommand::CreateConstantBuffer(sizeof(FPerObjectConstants));
 	ViewCB = RenderCommand::CreateConstantBuffer(sizeof(FViewConstants));
+	ShadowViewCB = RenderCommand::CreateConstantBuffer(sizeof(FViewConstants));
 	// FireBallLightCB = RenderCommand::CreateConstantBuffer(sizeof(FFireBallLightConstants));
 	LightingCB = RenderCommand::CreateConstantBuffer(sizeof(FLightingConstants));
 	LightCullingCB = RenderCommand::CreateConstantBuffer(sizeof(FLightCullingConstants));
@@ -588,6 +590,77 @@ void FRenderer::UpdatePerObjectConstants(const FMatrix& World)
 	RenderCommand::UpdateBufferData(PerObjectCB.get(), &Constants);
 }
 
+
+// 그림자 요청마다 슬라이스 DSV 하나를 묶고, 라이트 VP로 Caster를 PS 없이 그린다.
+void FRenderer::RenderShadowDepths(const TArray<FShadowRequest>& Requests, const TArray<FShadowDrawItem>& Casters)
+{
+	SCOPE_CYCLE_COUNTER(STAT_ShadowDepthPass);
+
+	if (!bShadowDepthProgramResolved)
+	{
+		ShadowDepthProgram = FRenderResourceManager::GetShaderProgram("Resources/Shader/ShadowDepth.hlsl");
+		bShadowDepthProgramResolved = true;   // 못 찾아도 매 프레임 에러 로그를 남기지 않도록 한 번만 찾는다
+	}
+
+	FShadowMapArray* ShadowMaps = ShadowMapManager.GetSpotShadowMaps();
+	if (!ShadowMaps || !ShadowDepthProgram || !ShadowViewCB || Requests.IsEmpty())
+		return;
+
+	// ① 같은 리소스가 SRV와 DSV로 동시에 묶이면 D3D가 SRV를 강제로 푼다. 그림자 SRV 슬롯을 먼저 비운다.
+	RenderCommand::UnbindShaderResource(ShadowMapSRVSlot, EShaderBindFlagBits::Pixel);
+
+	// ② 파이프라인: 그림자 VS만 쓰고 PS는 끈다 (BindShaderProgram이 PS를 요구해서 빈 mainPS를 바인딩 직후 해제)
+	RenderCommand::BindShaderProgram(ShadowDepthProgram);
+	RenderCommand::GetContext()->PSSetShader(nullptr, nullptr, 0);
+	RenderCommand::SetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+	RenderCommand::SetRasterizerState(ERasterizerState::SolidNone);       // 단면 Plane도 그림자를 남기도록. 8단계에서 Bias를 가진 전용 상태로 교체
+	RenderCommand::SetDepthStencilState(EDepthStencilState::Default);     // 깊이 쓰기 + LESS
+	RenderCommand::SetBlendState(EBlendState::Opaque);
+	RenderCommand::BindConstantBuffer(0, ShadowViewCB.get(), EShaderBindFlagBits::Vertex);
+	RenderCommand::BindConstantBuffer(2, PerObjectCB.get(), EShaderBindFlagBits::Vertex);
+
+	for (const FShadowRequest& Request : Requests)
+	{
+		ID3D11DepthStencilView* DSV = ShadowMaps->GetSliceDSV(Request.Allocation.Slice);
+		if (!DSV)
+			continue;
+
+		// Caster가 0개여도 Clear는 한다. 직전 프레임·다른 월드(PIE)가 그린 깊이가 남아 있기 때문이다.
+		const uint32 Resolution = Request.Allocation.Resolution;
+		RenderCommand::BeginDepthOnlyPass(DSV, Resolution, Resolution);
+
+		FViewConstants LightView{};
+		LightView.ViewProjection = Request.View.ViewProjection;
+		RenderCommand::UpdateBufferData(ShadowViewCB.get(), &LightView);
+
+		UStaticMesh* BoundMesh = nullptr;
+		uint8 BoundLOD = 0xFF;
+		for (uint32 i = 0; i < Request.NumCasters; ++i)
+		{
+			const FShadowDrawItem& Item = Casters[Request.FirstCaster + i];
+			if (Item.Mesh != BoundMesh || Item.LODIndex != BoundLOD)
+			{
+				RenderCommand::BindMesh(Item.Mesh, Item.LODIndex);
+				BoundMesh = Item.Mesh;
+				BoundLOD = Item.LODIndex;
+			}
+
+			// 프록시가 WorldToLocal을 이미 들고 있어 역행렬 계산 없이 채운다. 셰이더는 World만 읽는다.
+			FPerObjectConstants Object;
+			WritePerObjectConstants(reinterpret_cast<uint8*>(&Object),
+				Item.Proxy->GetLocalToWorld(), Item.Proxy->GetWorldToLocal());
+			RenderCommand::UpdateBufferData(PerObjectCB.get(), &Object);
+
+			const uint32 IndexCount = Item.IndexCount ? Item.IndexCount : Item.Mesh->GetIndexBuffer(Item.LODIndex)->GetIndexCount();
+			RenderCommand::DrawIndexed(IndexCount, Item.StartIndex);
+		}
+	}
+
+	// ③ 뒷정리: DSV를 풀어 7단계에서 SRV로 읽을 수 있게 하고, 이후 카메라 패스가 메시·머티리얼을 처음부터 다시 바인딩하게 한다.
+	RenderCommand::GetContext()->OMSetRenderTargets(0, nullptr, nullptr);
+	LastMesh = nullptr;
+	LastMaterial = nullptr;
+}
 
 void FRenderer::SetViewMode(EViewMode InViewMode)
 {

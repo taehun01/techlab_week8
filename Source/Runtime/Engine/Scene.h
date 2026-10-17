@@ -25,24 +25,7 @@ struct FLightSceneInfo
 	
 };
 
-struct FShadowDrawItem
-{
-	const FPrimitiveSceneProxy* Proxy = nullptr;
-	UStaticMesh* Mesh = nullptr;
-	uint32 StarIndex = 0;
-	uint32 IndexCount = 0;
-	uint8 LODIndex = 0;
-};
-
-struct FShadowRequest
-{
-	FLightSceneProxy* Proxy = nullptr;
-	int32 LightIndex = INDEX_NONE;
-	FShadowViewInfo View;
-	FShadowAllocation Allocation;
-	uint32 FirstCaster = 0;
-	uint32 NumCasters = 0;
-};
+// FShadowDrawItem, FShadowRequest는 Renderer도 받아야 하므로 Render/ShadowMapManager.h로 옮겼다 (Scene.h ↔ Renderer.h 순환 방지).
 
 class FScene
 {

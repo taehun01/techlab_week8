@@ -236,6 +236,10 @@ public:
 	ELightCullingMode GetLightCullingMode() const { return LightCullingMode; }
 
 	FShadowMapManager& GetShadowMapManager() { return ShadowMapManager; }
+
+	// 그림자 요청마다 배정된 슬라이스에 Caster 깊이를 그린다. 월드마다 UpdateLights 직후, 그 월드의 View를 그리기 전에 한 번 부른다.
+	// 그림자는 카메라와 무관하므로 Multiple Viewports가 같은 결과를 함께 쓴다.
+	void RenderShadowDepths(const TArray<FShadowRequest>& Requests, const TArray<FShadowDrawItem>& Casters);
 private:
 	void DrawPackets(uint32 Begin, uint32 End, const FMatrix& ViewProjection);
 	void DrawStaticGroups();
@@ -297,4 +301,10 @@ private:
 	EViewMode CurrentViewMode = EViewMode::Lit_Lambert;
 
 	FShadowMapManager ShadowMapManager;
+
+	// Shadow Depth Pass 전용 VS(ShadowDepth.hlsl). 셰이더 스캔이 Init보다 늦을 수 있어 처음 쓸 때 찾는다.
+	FShaderProgram* ShadowDepthProgram = nullptr;
+	bool bShadowDepthProgramResolved = false;
+	// b0에 LightVP를 올리는 버퍼. 카메라 ViewCB와 분리해 어느 값이 들어갔는지 헷갈리지 않게 한다.
+	TUniquePtr<FConstantBuffer> ShadowViewCB;
 };

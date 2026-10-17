@@ -3,6 +3,7 @@
 #include "Components/LightComponent.h"
 #include "SceneManagement.h"
 #include "Math/Frustum.h"
+#include "Render/ShadowMapManager.h"	// FShadowViewInfo
 
 //MSVC 전용 최적화
 //vftable을 만들게 되면 8byte를 먼저 쓰게 되는데
@@ -13,17 +14,6 @@ class FLightSceneProxyFixLayout
 {
 public:
 	virtual ~FLightSceneProxyFixLayout() = default;
-};
-
-// 그림자 Depth pass 한 번에 필요한 시점 정보
-struct FShadowViewInfo
-{
-	FMatrix View;
-	FMatrix Projection;
-	FMatrix ViewProjection;
-	FFrustumPlanes Frustum;
-	float NearZ = 0.f;
-	float FarZ = 0.f;
 };
 
 class FLightSceneProxy : public FLightSceneProxyFixLayout

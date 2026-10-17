@@ -90,6 +90,9 @@ public:
 
 	static void BeginRenderPass(const FRenderingInfo& RenderingInfo);
 	static void EndRenderPass(const FRenderingInfo& RenderingInfo);
+	// 색 RT 없이 DSV 하나만 묶는다. 그림자처럼 FTexture2D가 아닌 배열 슬라이스 DSV용.
+	// DSV 전체를 ClearDepth로 지운 뒤 Viewport는 왼쪽 위 Width x Height만 쓴다. 끝낼 때는 EndRenderPass와 같이 RT를 푼다.
+	static void BeginDepthOnlyPass(ID3D11DepthStencilView* DSV, uint32 Width, uint32 Height, float ClearDepth = 1.0f);
 	static void ClearDepthStencil(FTexture2D* DepthStencilTexture, float Depth = 1.0f, uint8 Stencil = 0);
 
 	static void SetViewport(uint32 InX, uint32 InY, uint32 InWidth, uint32 InHeight);

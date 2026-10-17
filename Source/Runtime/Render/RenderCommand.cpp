@@ -262,6 +262,20 @@ void RenderCommand::EndRenderPass(const FRenderingInfo& RenderingInfo)
 	RenderDevice->GetContext()->OMSetRenderTargets(0, nullptr, nullptr);
 }
 
+void RenderCommand::BeginDepthOnlyPass(ID3D11DepthStencilView* DSV, uint32 Width, uint32 Height, float ClearDepth)
+{
+	if (DSV == nullptr)
+	{
+		return;
+	}
+
+	ID3D11DeviceContext* Context = RenderDevice->GetContext();
+	// 슬라이스 전체를 지운다. 해상도를 줄인 라이트도 영역 밖이 1.0(가리는 물체 없음)으로 남아 PCF가 경계 너머를 읽어도 안전하다.
+	Context->ClearDepthStencilView(DSV, D3D11_CLEAR_DEPTH, ClearDepth, 0);
+	Context->OMSetRenderTargets(0, nullptr, DSV);
+	SetViewport(0, 0, Width, Height);
+}
+
 void RenderCommand::ClearDepthStencil(FTexture2D* DepthStencilTexture, float Depth, uint8 Stencil)
 {
 	if (DepthStencilTexture == nullptr)

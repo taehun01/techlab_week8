@@ -425,7 +425,10 @@ void UEditorEngine::RenderMultipleViewports()
 			ViewWorld->BeginRenderViews();
 			// FireBall 라이트 상수는 Renderer 공용 상태라 월드가 바뀌면 다시 올린다.
 			// ViewWorld->GetScene().UpdateFireBallLight(Renderer);
-			ViewWorld->GetScene().UpdateLights(Renderer);
+			FScene& Scene = ViewWorld->GetScene();
+			Scene.UpdateLights(Renderer);                                              // 그림자 행렬·슬라이스 배정·Caster 수집 포함
+			// 그림자는 카메라와 무관하므로 이 월드의 View들보다 먼저 한 번만 그린다.
+			Renderer->RenderShadowDepths(Scene.ShadowRequests, Scene.ShadowCasters);
 			PreparedWorld = ViewWorld;
 		}
 
@@ -456,7 +459,9 @@ void UEditorEngine::RenderMultipleViewports()
 			SCOPE_CYCLE_COUNTER(STAT_PrepareRenderViews);
 			ViewWorld->BeginRenderViews();
 			//ViewWorld->GetScene().UpdateFireBallLight(Renderer);
-			ViewWorld->GetScene().UpdateLights(Renderer);
+			FScene& Scene = ViewWorld->GetScene();
+			Scene.UpdateLights(Renderer);
+			Renderer->RenderShadowDepths(Scene.ShadowRequests, Scene.ShadowCasters);
 			PreparedWorld = ViewWorld;
 		}
 
