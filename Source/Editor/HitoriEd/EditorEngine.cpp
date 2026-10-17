@@ -421,7 +421,7 @@ void UEditorEngine::RenderMultipleViewports()
 	// World 갱신 여부와 그림자 필요 여부를 별도로 관리한다.
 	TArray<UWorld*> PreparedWorlds;
 	TArray<UWorld*> ShadowWorlds;
-	const bool bDrawPrimitives = SettingsPanel->GetSettings().bDrawPrimitives;
+	const bool bDrawPrimitives = SettingsPanel->GetSettings().ShowFlags.IsEnabled(EEngineShowFlag::Primitives);
 
 	const auto PrepareView = [&](int32 ViewIndex)
 		{
@@ -618,7 +618,7 @@ void UEditorEngine::RenderOpaquePass(const int32 ViewIndex, const FRenderingInfo
 	HDRInfo.ColorRenderTargets[0].Texture = GetHDRTargetForView(ViewIndex);
 	RenderCommand::BeginRenderPass(HDRInfo);
 
-	const bool bDrawPrimitives = SettingsPanel->GetSettings().bDrawPrimitives;
+	const bool bDrawPrimitives = SettingsPanel->GetSettings().ShowFlags.IsEnabled(EEngineShowFlag::Primitives);
 	// 삼각형 연결은 유지하고 View별 Fill Mode만 선택한다.
 	const ERasterizerState SceneRasterizerState = MultipleViewportsAdapter.IsViewWireframe(ViewIndex)
 		? ERasterizerState::Wireframe : ERasterizerState::SolidBack;
@@ -714,8 +714,8 @@ void UEditorEngine::RenderOverlayPass(const int32 ViewIndex, UWorld& ViewWorld, 
 {
 	// 실행 중인 PIE View에는 Grid·Gizmo·Outline 같은 에디터 표시를 그리지 않는다.
 	// 별도 PIE 창은 편집 입력이 없으므로 일시정지 중에도 게임 화면만 보인다.
-	const bool bShowEditorOverlay = !IsPlayingView(ViewIndex)
-		&& ViewIndex != FMultipleViewportsAdapter::ExternalViewIndex;
+	const bool bShowEditorOverlay = !IsPlayingView(ViewIndex) && ViewIndex != FMultipleViewportsAdapter::ExternalViewIndex;
+	const FEngineShowFlags& ShowFlags = SettingsPanel->GetSettings().ShowFlags;
 	FRenderingInfo PassInfo = ViewRenderingInfo;
 
 	for (FRenderingDesc& Color : PassInfo.ColorRenderTargets)
@@ -726,13 +726,13 @@ void UEditorEngine::RenderOverlayPass(const int32 ViewIndex, UWorld& ViewWorld, 
 
 	RenderCommand::BeginRenderPass(PassInfo);
 
-	if (bShowEditorOverlay && SettingsPanel->GetSettings().bDrawBatchLine && !SettingsPanel->GetSettings().bDepthView)
+	if (bShowEditorOverlay && ShowFlags.IsEnabled(EEngineShowFlag::Grid) && !ShowFlags.IsEnabled(EEngineShowFlag::DepthView))
 	{
 		// 라인 배처는 매 프레임 한 번만 비우고 한 번만 그린다.
 		// 바운딩박스는 그 안에 쌓이는 여러 항목 중 하나일 뿐이다.
 		LineBatcher->BeginFrame();
 
-		if (SettingsPanel->GetSettings().bDrawBoundingBox)
+		if (ShowFlags.IsEnabled(EEngineShowFlag::Bounds))
 		{
 			LineBatcher->BuildVertexBuffer(ViewWorld);
 			ViewWorld.GetPathTracker().OnRender(LineBatcher.get());
@@ -752,15 +752,13 @@ void UEditorEngine::RenderOverlayPass(const int32 ViewIndex, UWorld& ViewWorld, 
 
 	//그리드
 	//TODO : 그리드도 안개가 적용되어야하나..?
-	if (bShowEditorOverlay && SettingsPanel->GetSettings().bDrawBatchLine)
+	if (bShowEditorOverlay && ShowFlags.IsEnabled(EEngineShowFlag::Grid))
 	{
 		const EGridPlane GridPlane = MultipleViewportsAdapter.GetGridPlane(ViewIndex);
 
-		if (SettingsPanel->GetSettings().bDrawPSGrid && !MultipleViewportsAdapter.IsOrthographic(ViewIndex))
+		if (ShowFlags.IsEnabled(EEngineShowFlag::PSGrid) && !MultipleViewportsAdapter.IsOrthographic(ViewIndex))
 		{
-			GridRenderer->OnRenderPSGrid(
-				ViewProjection, ViewCameraLocation, SettingsPanel->GetSettings(), PassInfo.ViewportSetting
-			);
+			GridRenderer->OnRenderPSGrid(ViewProjection, ViewCameraLocation, SettingsPanel->GetSettings(), PassInfo.ViewportSetting);
 		}
 		else
 		{
@@ -844,7 +842,7 @@ void UEditorEngine::RenderOverlayPass(const int32 ViewIndex, UWorld& ViewWorld, 
 
 	RenderCommand::ClearDepthStencil(PassInfo.DepthStencil.Texture);
 
-	if (SettingsPanel->GetSettings().bShowUUID)
+	if (ShowFlags.IsEnabled(EEngineShowFlag::UUID))
 	{
 		for (AActor* Actor : ViewWorld.GetPersistentLevel()->GetActors())
 		{
@@ -1015,12 +1013,15 @@ void UEditorEngine::UpdateGizmoAndPicking()
 }
 
 // View 행렬로 Scene·Grid·Gizmo·텍스트·Outline을 렌더한다.
-void UEditorEngine::RenderFrame(const int32 ViewIndex, UWorld& ViewWorld, const FRenderingInfo& ViewRenderingInfo, const FMatrix& ViewProjection, const FVector& ViewCameraLocation, const FVector& ViewCameraForward, FRenderQueue& RenderQueue, FRenderQueue& IconQueue, FRenderQueue& ArrowQueue)
+void UEditorEngine::RenderFrame(const int32 ViewIndex, UWorld& ViewWorld, const FRenderingInfo& ViewRenderingInfo, 
+	const FMatrix& ViewProjection, const FVector& ViewCameraLocation, const FVector& ViewCameraForward, FRenderQueue& RenderQueue, 
+	FRenderQueue& IconQueue, FRenderQueue& ArrowQueue)
 {
+	const FEngineShowFlags& ShowFlags = SettingsPanel->GetSettings().ShowFlags;
 
 	RenderOpaquePass(ViewIndex, ViewRenderingInfo, ViewProjection, ViewCameraLocation, ViewCameraForward, RenderQueue);
 
-	if (SettingsPanel->GetSettings().bDepthView)
+	if (ShowFlags.IsEnabled(EEngineShowFlag::DepthView))
 	{
 		RenderDepthPass(ViewIndex, ViewRenderingInfo, ViewProjection, ViewCameraLocation, ViewCameraForward);
 
@@ -1028,7 +1029,7 @@ void UEditorEngine::RenderFrame(const int32 ViewIndex, UWorld& ViewWorld, const 
 	else
 	{
 		//직교인 경우 안개 Pass를 그리지 않는다.
-		if (!MultipleViewportsAdapter.IsOrthographic(ViewIndex) && SettingsPanel->GetSettings().bExponentialHeightFog)
+		if (!MultipleViewportsAdapter.IsOrthographic(ViewIndex) && ShowFlags.IsEnabled(EEngineShowFlag::Fog))
 			// 2. 안개 Pass
 			RenderFogPass(ViewIndex, ViewWorld, ViewRenderingInfo, ViewCameraLocation, ViewProjection, RenderQueue);
 
@@ -1036,7 +1037,7 @@ void UEditorEngine::RenderFrame(const int32 ViewIndex, UWorld& ViewWorld, const 
 		RenderToneMapPass(ViewIndex, ViewRenderingInfo);
 
 		// 3. FXAA Pass
-		if (SettingsPanel->GetSettings().bEnableFXAA)
+		if (ShowFlags.IsEnabled(EEngineShowFlag::FXAA))
 			RenderFXAAPass(ViewIndex, ViewRenderingInfo);
 	}
 

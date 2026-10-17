@@ -3,6 +3,7 @@
 #include "Editor/LevelEditor/MultipleViewports/Adapter/MultipleViewportsAdapterTypes.h"
 #include "Math/Frustum.h"
 #include "Render/ViewMode.h"
+#include "Render/EngineShowFlags.h"
 
 // 한 View의 카메라·표시 상태와 프리셋·이동·렌더 계산을 관리한다.
 class FEditorViewportClient
@@ -32,8 +33,10 @@ public:
     }
 
     // 패널과 외부 PIE View의 표시 설정을 동일하게 보관한다.
-    void SetWireframe(bool Value) { bWireframe = Value; }
-    bool IsWireframe() const { return bWireframe; }
+    void SetWireframe(bool Value) { ShowFlags.SetEnabled(EEngineShowFlag::Wireframe, Value); }
+    bool IsWireframe() const { return ShowFlags.IsEnabled(EEngineShowFlag::Wireframe); }
+    const FEngineShowFlags& GetShowFlags() const { return ShowFlags; }
+    void SetShowFlags(const FEngineShowFlags& InFlags) { ShowFlags = InFlags; }
     void SetViewMode(EViewMode Value) { ViewMode = Value; }
     EViewMode GetViewMode() const { return ViewMode; }
 
@@ -103,6 +106,6 @@ private:
     bool bHasCameraOverride = false;
 
     // 모든 Client가 같은 표시 기본값으로 시작한다.
-    bool bWireframe = false;
+    FEngineShowFlags ShowFlags{ EShowFlagScope::View };
     EViewMode ViewMode = EViewMode::Lit_Lambert;
 };

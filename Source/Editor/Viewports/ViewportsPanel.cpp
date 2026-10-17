@@ -5,7 +5,7 @@
 #include "Core/StatOverlay.h"
 #include "Core/Stats/LightweightStats.h"
 #include "Render/RenderCommand.h"
-
+#include "Editor/EditorUI/ShowFlagUI.h"
 #include <algorithm>
 #include <cassert>
 #include <format>
@@ -288,12 +288,17 @@ void FViewportsPanel::OnRender()
 
 		if (ViewportAdapter)
 		{
-			// 레이아웃과 독립적으로 각 View의 장면 Fill Mode를 편집한다.
-			int Mode = ViewportAdapter->IsViewWireframe(ViewIndex) ? 1 : 0;
-			const char* Labels[] = { "Solid", "Wireframe" };
-			ImGui::SetNextItemWidth(PlaceToolbarItem(ComboWidth("Wireframe")));
-			if (ImGui::Combo("##FillMode", &Mode, Labels, 2))
-				ViewportAdapter->SetViewWireframe(ViewIndex, Mode == 1);
+			FEngineShowFlags Flags = ViewportAdapter->GetViewShowFlags(ViewIndex);
+			ImGui::SetNextItemWidth(PlaceToolbarItem(ComboWidth("Show Flags")));
+
+			if (ImGui::BeginCombo("##ViewShowFlags", "Show Flags"))
+			{
+				if (ShowFlagUI::DrawFlags(Flags, EShowFlagScope::View, EShowFlagGroup::Viewport))
+				{
+					ViewportAdapter->SetViewShowFlags(ViewIndex, Flags);
+				}
+				ImGui::EndCombo();
+			}
 
 			// 뷰모드. 고른 값은 렌더 직전에 Renderer로 넘어가 UberLit 변형을 고른다.
 			const EViewMode CurrentViewMode = ViewportAdapter->GetViewMode(ViewIndex);

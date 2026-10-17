@@ -77,6 +77,17 @@ public:
     {
         return IsViewIndex(Index) && ViewportClients[Index].IsWireframe();
     }
+    const FEngineShowFlags& GetViewShowFlags(int32 Index) const
+    {
+        assert(IsViewIndex(Index));
+        return ViewportClients[Index].GetShowFlags();
+    }
+
+    void SetViewShowFlags(int32 Index, const FEngineShowFlags& Flags)
+    {
+        assert(IsViewIndex(Index));
+        ViewportClients[Index].SetShowFlags(Flags);
+    }
     // View별 조명 뷰모드(UberLit 변형)를 저장하고 조회한다.
     void SetViewMode(int32 Index, EViewMode Value)
     {
