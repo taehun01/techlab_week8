@@ -114,7 +114,7 @@ cbuffer LightGrid : register(b5)
 cbuffer ShadowConstants : register(b6)
 {
     float4x4 LightSpaceMatrix;
-    uint index;   
+    uint TileIndex;   
     uint3 Padding;
 };
 
@@ -164,7 +164,8 @@ float ShadowCalculation(float4 PixelPos)
     float4 ClipLightSpace = mul(PixelPos, LightSpaceMatrix); // Pixel 좌표를 LightSpace의 Clip 좌표 변환
     float3 NDCLightSpace = ClipLightSpace.xyz / ClipLightSpace.w; // Clip 좌표 NDC로 변환
     float2 UV = float2(NDCLightSpace.x * 0.5f + 0.5f, -NDCLightSpace.y * 0.5f + 0.5f); // NDC에서 UV로 범위 맞춤
-    int2 Texel = int2(UV * float2(1920, 1080));
+    int2 Start = int2((TileIndex % 2) * 1024, (TileIndex / 2) * 1024);
+    int2 Texel = Start + int2(UV * float2(1024, 1024));
     float closestDepth = ShadowTexture.Load(int3(Texel, 0)).r;
     float currentDepth = NDCLightSpace.z;
     float shadow = currentDepth > closestDepth ? 0.0 : 1.0; // Current가 더 크면 더 깊어서 가려지는 영역이므로 그림자 계수 = 0

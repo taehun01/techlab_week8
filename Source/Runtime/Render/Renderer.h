@@ -181,7 +181,7 @@ struct FLightRenderParameters;
 struct FShadowConstants
 {
 	FMatrix LightSpaceMatrix;
-	uint32 index;
+	uint32 TileIndex;
 	uint32 Padding[3];
 };
 

@@ -15,7 +15,14 @@ struct FShadowViewConstants
 struct FShadowData
 {
 	FMatrix LightSpaceMatrix;
-	TUniquePtr<FTexture2D> ShadowTextureMap;
+	uint32 AtlasIndex;
+	uint32 TileIndex;
+};
+
+struct FShadowAtlas
+{
+	TUniquePtr<FTexture2D> Texture;
+	bool UsedTiles[4] = {false, false, false, false};
 };
 
 class FShadowViewRenderer
@@ -29,13 +36,15 @@ public:
 
 	bool Init();
 	void OnRender(FTexture2D* depthTexture, const FMatrix& ViewProjection, const FMatrix& WorldMatrix);
-	void AddShadowInfo(int32 index, TUniquePtr<FTexture2D> ShadowMap, FMatrix LightSpaceMatrix);
-	FTexture2D* GetShadowMapbyUUID(int32 UUID) { return ShadowTextureMap[UUID].ShadowTextureMap.get(); }
+	void AddShadowInfo(int32 UUID, int32 Atlasindex, int32 Tileindex, FMatrix LightSpaceMatrix);
 	void ResetCurrentShadowMap();
+	void AddNewAtlas();
 
-	TMap<int32, FShadowData> ShadowTextureMap;
+	TMap<int32, FShadowData> ShadowInfoMap;
+	TArray<FShadowAtlas> ShadowAtlasArray;
 private:
 	FPipelineState PipelineState;
 	FShaderProgram* Shader = nullptr;
 	TUniquePtr<FConstantBuffer> ConstantBuffer;
+	
 };

@@ -127,8 +127,8 @@ bool UEditorEngine::Init()
 	DetailsPanel->SetShadowMapQuery([this](uint32 LightUUID) -> FTexture2D*
 		{
 			if (!ShadowViewRenderer) return nullptr;
-			const auto* ShadowMap = ShadowViewRenderer->ShadowTextureMap.Find(LightUUID);
-			return ShadowMap ? ShadowMap->ShadowTextureMap.get() : nullptr;
+			const auto* ShadowMap = ShadowViewRenderer->ShadowInfoMap.Find(LightUUID);
+			return ShadowMap ? ShadowViewRenderer->ShadowAtlasArray[ShadowViewRenderer->ShadowInfoMap.Find(LightUUID)->TileIndex].Texture.get() : nullptr;
 		});
 	EditorControlsPanel = EditorUI->AddEditorPanel<FEditorControlsPanel>();
 	ViewportsPanel = EditorUI->AddEditorPanel<FViewportsPanel>();
@@ -908,34 +908,59 @@ void UEditorEngine::RenderDepthPass(const int32 ViewIndex, const FRenderingInfo&
 
 void UEditorEngine::RenderShadowPass(const FRenderingInfo& ViewRenderingInfo, FScene ViewWorldScene)
 {
-	RenderCommand::UnbindShaderResource(2, EShaderBindFlagBits::Pixel); // 임시용, ShadowMap SRV 해제
+	RenderCommand::UnbindShaderResource(2, EShaderBindFlagBits::Pixel);
+	for (FShadowAtlas& Atlas : ShadowViewRenderer->ShadowAtlasArray)
+	{
+		RenderCommand::ClearDepthStencil(Atlas.Texture.get(), 1.0f, 0);	// 새 프레임 렌더링 시작 전에 이전 프레임 기록된 Depth 리셋
+	}
+
 	FRenderingInfo PassInfo{}; // ShadowPass Rendering을 위한 Info 세팅
-	PassInfo.ViewportSetting.Width = 1920; // ShadowMap Width
-	PassInfo.ViewportSetting.Height = 1080; // ShadowMap Height
+	PassInfo.ViewportSetting.Width = 1024; // ShadowMap Width
+	PassInfo.ViewportSetting.Height = 1024; // ShadowMap Height
 	PassInfo.ColorRenderTargets.Reset();
+	PassInfo.DepthStencil.LoadOp = ERenderTargetLoadOp::Load;
 	FMatrix LightSpaceMatrix;
 
 	for (int i = 0;i < ViewWorldScene.LocalLightProxies.Num();i++) {
 			uint32 LightUUID = ViewWorldScene.LocalLightProxies[i]->GetLightComponent()->GetUUID();
 			LightSpaceMatrix = CalculateLightSpaceMatrix(ViewWorldScene, PassInfo, i);	// LightSpaceMatrix 계산
-			if ((ShadowViewRenderer->ShadowTextureMap.Find(LightUUID)))		// ShadowTextureMap에 이미 있으면 새로 Texture를 만들지 않고 있는 값을 Mapping하여 업데이트 되게 함
+			if ((ShadowViewRenderer->ShadowInfoMap.Find(LightUUID)))		// ShadowTextureMap에 이미 있으면 새로 Texture를 만들지 않고 있는 값을 Mapping하여 업데이트 되게 함
 			{
-				PassInfo.DepthStencil.Texture = ShadowViewRenderer->ShadowTextureMap.Find(LightUUID)->ShadowTextureMap.get();
-				ShadowViewRenderer->ShadowTextureMap.Find(LightUUID)->LightSpaceMatrix = LightSpaceMatrix;
+				FShadowData* ShadowData = ShadowViewRenderer->ShadowInfoMap.Find(LightUUID);
+				PassInfo.DepthStencil.Texture = ShadowViewRenderer->ShadowAtlasArray[ShadowData->AtlasIndex].Texture.get();
+				PassInfo.ViewportSetting.StartX = (ShadowData->TileIndex % 2) * 1024;	// TileIndex 이용한 Atlas 읽는 지점 세팅 (렌더링을 통해 기존 영역 업데이트)
+				PassInfo.ViewportSetting.StartY = (ShadowData->TileIndex / 2) * 1024;
+				ShadowViewRenderer->ShadowInfoMap.Find(LightUUID)->LightSpaceMatrix = LightSpaceMatrix;
+				
 			}
-			else {		// 없으면 Texture 새로 만들고 매핑함
-				D3D11_TEXTURE2D_DESC Desc{};
-				Desc.Width = 1920;
-				Desc.Height = 1080;
-				Desc.MipLevels = 1;
-				Desc.ArraySize = 1;
-				Desc.Format = DXGI_FORMAT_R24G8_TYPELESS;
-				Desc.SampleDesc.Count = 1;
-				Desc.Usage = D3D11_USAGE_DEFAULT;
-				Desc.BindFlags = D3D11_BIND_DEPTH_STENCIL | D3D11_BIND_SHADER_RESOURCE;
-				TUniquePtr<FTexture2D> CurrentShadowMap = RenderCommand::CreateTexture2D(Desc);
-				ShadowViewRenderer->AddShadowInfo(LightUUID,std::move(CurrentShadowMap), LightSpaceMatrix);
-				PassInfo.DepthStencil.Texture = ShadowViewRenderer->ShadowTextureMap.Find(LightUUID)->ShadowTextureMap.get();
+			else {		
+				FShadowAtlas& LastAtlas = ShadowViewRenderer->ShadowAtlasArray[ShadowViewRenderer->ShadowAtlasArray.Num() - 1];
+				uint32 newAtlasIndex = ShadowViewRenderer->ShadowAtlasArray.Num() - 1;
+				uint32 newTileIndex = -1;
+				for (int i = 0; i < 4;i++)	
+				{
+					if (!(LastAtlas.UsedTiles[i])) // 마지막 아틀라스의 UsedTiles 체크, 순서대로 False 지점 있으면 해당 부분을 newTileIndex로 설정하고 True로 변경
+					{
+						newTileIndex = i;
+						LastAtlas.UsedTiles[i] = true;
+						break;
+					}
+				}
+				if (newTileIndex == -1)	// Atlas 꽉 찬 경우  
+				{
+					ShadowViewRenderer->AddNewAtlas();
+					newTileIndex = 0;
+					FShadowAtlas& NewAtlas = ShadowViewRenderer->ShadowAtlasArray[ShadowViewRenderer->ShadowAtlasArray.Num() - 1];
+					NewAtlas.UsedTiles[0] = true;
+					newAtlasIndex = ShadowViewRenderer->ShadowAtlasArray.Num() - 1;	// 새로운 Atlas 생성하고 TileIndex, AtlasIndex 변경
+					RenderCommand::ClearDepthStencil(NewAtlas.Texture.get(), 1.0f, 0); // 새로운 Atlas의 Depth 리셋
+				}
+				ShadowViewRenderer->AddShadowInfo(LightUUID, newAtlasIndex, newTileIndex, LightSpaceMatrix);	// 변경된 값으로 ShadowInfoMap에 추가 및 Texture, Start 세팅
+				FShadowData* ShadowData = ShadowViewRenderer->ShadowInfoMap.Find(LightUUID);
+				PassInfo.DepthStencil.Texture = ShadowViewRenderer->ShadowAtlasArray[ShadowData->AtlasIndex].Texture.get();
+				PassInfo.ViewportSetting.StartX = (ShadowData->TileIndex % 2) * 1024;
+				PassInfo.ViewportSetting.StartY = (ShadowData->TileIndex / 2) * 1024;
+				
 			}
 			
 			RenderCommand::BeginRenderPass(PassInfo);
@@ -1019,11 +1044,11 @@ void UEditorEngine::RenderFrame(const int32 ViewIndex, UWorld& ViewWorld, const 
 	RenderShadowPass(ViewRenderingInfo, ViewWorld.GetScene());	// 그리기전에 ShadowMap 생성용 Pass 실행
 	FShadowConstants ShadowConstants{};
 	FTexture2D* ShadowMap = nullptr;
-	if (ViewWorld.GetScene().LocalLightProxies.Num() > 0 && ShadowViewRenderer->ShadowTextureMap.Find(ViewWorld.GetScene().LocalLightProxies[0]->GetLightComponent()->GetUUID()))	// 임시용, 조명중 첫번째 바로 매핑하여 Constant, SRV 세팅할 Texture 업데이트
+	if (ViewWorld.GetScene().LocalLightProxies.Num() > 0 && ShadowViewRenderer->ShadowInfoMap.Find(ViewWorld.GetScene().LocalLightProxies[0]->GetLightComponent()->GetUUID()))	// 임시용, 조명중 첫번째 바로 매핑하여 Constant, SRV 세팅할 Texture 업데이트
 	{
-		ShadowConstants.index = 0;
-		ShadowConstants.LightSpaceMatrix = ShadowViewRenderer->ShadowTextureMap.Find(ViewWorld.GetScene().LocalLightProxies[0]->GetLightComponent()->GetUUID())->LightSpaceMatrix;
-		ShadowMap = ShadowViewRenderer->ShadowTextureMap.Find(ViewWorld.GetScene().LocalLightProxies[0]->GetLightComponent()->GetUUID())->ShadowTextureMap.get();
+		ShadowConstants.TileIndex = ShadowViewRenderer->ShadowInfoMap.Find(ViewWorld.GetScene().LocalLightProxies[0]->GetLightComponent()->GetUUID())->TileIndex;
+		ShadowConstants.LightSpaceMatrix = ShadowViewRenderer->ShadowInfoMap.Find(ViewWorld.GetScene().LocalLightProxies[0]->GetLightComponent()->GetUUID())->LightSpaceMatrix;
+		ShadowMap = ShadowViewRenderer->ShadowAtlasArray[ShadowViewRenderer->ShadowInfoMap.Find(ViewWorld.GetScene().LocalLightProxies[0]->GetLightComponent()->GetUUID())->AtlasIndex].Texture.get();
 	}
 	Renderer->SetShadow(ShadowConstants, ShadowMap);
 	RenderOpaquePass(ViewIndex, ViewRenderingInfo, ViewProjection, ViewCameraLocation, ViewCameraForward, RenderQueue);

@@ -169,7 +169,6 @@ void FRenderer::RenderOpaque(const FMatrix& ViewProjection)
 	RenderCommand::BindConstantBuffer(4, LightingCB.get(), EShaderBindFlagBits::Pixel | EShaderBindFlagBits::Vertex);
 	if (ShadowMap) RenderCommand::BindShaderResource(2, ShadowMap, EShaderBindFlagBits::Pixel);
 	else RenderCommand::UnbindShaderResource(2, EShaderBindFlagBits::Pixel); 
-
 	RenderCommand::BindShaderResource(10, LocalLightBuffer.get(), EShaderBindFlagBits::Pixel | EShaderBindFlagBits::Vertex);
 	RenderCommand::BindShaderResource(12, TileIndexBuffer.get(), EShaderBindFlagBits::Pixel);
 	RenderCommand::BindConstantBuffer(5, GridLightingCB.get(), EShaderBindFlagBits::Pixel | EShaderBindFlagBits::Vertex);

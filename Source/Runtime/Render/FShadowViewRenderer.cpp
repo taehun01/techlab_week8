@@ -20,6 +20,22 @@ bool FShadowViewRenderer::Init()
 	ConstantBuffer = RenderCommand::CreateConstantBuffer(sizeof(FShadowViewConstants));
 
 	PipelineState.Shader = Shader;
+
+	D3D11_TEXTURE2D_DESC Desc{};
+	Desc.Width = 2048;
+	Desc.Height = 2048;
+	Desc.MipLevels = 1;
+	Desc.ArraySize = 1;
+	Desc.Format = DXGI_FORMAT_R24G8_TYPELESS;
+	Desc.SampleDesc.Count = 1;
+	Desc.Usage = D3D11_USAGE_DEFAULT;
+	Desc.BindFlags = D3D11_BIND_DEPTH_STENCIL | D3D11_BIND_SHADER_RESOURCE;
+	TUniquePtr<FTexture2D> ShadowAtlasTexture = RenderCommand::CreateTexture2D(Desc);
+	FShadowAtlas ShadowAtlas;
+	ShadowAtlas.Texture = std::move(ShadowAtlasTexture);
+	ShadowAtlasArray.Add(std::move(ShadowAtlas));
+
+
 	return true;
 }
 
@@ -35,11 +51,29 @@ void FShadowViewRenderer::OnRender(FTexture2D* depthTexture, const FMatrix& Ligh
 }
 
 
-void FShadowViewRenderer::AddShadowInfo(int32 index, TUniquePtr<FTexture2D> ShadowMap, FMatrix LightSpaceMatrix)
+void FShadowViewRenderer::AddShadowInfo(int32 UUID, int32 Atlasindex, int32 Tileindex, FMatrix LightSpaceMatrix)
 {
 	FShadowData ShadowInfo;
 	ShadowInfo.LightSpaceMatrix = LightSpaceMatrix;
-	ShadowInfo.ShadowTextureMap = std::move(ShadowMap);
-	ShadowTextureMap[index] = std::move(ShadowInfo);
+	ShadowInfo.AtlasIndex = Atlasindex;
+	ShadowInfo.TileIndex = Tileindex;
+	ShadowInfoMap[UUID] = ShadowInfo;
+}
+
+void FShadowViewRenderer::AddNewAtlas()
+{
+	D3D11_TEXTURE2D_DESC Desc{};
+	Desc.Width = 2048;
+	Desc.Height = 2048;
+	Desc.MipLevels = 1;
+	Desc.ArraySize = 1;
+	Desc.Format = DXGI_FORMAT_R24G8_TYPELESS;
+	Desc.SampleDesc.Count = 1;
+	Desc.Usage = D3D11_USAGE_DEFAULT;
+	Desc.BindFlags = D3D11_BIND_DEPTH_STENCIL | D3D11_BIND_SHADER_RESOURCE;
+	TUniquePtr<FTexture2D> ShadowAtlasTexture = RenderCommand::CreateTexture2D(Desc);
+	FShadowAtlas ShadowAtlas;
+	ShadowAtlas.Texture = std::move(ShadowAtlasTexture);
+	ShadowAtlasArray.Add(std::move(ShadowAtlas));
 }
 
