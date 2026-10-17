@@ -421,7 +421,9 @@ void UEditorEngine::RenderMultipleViewports()
 	// World 갱신 여부와 그림자 필요 여부를 별도로 관리한다.
 	TArray<UWorld*> PreparedWorlds;
 	TArray<UWorld*> ShadowWorlds;
-	const bool bDrawPrimitives = SettingsPanel->GetSettings().ShowFlags.IsEnabled(EEngineShowFlag::Primitives);
+	const FEngineShowFlags& ShowFlags = SettingsPanel->GetSettings().ShowFlags;
+	const bool bDrawPrimitives = ShowFlags.IsEnabled(EEngineShowFlag::Primitives);
+	const bool bDynamicShadows = ShowFlags.IsEnabled(EEngineShowFlag::DynamicShadows);
 
 	const auto PrepareView = [&](int32 ViewIndex)
 		{
@@ -440,9 +442,8 @@ void UEditorEngine::RenderMultipleViewports()
 
 			// 이번 그림자 수신 연결 범위는 Lambert·Blinn-Phong이다.
 			const EViewMode ViewMode = MultipleViewportsAdapter.GetViewMode(ViewIndex);
-			const bool bNeedsShadow = bDrawPrimitives
-				&& (ViewMode == EViewMode::Lit_Lambert
-					|| ViewMode == EViewMode::Lit_BlinnPhong);
+			const bool bNeedsShadow = bDrawPrimitives && bDynamicShadows
+				&& (ViewMode == EViewMode::Lit_Lambert || ViewMode == EViewMode::Lit_BlinnPhong);
 
 			// 앞 View가 Unlit이어도 뒤의 Lit View에서 같은 World를 등록할 수 있다.
 			if (bNeedsShadow && ShadowWorlds.Find(ViewWorld) == INDEX_NONE)
