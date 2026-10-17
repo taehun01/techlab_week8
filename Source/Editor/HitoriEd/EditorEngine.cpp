@@ -908,6 +908,7 @@ void UEditorEngine::RenderDepthPass(const int32 ViewIndex, const FRenderingInfo&
 
 void UEditorEngine::RenderShadowPass(const FRenderingInfo& ViewRenderingInfo, FScene ViewWorldScene)
 {
+	RenderCommand::UnbindShaderResource(2, EShaderBindFlagBits::Pixel);
 	FRenderingInfo PassInfo{};
 	PassInfo.ViewportSetting.Width = 1920;
 	PassInfo.ViewportSetting.Height = 1080;
@@ -920,6 +921,7 @@ void UEditorEngine::RenderShadowPass(const FRenderingInfo& ViewRenderingInfo, FS
 			if ((ShadowViewRenderer->ShadowTextureMap.Find(LightUUID)))
 			{
 				PassInfo.DepthStencil.Texture = ShadowViewRenderer->ShadowTextureMap.Find(LightUUID)->ShadowTextureMap.get();
+				ShadowViewRenderer->ShadowTextureMap.Find(LightUUID)->LightSpaceMatrix = LightSpaceMatrix;
 			}
 			else {
 				D3D11_TEXTURE2D_DESC Desc{};
@@ -935,6 +937,7 @@ void UEditorEngine::RenderShadowPass(const FRenderingInfo& ViewRenderingInfo, FS
 				ShadowViewRenderer->AddShadowInfo(LightUUID,std::move(CurrentShadowMap), LightSpaceMatrix);
 				PassInfo.DepthStencil.Texture = ShadowViewRenderer->ShadowTextureMap.Find(LightUUID)->ShadowTextureMap.get();
 			}
+			
 			RenderCommand::BeginRenderPass(PassInfo);
 			for (int j = 0; j < ViewWorldScene.PrimitiveSceneProxies.Num();j++)
 			{
@@ -1014,6 +1017,15 @@ void UEditorEngine::UpdateGizmoAndPicking()
 void UEditorEngine::RenderFrame(const int32 ViewIndex, UWorld& ViewWorld, const FRenderingInfo& ViewRenderingInfo, const FMatrix& ViewProjection, const FVector& ViewCameraLocation, const FVector& ViewCameraForward, FRenderQueue& RenderQueue, FRenderQueue& IconQueue, FRenderQueue& ArrowQueue)
 {
 	RenderShadowPass(ViewRenderingInfo, ViewWorld.GetScene());
+	FShadowConstants ShadowConstants{};
+	FTexture2D* ShadowMap = nullptr;
+	if (ViewWorld.GetScene().LocalLightProxies.Num() > 0 && ShadowViewRenderer->ShadowTextureMap.Find(ViewWorld.GetScene().LocalLightProxies[0]->GetLightComponent()->GetUUID()))
+	{
+		ShadowConstants.index = 0;
+		ShadowConstants.LightSpaceMatrix = ShadowViewRenderer->ShadowTextureMap.Find(ViewWorld.GetScene().LocalLightProxies[0]->GetLightComponent()->GetUUID())->LightSpaceMatrix;
+		ShadowMap = ShadowViewRenderer->ShadowTextureMap.Find(ViewWorld.GetScene().LocalLightProxies[0]->GetLightComponent()->GetUUID())->ShadowTextureMap.get();
+	}
+	Renderer->SetShadow(ShadowConstants, ShadowMap);
 	RenderOpaquePass(ViewIndex, ViewRenderingInfo, ViewProjection, ViewCameraLocation, ViewCameraForward, RenderQueue);
 
 	if (SettingsPanel->GetSettings().bDepthView)

@@ -111,12 +111,21 @@ cbuffer LightGrid : register(b5)
     uint2 LightGridPadding;
 };
 
+cbuffer ShadowConstants : register(b6)
+{
+    float4x4 LightSpaceMatrix;
+    uint index;   
+    uint3 Padding;
+};
+
+
 StructuredBuffer<FLightRenderParameters> LocalLights : register(t10);
 // 셀마다 [개수][라이트 번호 x MAX_LIGHTS_PER_CELL] 형태로 CELL_STRIDE칸씩 이어져 있다.
 StructuredBuffer<uint> CellLightIndices : register(t12);
 
 Texture2D DiffuseTexture : register(t0);
 Texture2D NormalTexture : register(t1);
+Texture2D ShadowTexture : register(t2);
 SamplerState MaterialSampler : register(s0);
 
 struct VS_INPUT
@@ -148,6 +157,18 @@ struct FLightContribution
     float3 Diffuse;
     float3 Specular;
 };
+
+float ShadowCalculation(float4 PixelPos)
+{
+    float4 ClipLightSpace = mul(PixelPos, LightSpaceMatrix);
+    float3 NDCLightSpace = ClipLightSpace.xyz / ClipLightSpace.w;
+    float2 UV = float2(NDCLightSpace.x * 0.5f + 0.5f, -NDCLightSpace.y * 0.5f + 0.5f);
+    int2 Texel = int2(UV * float2(1920, 1080));
+    float closestDepth = ShadowTexture.Load(int3(Texel, 0)).r;
+    float currentDepth = NDCLightSpace.z;
+    float shadow = currentDepth > closestDepth ? 1.0 : 0.0;
+    return shadow;
+}
 
 // 원뿔 감쇠량. 0(Outer 밖) ~ 1(Inner 안)
 float GetSpotConeAttenuation(FLightRenderParameters Light, float3 L)
@@ -332,7 +353,9 @@ FLightContribution AccumulateDirectLighting(float3 N, float3 V, float3 WorldPos,
     for (uint Index = 0; Index < LightCount; ++Index)
     {
         const uint LightIndex = bUseCellList ? CellLightIndices[CellOffset + 1 + Index] : Index;
-        const FLightContribution LightContribution = CalcLocalLight(LocalLights[LightIndex], N, V, WorldPos, InShininess);
+        FLightContribution LightContribution = CalcLocalLight(LocalLights[LightIndex], N, V, WorldPos, InShininess);
+        LightContribution.Diffuse *= (1 - ShadowCalculation(float4(WorldPos, 1.0f)));
+        LightContribution.Specular *= (1 - ShadowCalculation(float4(WorldPos, 1.0f)));
         Total.Diffuse += LightContribution.Diffuse;
         Total.Specular += LightContribution.Specular;
     }
@@ -415,7 +438,7 @@ float4 mainPS(VS_OUTPUT Input) : SV_TARGET
 #elif LIGHTING_MODEL_GOURAUD
     DiffuseLighting += Input.VertexDiffuse;
 #endif
-
+    float shadow = ShadowCalculation(float4(Input.WorldPos, 1.0f));
     return float4(Albedo.rgb * DiffuseLighting + SpecularLighting, Alpha);
 #endif
 }

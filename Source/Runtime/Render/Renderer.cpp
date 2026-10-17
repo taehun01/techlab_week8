@@ -72,6 +72,7 @@ namespace
 
 bool FRenderer::Init()
 {
+	ShadowCB = RenderCommand::CreateConstantBuffer(sizeof(FShadowConstants));
 	bUsePerObjectSlots = RenderCommand::SupportsConstantBufferOffsets();
 	PerObjectCB = RenderCommand::CreateConstantBuffer(sizeof(FPerObjectConstants));
 	ViewCB = RenderCommand::CreateConstantBuffer(sizeof(FViewConstants));
@@ -164,7 +165,11 @@ void FRenderer::RenderAll(FRenderQueue& InQueue, const FMatrix& ViewProjection, 
 
 void FRenderer::RenderOpaque(const FMatrix& ViewProjection)
 {
+	RenderCommand::BindConstantBuffer(6, ShadowCB.get(), EShaderBindFlagBits::Pixel);
 	RenderCommand::BindConstantBuffer(4, LightingCB.get(), EShaderBindFlagBits::Pixel | EShaderBindFlagBits::Vertex);
+	if (ShadowMap) RenderCommand::BindShaderResource(2, ShadowMap, EShaderBindFlagBits::Pixel);
+	else RenderCommand::UnbindShaderResource(2, EShaderBindFlagBits::Pixel); 
+
 	RenderCommand::BindShaderResource(10, LocalLightBuffer.get(), EShaderBindFlagBits::Pixel | EShaderBindFlagBits::Vertex);
 	RenderCommand::BindShaderResource(12, TileIndexBuffer.get(), EShaderBindFlagBits::Pixel);
 	RenderCommand::BindConstantBuffer(5, GridLightingCB.get(), EShaderBindFlagBits::Pixel | EShaderBindFlagBits::Vertex);
@@ -615,6 +620,13 @@ void FRenderer::SetLighting(FLightingConstants& LightingConstants, const TArray<
 	FLightGridConstants GridConstants{};
 	GridConstants.LightDebugMode = LightDebugMode;
 	RenderCommand::UpdateBufferData(GridLightingCB.get(), &GridConstants, sizeof(FLightGridConstants));
+}
+
+
+void FRenderer::SetShadow(const FShadowConstants& Constants, FTexture2D* InShadowMap)
+{
+	RenderCommand::UpdateBufferData(ShadowCB.get(), &Constants, sizeof(FShadowConstants));
+	ShadowMap = InShadowMap;
 }
 
 void FRenderer::CullLights(const FMatrix& View, const FMatrix& Projection, uint32 Width, uint32 Height, FTexture2D* DepthTexture)

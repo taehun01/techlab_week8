@@ -178,6 +178,13 @@ static_assert(sizeof(FLightGridConstants) == 48, "UberLit의 cbuffer LightGrid�
 
 struct FLightRenderParameters;
 
+struct FShadowConstants
+{
+	FMatrix LightSpaceMatrix;
+	uint32 index;
+	uint32 Padding[3];
+};
+
 class FRenderer
 {
 public:
@@ -233,6 +240,8 @@ public:
 	void SetLightDebugMode(uint32 Mode);
 	void SetLightCullingMode(ELightCullingMode Mode) { LightCullingMode = Mode; }
 	ELightCullingMode GetLightCullingMode() const { return LightCullingMode; }
+
+	void SetShadow(const FShadowConstants& Constants, FTexture2D* InShadowMap);
 private:
 	void DrawPackets(uint32 Begin, uint32 End, const FMatrix& ViewProjection);
 	void DrawStaticGroups();
@@ -292,4 +301,8 @@ private:
 	uint32 NumLocalLightsThisFrame = 0;
 
 	EViewMode CurrentViewMode = EViewMode::Lit_Lambert;
+
+	// Shadow용 CB
+	TUniquePtr<FConstantBuffer> ShadowCB;
+	FTexture2D* ShadowMap = nullptr;
 };
