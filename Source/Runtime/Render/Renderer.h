@@ -178,12 +178,20 @@ static_assert(sizeof(FLightGridConstants) == 48, "UberLitì˜ cbuffer LightGridì™
 
 struct FLightRenderParameters;
 
-struct FShadowConstants
+struct FShadowInfo
 {
 	FMatrix LightSpaceMatrix;
 	uint32 TileIndex;
-	uint32 Padding[3];
+	uint32 IsEnableShadow;
+	uint32 Padding[2];
 };
+
+struct FShadowConstants
+{
+	FShadowInfo ShadowDataArray[4];
+};
+
+
 
 class FRenderer
 {

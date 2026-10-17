@@ -128,7 +128,7 @@ bool UEditorEngine::Init()
 		{
 			if (!ShadowViewRenderer) return nullptr;
 			const auto* ShadowMap = ShadowViewRenderer->ShadowInfoMap.Find(LightUUID);
-			return ShadowMap ? ShadowViewRenderer->ShadowAtlasArray[ShadowViewRenderer->ShadowInfoMap.Find(LightUUID)->TileIndex].Texture.get() : nullptr;
+			return ShadowMap ? ShadowViewRenderer->ShadowAtlasArray[ShadowViewRenderer->ShadowInfoMap.Find(LightUUID)->AtlasIndex].Texture.get() : nullptr;
 		});
 	EditorControlsPanel = EditorUI->AddEditorPanel<FEditorControlsPanel>();
 	ViewportsPanel = EditorUI->AddEditorPanel<FViewportsPanel>();
@@ -1044,11 +1044,15 @@ void UEditorEngine::RenderFrame(const int32 ViewIndex, UWorld& ViewWorld, const 
 	RenderShadowPass(ViewRenderingInfo, ViewWorld.GetScene());	// 그리기전에 ShadowMap 생성용 Pass 실행
 	FShadowConstants ShadowConstants{};
 	FTexture2D* ShadowMap = nullptr;
-	if (ViewWorld.GetScene().LocalLightProxies.Num() > 0 && ShadowViewRenderer->ShadowInfoMap.Find(ViewWorld.GetScene().LocalLightProxies[0]->GetLightComponent()->GetUUID()))	// 임시용, 조명중 첫번째 바로 매핑하여 Constant, SRV 세팅할 Texture 업데이트
+	if (ViewWorld.GetScene().LocalLightProxies.Num() > 0 && ShadowViewRenderer->ShadowInfoMap.Find(ViewWorld.GetScene().LocalLightProxies[0]->GetLightComponent()->GetUUID()))	// 조명이 존재하고 UUID가 있을때
 	{
-		ShadowConstants.TileIndex = ShadowViewRenderer->ShadowInfoMap.Find(ViewWorld.GetScene().LocalLightProxies[0]->GetLightComponent()->GetUUID())->TileIndex;
-		ShadowConstants.LightSpaceMatrix = ShadowViewRenderer->ShadowInfoMap.Find(ViewWorld.GetScene().LocalLightProxies[0]->GetLightComponent()->GetUUID())->LightSpaceMatrix;
-		ShadowMap = ShadowViewRenderer->ShadowAtlasArray[ShadowViewRenderer->ShadowInfoMap.Find(ViewWorld.GetScene().LocalLightProxies[0]->GetLightComponent()->GetUUID())->AtlasIndex].Texture.get();
+		
+		for (int i = 0;i < ViewWorld.GetScene().LocalLightProxies.Num() && i<4;i++) { // 한 Atlas에 최대 조명이 4개이므로 4개짜리 배열에 넣음
+			ShadowConstants.ShadowDataArray[i].TileIndex = ShadowViewRenderer->ShadowInfoMap.Find(ViewWorld.GetScene().LocalLightProxies[i]->GetLightComponent()->GetUUID())->TileIndex;
+			ShadowConstants.ShadowDataArray[i].LightSpaceMatrix = ShadowViewRenderer->ShadowInfoMap.Find(ViewWorld.GetScene().LocalLightProxies[i]->GetLightComponent()->GetUUID())->LightSpaceMatrix;
+			ShadowConstants.ShadowDataArray[i].IsEnableShadow = true;	// EnableShadow를 이때 true로 결정
+			ShadowMap = ShadowViewRenderer->ShadowAtlasArray[ShadowViewRenderer->ShadowInfoMap.Find(ViewWorld.GetScene().LocalLightProxies[i]->GetLightComponent()->GetUUID())->AtlasIndex].Texture.get();
+		}
 	}
 	Renderer->SetShadow(ShadowConstants, ShadowMap);
 	RenderOpaquePass(ViewIndex, ViewRenderingInfo, ViewProjection, ViewCameraLocation, ViewCameraForward, RenderQueue);

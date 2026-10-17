@@ -111,11 +111,17 @@ cbuffer LightGrid : register(b5)
     uint2 LightGridPadding;
 };
 
-cbuffer ShadowConstants : register(b6)
+struct FShadowInfo
 {
     float4x4 LightSpaceMatrix;
-    uint TileIndex;   
-    uint3 Padding;
+    uint TileIndex;
+    uint IsEnableShadow;
+    uint2 Padding;
+};
+
+cbuffer ShadowConstants : register(b6)
+{
+    FShadowInfo ShadowDataArray[4];
 };
 
 
@@ -159,12 +165,16 @@ struct FLightContribution
 };
 
 // 그림자 계수, 0 or 1
-float ShadowCalculation(float4 PixelPos)
+float ShadowCalculation(float4 PixelPos, uint index)
 {
-    float4 ClipLightSpace = mul(PixelPos, LightSpaceMatrix); // Pixel 좌표를 LightSpace의 Clip 좌표 변환
+    if (index >= 4) // index가 4 이상일경우 한 Atlas 초과하므로 리턴
+        return 1;
+    if (ShadowDataArray[index].IsEnableShadow == 0) // 해당 Index의 Shadow 꺼져있을경우 return
+        return 1;
+    float4 ClipLightSpace = mul(PixelPos, ShadowDataArray[index].LightSpaceMatrix); // Pixel 좌표를 LightSpace의 Clip 좌표 변환
     float3 NDCLightSpace = ClipLightSpace.xyz / ClipLightSpace.w; // Clip 좌표 NDC로 변환
     float2 UV = float2(NDCLightSpace.x * 0.5f + 0.5f, -NDCLightSpace.y * 0.5f + 0.5f); // NDC에서 UV로 범위 맞춤
-    int2 Start = int2((TileIndex % 2) * 1024, (TileIndex / 2) * 1024);
+    int2 Start = int2((ShadowDataArray[index].TileIndex % 2) * 1024, (ShadowDataArray[index].TileIndex / 2) * 1024);
     int2 Texel = Start + int2(UV * float2(1024, 1024));
     float closestDepth = ShadowTexture.Load(int3(Texel, 0)).r;
     float currentDepth = NDCLightSpace.z;
@@ -356,8 +366,8 @@ FLightContribution AccumulateDirectLighting(float3 N, float3 V, float3 WorldPos,
     {
         const uint LightIndex = bUseCellList ? CellLightIndices[CellOffset + 1 + Index] : Index;
         FLightContribution LightContribution = CalcLocalLight(LocalLights[LightIndex], N, V, WorldPos, InShininess);
-        LightContribution.Diffuse *= ShadowCalculation(float4(WorldPos, 1.0f));
-        LightContribution.Specular *= ShadowCalculation(float4(WorldPos, 1.0f));
+        LightContribution.Diffuse *= ShadowCalculation(float4(WorldPos, 1.0f), LightIndex);
+        LightContribution.Specular *= ShadowCalculation(float4(WorldPos, 1.0f), LightIndex);
         Total.Diffuse += LightContribution.Diffuse;
         Total.Specular += LightContribution.Specular;
     }
