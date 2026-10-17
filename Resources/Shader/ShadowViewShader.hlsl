@@ -18,9 +18,9 @@ struct PSInput
 
 float4 mainVS(VSInput Input) : SV_Position
 {  
-    float4 WorldPos = mul(float4(Input.Position, 1.0f), WorldMatrix);
-    float4 Output = mul(WorldPos, LightSpaceMatrix);
-    return Output;
+    float4 WorldPos = mul(float4(Input.Position, 1.0f), WorldMatrix);   // Local to World Space
+    float4 Output = mul(WorldPos, LightSpaceMatrix);    // World Space에서 LightSpaceMatrix 곱을 통해 LightSpace에서의 좌표로 변환
+    return Output;  // DSV 세팅으로 인해 가까운 Depth만 남음
 }
 
 void mainPS(PSInput Input)

@@ -908,22 +908,22 @@ void UEditorEngine::RenderDepthPass(const int32 ViewIndex, const FRenderingInfo&
 
 void UEditorEngine::RenderShadowPass(const FRenderingInfo& ViewRenderingInfo, FScene ViewWorldScene)
 {
-	RenderCommand::UnbindShaderResource(2, EShaderBindFlagBits::Pixel);
-	FRenderingInfo PassInfo{};
-	PassInfo.ViewportSetting.Width = 1920;
-	PassInfo.ViewportSetting.Height = 1080;
+	RenderCommand::UnbindShaderResource(2, EShaderBindFlagBits::Pixel); // 임시용, ShadowMap SRV 해제
+	FRenderingInfo PassInfo{}; // ShadowPass Rendering을 위한 Info 세팅
+	PassInfo.ViewportSetting.Width = 1920; // ShadowMap Width
+	PassInfo.ViewportSetting.Height = 1080; // ShadowMap Height
 	PassInfo.ColorRenderTargets.Reset();
 	FMatrix LightSpaceMatrix;
 
 	for (int i = 0;i < ViewWorldScene.LocalLightProxies.Num();i++) {
 			uint32 LightUUID = ViewWorldScene.LocalLightProxies[i]->GetLightComponent()->GetUUID();
-			LightSpaceMatrix = CalculateLightSpaceMatrix(ViewWorldScene, PassInfo, i);
-			if ((ShadowViewRenderer->ShadowTextureMap.Find(LightUUID)))
+			LightSpaceMatrix = CalculateLightSpaceMatrix(ViewWorldScene, PassInfo, i);	// LightSpaceMatrix 계산
+			if ((ShadowViewRenderer->ShadowTextureMap.Find(LightUUID)))		// ShadowTextureMap에 이미 있으면 새로 Texture를 만들지 않고 있는 값을 Mapping하여 업데이트 되게 함
 			{
 				PassInfo.DepthStencil.Texture = ShadowViewRenderer->ShadowTextureMap.Find(LightUUID)->ShadowTextureMap.get();
 				ShadowViewRenderer->ShadowTextureMap.Find(LightUUID)->LightSpaceMatrix = LightSpaceMatrix;
 			}
-			else {
+			else {		// 없으면 Texture 새로 만들고 매핑함
 				D3D11_TEXTURE2D_DESC Desc{};
 				Desc.Width = 1920;
 				Desc.Height = 1080;
@@ -941,7 +941,7 @@ void UEditorEngine::RenderShadowPass(const FRenderingInfo& ViewRenderingInfo, FS
 			RenderCommand::BeginRenderPass(PassInfo);
 			for (int j = 0; j < ViewWorldScene.PrimitiveSceneProxies.Num();j++)
 			{
-				if (ViewWorldScene.PrimitiveSceneProxies[j]->IsCaster() && ViewWorldScene.PrimitiveSceneProxies[j]->GetMesh() != nullptr) {
+				if (ViewWorldScene.PrimitiveSceneProxies[j]->IsCaster() && ViewWorldScene.PrimitiveSceneProxies[j]->GetMesh() != nullptr) {		// 해당 Mesh가 존재하고, Caster일때 Depth 기록
 					FMatrix WorldMatrix = ViewWorldScene.PrimitiveSceneProxies[j]->GetLocalToWorld();
 					ShadowViewRenderer->OnRender(PassInfo.DepthStencil.Texture, LightSpaceMatrix, WorldMatrix);
 					RenderCommand::BindMesh(ViewWorldScene.PrimitiveSceneProxies[j]->GetMesh(), 0);
@@ -1016,10 +1016,10 @@ void UEditorEngine::UpdateGizmoAndPicking()
 // View 행렬로 Scene·Grid·Gizmo·텍스트·Outline을 렌더한다.
 void UEditorEngine::RenderFrame(const int32 ViewIndex, UWorld& ViewWorld, const FRenderingInfo& ViewRenderingInfo, const FMatrix& ViewProjection, const FVector& ViewCameraLocation, const FVector& ViewCameraForward, FRenderQueue& RenderQueue, FRenderQueue& IconQueue, FRenderQueue& ArrowQueue)
 {
-	RenderShadowPass(ViewRenderingInfo, ViewWorld.GetScene());
+	RenderShadowPass(ViewRenderingInfo, ViewWorld.GetScene());	// 그리기전에 ShadowMap 생성용 Pass 실행
 	FShadowConstants ShadowConstants{};
 	FTexture2D* ShadowMap = nullptr;
-	if (ViewWorld.GetScene().LocalLightProxies.Num() > 0 && ShadowViewRenderer->ShadowTextureMap.Find(ViewWorld.GetScene().LocalLightProxies[0]->GetLightComponent()->GetUUID()))
+	if (ViewWorld.GetScene().LocalLightProxies.Num() > 0 && ShadowViewRenderer->ShadowTextureMap.Find(ViewWorld.GetScene().LocalLightProxies[0]->GetLightComponent()->GetUUID()))	// 임시용, 조명중 첫번째 바로 매핑하여 Constant, SRV 세팅할 Texture 업데이트
 	{
 		ShadowConstants.index = 0;
 		ShadowConstants.LightSpaceMatrix = ShadowViewRenderer->ShadowTextureMap.Find(ViewWorld.GetScene().LocalLightProxies[0]->GetLightComponent()->GetUUID())->LightSpaceMatrix;
