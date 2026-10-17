@@ -7,6 +7,7 @@
 #include "Components/StaticMeshComponent.h"
 #include "Components/TextRenderComponent.h"
 #include "Components/ParticleSubUVComponent.h"
+#include "Components/LightComponent.h"
 #include "Components/SpotLightComponent.h"
 #include "Components/DirectionalLightComponent.h"
 #include "Components/PointLightComponent.h"
@@ -19,10 +20,12 @@
 #include "Asset/AssetManager.h"
 #include "Render/Material.h"
 #include "Render/Texture2D.h"
+#include "Render/Renderer.h"
 #include "Text/Font.h"
 #include "UObject/UObjectIterator.h"
 #include "GameFramework/Actor.h"
 #include "Core/EngineLog.h"
+#include <algorithm>
 
 
 namespace
@@ -837,6 +840,45 @@ namespace
 	}
 }
 
+void FDetailsPanel::DrawShadowMapPreview(const ULightComponent& Light)
+{
+	if (!ImGui::CollapsingHeader("Shadow Depth Map", ImGuiTreeNodeFlags_DefaultOpen))
+		return;
+
+	// UI에서 Cast Shadows를 끄면 이전에 생성한 맵도 즉시 숨긴다.
+	if (!Light.CastsShadows())
+	{
+		ImGui::TextDisabled("Cast Shadows is disabled.");
+		return;
+	}
+
+	// 선택한 컴포넌트의 실제 Proxy로 조회하며, 타깃을 별도로 소유하지 않는다.
+	const FTexture2D* DepthTexture = Renderer && Light.SceneProxy
+		? Renderer->GetShadowDepthTexture(*Light.SceneProxy)
+		: nullptr;
+
+	if (!DepthTexture)
+	{
+		// Unlit만 활성화된 경우나 지원하지 않는 라이트 종류도 여기에 해당한다.
+		ImGui::TextDisabled("No shadow map generated this frame.");
+		return;
+	}
+
+	// 요청값이 아니라 실제 생성된 GPU 타깃의 크기를 표시한다.
+	ImGui::Text("Rendered: %u x %u", DepthTexture->GetWidth(), DepthTexture->GetHeight());
+	if (DepthTexture->GetWidth() != static_cast<uint32>(Light.GetShadowMapResolution()))
+		ImGui::TextDisabled("Resolution applies next frame.");
+
+	// 현재 Spot Shadow Map은 정사각형이며, 패널 폭 안에서 표시한다.
+	const float PreviewSize = std::min(256.0f, ImGui::GetContentRegionAvail().x);
+	if (PreviewSize <= 0.0f)
+		return;
+
+	// 단일 채널 Depth SRV를 그대로 표시하므로 붉은 계열로 보인다.
+	// TODO(ShadowAtlas): 선택한 라이트에 배정된 Atlas 영역의 UV를 지정한다.
+	ImGui::Image((ImTextureID)DepthTexture->GetSRV(), ImVec2(PreviewSize, PreviewSize));
+}
+
 bool FDetailsPanel::Init()
 {
 	ImGuiIO& io = ImGui::GetIO();
@@ -890,6 +932,10 @@ void FDetailsPanel::OnRender()
 			ImGui::PushID(TargetComponent);
 			ImGui::SeparatorText("Component Properties");
 			DrawProperties(TargetComponent, CustomFont);
+
+			// Light Component를 선택했을 때 기존 Property 아래에 Depth Map을 표시한다.
+			if (const ULightComponent* Light = Cast<ULightComponent>(TargetComponent))
+				DrawShadowMapPreview(*Light);
 
 			if(SelectCandidateComponent != TargetComponent)
 			{

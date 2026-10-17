@@ -5,6 +5,7 @@
 #include "Camera/CameraComponent.h"
 
 #include "Engine/World.h"
+#include "Editor/EditorUI/ShowFlagUI.h"
 
 // 종료 시 렌더·에디터·뷰포트 설정을 함께 저장한다.
 FSettingsPanel::~FSettingsPanel()
@@ -39,13 +40,8 @@ void FSettingsPanel::OnRender()
 	ImGui::SeparatorText("Rendering");
 
 	ImGui::TextDisabled("Fill mode is configured per viewport.");
-	ImGui::Checkbox("Draw Primitives", &Settings.bDrawPrimitives);
-	ImGui::Checkbox("Draw Bounding Box", &Settings.bDrawBoundingBox);
-	ImGui::Checkbox("Show Object UUID", &Settings.bShowUUID);
-	ImGui::Checkbox("FXAA", &Settings.bEnableFXAA);
+	ShowFlagUI::DrawFlags(Settings.ShowFlags, EShowFlagScope::Global, EShowFlagGroup::Rendering);
 	ImGui::SliderFloat("Exposure", &Settings.Exposure, 0.1f, 5.0f, "%.2f");
-	ImGui::Checkbox("Depth View", &Settings.bDepthView);
-	ImGui::Checkbox("Exponential Height Fog", &Settings.bExponentialHeightFog);
 	ImGui::Combo("Light Debug", &Settings.LightDebugMode, "Off\0Cell Heatmap\0Brute Force\0Slices\0");
 	ImGui::Combo("Light Culling", &Settings.LightCullingMode, "Tiled\0Clustered\0Tiled 2.5D\0");
 	const char* Models[] = { "Gouraud", "Lambert", "Blinn-Phong" };
@@ -55,8 +51,7 @@ void FSettingsPanel::OnRender()
 	ImGui::Dummy(ImVec2(0.0f, SectionGap));
 	ImGui::SeparatorText("Grid");
 
-	ImGui::Checkbox("Draw Batch Line / Grid", &Settings.bDrawBatchLine);
-	ImGui::Checkbox("Draw PS Grid", &Settings.bDrawPSGrid);
+	ShowFlagUI::DrawFlags(Settings.ShowFlags, EShowFlagScope::Global, EShowFlagGroup::Grid);
 
 	ImGui::SetNextItemWidth(200.0f);
 	ImGui::SliderInt("Grid Spacing", &Settings.GridSpacing, 1, 100);
@@ -118,13 +113,6 @@ bool FSettingsPanel::SaveSettings() const
 	}
 
 	File << "[Rendering]\n";
-	File << "Wireframe=" << Settings.bWireframe << "\n";
-	File << "DrawPrimitives=" << Settings.bDrawPrimitives << "\n";
-	File << "DrawBoundingBox=" << Settings.bDrawBoundingBox << "\n";
-	File << "ShowUUID=" << Settings.bShowUUID << "\n";
-	File << "DrawBatchLine=" << Settings.bDrawBatchLine << "\n";
-	File << "DrawPSGrid=" << Settings.bDrawPSGrid << "\n";
-	File << "EnableFXAA=" << Settings.bEnableFXAA << "\n";
 	File << "LightingModel=" << Settings.LightingModel << "\n";
 	File << "\n";
 
@@ -145,7 +133,6 @@ bool FSettingsPanel::SaveSettings() const
         File << "View" << Index << "Fov=" << Snapshot.ViewFov[Index] << "\n";
         File << "View" << Index << "OrthoWidth=" << Snapshot.ViewOrthoWidth[Index] << "\n";
         File << "View" << Index << "Preset=" << Snapshot.ViewPreset[Index] << "\n";
-        File << "View" << Index << "Wireframe=" << Snapshot.ViewWireframe[Index] << "\n";
         File << "View" << Index << "LocationX=" << Snapshot.ViewLocation[Index].X << "\n";
         File << "View" << Index << "LocationY=" << Snapshot.ViewLocation[Index].Y << "\n";
         File << "View" << Index << "LocationZ=" << Snapshot.ViewLocation[Index].Z << "\n";
@@ -202,8 +189,6 @@ bool FSettingsPanel::LoadSettings()
                         Settings.ViewOrthoWidth[Index] = FMath::Clamp(Value, 0.01f, 1000000.0f);
                     else if (Key == Prefix + "Preset" && Value >= 0 && Value <= 7 && Value == static_cast<int32>(Value))
                         Settings.ViewPreset[Index] = static_cast<int32>(Value);
-                    else if (Key == Prefix + "Wireframe" && (Value == 0 || Value == 1))
-                        Settings.ViewWireframe[Index] = static_cast<int32>(Value);
                     else if (Key == Prefix + "LocationX")
                     {
                         Settings.ViewLocation[Index].X = Value;
@@ -240,15 +225,7 @@ bool FSettingsPanel::LoadSettings()
                         RotationComponentMasks[Index] |= 1 << 3;
                     }
                 }
-                if (Key == "Wireframe") Settings.bWireframe = std::stoi(ValueStr);
-				else if (Key == "DrawPrimitives") Settings.bDrawPrimitives = std::stoi(ValueStr);
-				else if (Key == "DrawBoundingBox") Settings.bDrawBoundingBox = std::stoi(ValueStr);
-				else if (Key == "ShowUUID") Settings.bShowUUID = std::stoi(ValueStr);
-				else if (Key == "DrawBatchLine") Settings.bDrawBatchLine = std::stoi(ValueStr);
-				else if (Key == "DrawPSGrid") Settings.bDrawPSGrid = std::stoi(ValueStr);
-				else if (Key == "EnableFXAA") Settings.bEnableFXAA = std::stoi(ValueStr);
-				else if (Key == "LightingModel") Settings.LightingModel = std::stoi(ValueStr);
-
+				if (Key == "LightingModel") Settings.LightingModel = std::stoi(ValueStr);
 				else if (Key == "CameraMoveSpeed") Settings.CameraSpeed = std::stof(ValueStr);
 				else if (Key == "CameraRotateSensitivity") Settings.MouseSensitivity = std::stof(ValueStr);
 				else if (Key == "GridSpacing") Settings.GridSpacing = std::stof(ValueStr);
@@ -306,7 +283,6 @@ void FSettingsPanel::ReadViewportSettings(FEditorSettings& Out) const
         Out.ViewFov[Index] = Camera.Projection.FovDegrees;
         Out.ViewOrthoWidth[Index] = Camera.Projection.OrthoWidth;
         Out.ViewPreset[Index] = static_cast<int32>(ViewportAdapter->GetCameraPreset(Index));
-        Out.ViewWireframe[Index] = ViewportAdapter->IsViewWireframe(Index) ? 1 : 0;
         Out.ViewLocation[Index] = Camera.Transform.Location;
         Out.ViewRotation[Index] = Camera.Transform.Rotation;
         Out.bViewLocationSaved[Index] = true;
@@ -334,6 +310,5 @@ void FSettingsPanel::ApplyViewportSettings()
         if (Settings.bViewLocationSaved[Index]) Camera.Transform.Location = Settings.ViewLocation[Index];
         if (Settings.bViewRotationSaved[Index]) Camera.Transform.Rotation = Settings.ViewRotation[Index];
         ViewportAdapter->ApplyCameraProperties(Index, Camera, false);
-        ViewportAdapter->SetViewWireframe(Index, Settings.ViewWireframe[Index] < 0 ? Settings.bWireframe : Settings.ViewWireframe[Index] == 1);
     }
 }

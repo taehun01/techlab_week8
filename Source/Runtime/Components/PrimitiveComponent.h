@@ -28,6 +28,8 @@ class UPrimitiveComponent :public USceneComponent
 	// (빌보드는 단일 머티리얼, 스태틱 메시는 슬롯별 덮어쓰기) 각자 등록한다.
 	REFLECT_START(ClassName)
 		PROPERTY(bVisible)
+		PROPERTY(bCastShadow)
+		PROPERTY(bReceiveShadow)
 		REFLECT_END()
 public:
 	UPrimitiveComponent();
@@ -56,6 +58,21 @@ public:
 	void SetVisible(bool bInVisible)
 	{
 		bVisible = bInVisible;
+		MarkRenderStateDirty();
+	}
+
+	bool IsShadowCaster() const { return bCastShadow; }
+	bool IsShadowReceiver() const { return bReceiveShadow; }
+
+	void SetCastShadow(bool bInCastShadow)
+	{
+		bCastShadow = bInCastShadow;
+		MarkRenderStateDirty();
+	}
+
+	void SetReceiveShadow(bool bInReceiveShadow)
+	{
+		bReceiveShadow = bInReceiveShadow;
 		MarkRenderStateDirty();
 	}
 
@@ -98,4 +115,6 @@ protected:
 private:
 	friend class FScene;
 	FPrimitiveSceneProxy* SceneProxy = nullptr;
+	bool bCastShadow = true;
+	bool bReceiveShadow = true;
 };

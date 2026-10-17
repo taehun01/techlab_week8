@@ -8,6 +8,17 @@ ULightComponent::ULightComponent() {}
 ULightComponent::~ULightComponent() {}
 void ULightComponent::DrawDebug(FLineBatcher* LineBatcher) const {}
 
+void ULightComponent::PostEditChangeProperty(const FProperty& Property)
+{
+	Super::PostEditChangeProperty(Property);
+
+	// 기존 Getter의 128~4096 범위를 재사용하여 편집값과 실제 해상도를 맞춘다.
+	if (Property.Name == "ShadowMapResolution")
+	{
+		ShadowMapResolution = GetShadowMapResolution();
+	}
+}
+
 void ULightComponent::CreateRenderState()
 {
 	Super::CreateRenderState();

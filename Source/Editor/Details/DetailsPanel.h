@@ -6,6 +6,8 @@
 #include "Engine/World.h"
 
 struct FTransform;
+class FRenderer;
+class ULightComponent;
 
 using DetailsSelectionCallback = std::function<void(UActorComponent*)>;
 using DetailsDeleteComponentCallback = std::function<void(UActorComponent*)>;
@@ -36,14 +38,20 @@ public:
 	void SetDeleteComponentCallback(DetailsDeleteComponentCallback InCallback) { DeleteCallback = InCallback; }
 
 	void SetWorld(UWorld* InWorld) { World = InWorld; }
+	// Renderer를 소유하지 않으며, 미리보기 조회에만 사용한다.
+	void SetRenderer(const FRenderer* InRenderer) { Renderer = InRenderer; }
 
 	ImFont* GetCustomFont() { return CustomFont; }
 
 private:
 	void DrawSceneComponentNode(USceneComponent* Component, USceneComponent* Root, UActorComponent*& OutSelectedComponent);
 	void TryReparent(USceneComponent* DroppedComponent, USceneComponent* DragComponent);
+	// 선택한 라이트에 대응하는 현재 프레임의 Depth Map을 표시한다.
+	void DrawShadowMapPreview(const ULightComponent& Light);
 
 	UWorld* World = nullptr;
+	// 텍스처와 SRV는 저장하지 않고, 매 프레임 Renderer에서 조회한다.
+	const FRenderer* Renderer = nullptr;
 	ImFont* CustomFont = nullptr;
 
 	AActor* TargetActor = nullptr;

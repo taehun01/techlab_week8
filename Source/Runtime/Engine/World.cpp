@@ -19,6 +19,7 @@
 #include "Asset/LOD/StaticMeshLODSelector.h"
 
 #include "Math/Frustum.h"
+#include "ProjectedShadowInfo.h"
 
 #include "Core/Stats/LightweightStats.h"
 #include "Core/Stats/EditorStats.h"
@@ -177,6 +178,9 @@ bool UWorld::GatherDynamicRenderPackets(FPrimitiveSceneProxy& Proxy, FRenderQueu
 	return Proxy.GatherDynamicRenderPackets(RenderQueue, IconQueue, CameraLocation,
 		ResolveBillboard, ViewContext, ParticleOrder, ParticleDistances);
 }
+
+// TODO : 렌더링 파이프라인 개편해서 이 함수의 책임을 덜어내야함.
+// TODO : 언리얼처럼 FSceneRenderer,MeshPassProcessor등의 클래스를 추가해서 해당 클래스로 책임을 덜어낼수있을것으로 보임
 
 // 기존 정적 수집을 유지하고 View 입력이 있으면 동적 Proxy 수집을 연결한다.
 void UWorld::GatherRenderPackets(FRenderQueue& RenderQueue, const FLODViewContext* LODView,
@@ -345,7 +349,7 @@ void UWorld::GatherRenderPackets(FRenderQueue& RenderQueue, const FLODViewContex
 					{
 						// 칸 VisibleIndex는 이 반복만 쓴다 → 스레드끼리 겹치지 않음
 						WritePerObjectConstants(SlotDest + size_t(VisibleIndex) * ObjectSlotBytes,
-							Proxy->GetLocalToWorld(), Proxy->GetWorldToLocal());
+							Proxy->GetLocalToWorld(), Proxy->GetWorldToLocal(), Proxy->IsShadowReceiver());
 						Slot = VisibleIndex;
 					}
 
@@ -434,7 +438,8 @@ void UWorld::GatherRenderPackets(FRenderQueue& RenderQueue, const FLODViewContex
 					FRenderPacket& Packet = RenderQueue[p];
 					const FMatrix& Model = Packet.Proxy ? Packet.Proxy->GetLocalToWorld() : Packet.Model ? *Packet.Model : FMatrix::Identity;
 					const FMatrix WorldToLocal = Packet.Proxy ? Packet.Proxy->GetWorldToLocal() : Model.Inverse();
-					WritePerObjectConstants(SlotDest + size_t(NextExtraSlot) * ObjectSlotBytes, Model, WorldToLocal);
+					WritePerObjectConstants(SlotDest + size_t(NextExtraSlot) * ObjectSlotBytes,
+						Model, WorldToLocal, Packet.Proxy&& Packet.Proxy->IsShadowReceiver());
 					Packet.Slot = NextExtraSlot++;
 				}
 			}
@@ -451,6 +456,32 @@ void UWorld::GatherRenderPackets(FRenderQueue& RenderQueue, const FLODViewContex
 		RenderStats.DrawCalls = RenderQueue.Num() + StaticDraws;
 		for (uint64 T : RenderStats.LODTriangles) RenderStats.Triangles += T;
 	}
+}
+
+void UWorld::GatherProjectedShadows(TArray<FProjectedShadowInfo>& OutShadows)
+{
+	for (const FLocalLightSceneProxy* LightProxy : Scene.LocalLightProxies)
+	{
+		// TODO : SpotLight 이외의 다른 광원들도 지원해야함.
+		if (LightProxy->GetLightComponent()->GetLightType() != ELightType::Spot)
+		{
+			continue;
+		}
+
+		// Light 설정과 투영 유효성은 기존 계산 함수가 판단한다.
+		FVector ShadowViewOrigin = FVector::ZeroVector;
+		FMatrix LightViewProjection = FMatrix::Identity;
+		if (!LightProxy->GetShadowProjection(ShadowViewOrigin, LightViewProjection))
+		{
+			continue;
+		}
+
+		// Info 하나는 투영 작업 하나이며, Caster 수집은 기존 경로를 사용한다.
+		FProjectedShadowInfo& ShadowInfo = OutShadows.AddDefaulted_GetRef();
+		ShadowInfo.SetupProjection(*LightProxy, ShadowViewOrigin, LightViewProjection);
+		GatherShadowCasters(ShadowInfo);
+	}
+
 }
 
 //void UWorld::GatherRenderPackets(TArray<FRenderPacket>& RenderArray, const FLODViewContext* LODView, const FFrustumPlanes* Frustum)
@@ -492,6 +523,52 @@ void UWorld::GatherRenderPackets(FRenderQueue& RenderQueue, const FLODViewContex
 //		Itr->SubmitToRenderQueue(RenderQueue);
 //	}
 //}
+
+// Light Frustum으로 후보를 찾고 기존 정적 메시 제출 경로를 재사용한다.
+// 투영·타깃 상태는 유지하며 Caster 큐에 패킷만 추가한다.
+void UWorld::GatherShadowCasters(FProjectedShadowInfo& ShadowInfo)
+{
+	// 한 Gather 안에서 여러 물체의 제출에 같은 임시 큐를 재사용한다.
+	FRenderQueue MeshPackets;
+
+	// QueryCull에서 처리할 함수
+	const auto Visit = [&ShadowInfo, &MeshPackets](FPrimitiveSceneProxy* Proxy)
+		{
+			// 그림자 생성 여부만 확인한다. ReceiveShadow는 Caster 선별과 무관하다.
+			if (!Proxy->IsVisible() || !Proxy->IsShadowCaster())
+				return;
+
+			// 이번 범위는 정적 메시이며, 에디터 표시용 메시를 제외한다.
+			auto* StaticComponent = Cast<UStaticMeshComponent>(Proxy->GetComponent());
+			if (!StaticComponent || StaticComponent->IsEditorIcon())
+				return;
+
+			// 메시·Proxy·RenderState 검사는 기존 Submit 함수가 담당한다.
+			// 기초 그림자는 카메라와 독립적으로 LOD0를 사용한다.
+			MeshPackets.Reset();
+			StaticComponent->SubmitToRenderQueue(MeshPackets, 0);
+
+			for (const FRenderPacket& Packet : MeshPackets)
+			{
+				// 불투명 섹션만 그림자 작업에 등록한다.
+				// IndexCount 0은 Renderer에서 전체 인덱스 버퍼를 뜻하므로 제외한다.
+				if (!Packet.Material || Packet.Material->BlendState != EBlendState::Opaque || Packet.IndexCount == 0)
+					continue;
+
+				ShadowInfo.AddCasterPacket(Packet);
+			}
+		};
+
+	// 전체 Scene BVH를 Light Frustum으로 탐색한다.
+	const FFrustumPlanes& Frustum = ShadowInfo.GetCasterFrustum();
+	Scene.BVH.QueryCull(
+		FrustumAllPlanesMask,
+		[&Frustum](const FBox& Bounds, uint32& Mask)
+		{
+			return static_cast<EBVHCullResult>(ClassifyBoxInFrustum(Bounds, Frustum, Mask));
+		},
+		Visit);
+}
 
 // 메인 카메라 생성
 void UWorld::CreateMainCamera()

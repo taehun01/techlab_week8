@@ -23,7 +23,12 @@ public:
 	virtual ~FLightSceneProxy() = default;
     
 	virtual void GetLightShaderParameters(FLightRenderParameters& OutParameters) const = 0;
-
+	
+	// 지원하는 라이트가 그림자 View 원점과 VP를 계산한다.
+	// false이면 출력값을 사용하지 않고 해당 작업을 생략한다.
+	virtual bool GetShadowProjection(FVector& OutViewOrigin, FMatrix& OutViewProjection) const{ return false; }
+	// 라이트 공통 설정에 따른 그림자 생성 가능 여부다.
+	bool ShouldCastShadow() const { return IsVisible() && LightComponent->CastsShadows() && LightComponent->GetIntensity() > 0.0f; }
 	const ULightComponent* GetLightComponent() const { return LightComponent; }
 	bool IsVisible() const { return LightComponent->IsVisible(); }
 
