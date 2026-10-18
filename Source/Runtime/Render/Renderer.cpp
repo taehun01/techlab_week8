@@ -204,6 +204,7 @@ void FRenderer::PrepareShadowParameters()
 		FTexture2D* DepthTexture = ShadowInfo.RenderingInfo.DepthStencil.Texture;
 		Parameter.Bias = ShadowInfo.LightProxy->GetLightComponent()->GetShadowBias();
 		const FViewportSettings& Viewport = ShadowInfo.RenderingInfo.ViewportSetting;
+		Parameter.ShadowPCFRadius = ShadowInfo.LightProxy->GetLightComponent()->GetShadowPCFRadius();
 		Parameter.Resolution = Viewport.Width;
 		Parameter.TileIndex = (Viewport.StartY / Viewport.Height) * ShadowAtlasTilesPerRow
 			+ Viewport.StartX / Viewport.Width;
@@ -355,7 +356,7 @@ void FRenderer::RenderOpaque(const FMatrix& ViewProjection)
 	RenderCommand::BindShaderResource(10, LocalLightBuffer.get(), EShaderBindFlagBits::Pixel | EShaderBindFlagBits::Vertex);
 	RenderCommand::BindShaderResource(12, TileIndexBuffer.get(), EShaderBindFlagBits::Pixel);
 	RenderCommand::BindConstantBuffer(5, GridLightingCB.get(), EShaderBindFlagBits::Pixel | EShaderBindFlagBits::Vertex);
-
+	RenderCommand::BindSamplerState(1, ESamplerState::ShadowPCF,EShaderBindFlagBits::Pixel);
 	BindShadowResources();
 	DrawStaticGroups();
 	DrawPackets(0, FirstTranslucentIndex, ViewProjection);

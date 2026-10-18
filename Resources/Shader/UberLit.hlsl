@@ -120,6 +120,7 @@ StructuredBuffer<uint> CellLightIndices : register(t12);
 Texture2D DiffuseTexture : register(t0);
 Texture2D NormalTexture : register(t1);
 SamplerState MaterialSampler : register(s0);
+SamplerState PCFSampler : register(s1);
 
 #if defined(LIGHTING_MODEL_LAMBERT) || defined(LIGHTING_MODEL_BLINN_PHONG)
 
@@ -127,15 +128,16 @@ SamplerState MaterialSampler : register(s0);
 #define MAX_BOUND_SHADOW_ATLASES 8
 #define SHADOW_ATLAS_TILES_PER_ROW 2
 
-// C++ FShadowShaderParameters와 동일한 80바이트 레이아웃이다.
+// C++ FShadowShaderParameters와 동일한 96바이트 레이아웃이다.
 struct FShadowShaderParameters
 {
     matrix LightViewProjection;
     float Bias;
     uint Resolution;
-
     int AtlasPageIndex;
     uint TileIndex;
+    float ShadowPCFRadius;
+    float3 pad;
 };
 
 // 전체 그림자 정보는 가변 개수로 전달한다.
@@ -202,15 +204,32 @@ float LoadShadowDepth(int AtlasPageIndex, int2 Texel)
 float SampleShadowMap(FShadowShaderParameters Shadow, float3 LightNDC)
 {
     // D3D 텍스처의 좌상단 원점에 맞춰 Y를 뒤집는다.
-    const float2 UV = LightNDC.xy * float2(0.5f, -0.5f) + 0.5f;
-    const int MaxTexel = int(Shadow.Resolution) - 1;
-    // 타일 안에서 좌표를 제한해 UV=1에서도 이웃 조명의 깊이를 읽지 않는다.
-    const int2 LocalTexel = clamp(int2(UV * Shadow.Resolution), int2(0, 0), int2(MaxTexel, MaxTexel));
-    const uint2 Tile = uint2(Shadow.TileIndex % SHADOW_ATLAS_TILES_PER_ROW,
-                            Shadow.TileIndex / SHADOW_ATLAS_TILES_PER_ROW);
-    const int2 Texel = int2(Tile * Shadow.Resolution) + LocalTexel;
-    const float StoredDepth = LoadShadowDepth(Shadow.AtlasPageIndex, Texel);
-    return LightNDC.z - Shadow.Bias <= StoredDepth ? 1.0f : 0.0f;
+    const float2 UV = LightNDC.xy * float2(0.5f, -0.5f) + 0.5f; // 카메라기준 LightSpace 변환한 NDC 좌표 UV 좌표 범위로 변환
+    const uint2 Tile = uint2(Shadow.TileIndex % SHADOW_ATLAS_TILES_PER_ROW, Shadow.TileIndex / SHADOW_ATLAS_TILES_PER_ROW);
+    // 투영 영역 밖은 먼저 반환해 PCF 반복문의 계산 경로를 명확히 한다.
+    if (!(all(UV >= 0.0.xx) && all(UV <= 1.0.xx)))
+        return 1.0f;
+
+    float texel = 1.0f / max(Shadow.Resolution, 1.0f); // Texture에서 한칸의 크기
+    int r = max(int(Shadow.ShadowPCFRadius), 0); // 반경 r의 (2r + 1) x (2r + 1) 깊이 비교 결과를 평균한다.
+    float sum = 0.0f;
+    int taps = 0;   // 평균 나눌때 분모, 픽셀 연산 횟수
+    [loop]
+    for (int dy = -r; dy <= r; ++dy)
+    {
+        [loop]
+        for (int dx = -r; dx <= r; ++dx)
+        {
+            float2 uvOff = UV + float2(dx, dy) * texel; // 초기 UV + texel 단위로 dx, dy 이동량
+            const int MaxTexel = int(Shadow.Resolution) - 1;    // Texture 끝점
+            const int2 LocalTexel = clamp(int2(uvOff * Shadow.Resolution), int2(0, 0), int2(MaxTexel, MaxTexel));   // 한 Tile(Atlas 4등분 구역) 기준 Texel 좌표값
+            const int2 Texel = int2(Tile * Shadow.Resolution) + LocalTexel; // Tile 위치 반영한 전체 Atlas 기준 Texel 좌표값
+            float d = LoadShadowDepth(Shadow.AtlasPageIndex, Texel); // 카메라 기준으로 계산한 조명 좌표에서의 ShadowMap Depth 값
+            sum += (LightNDC.z - Shadow.Bias<= d) ? 1.0f : 0.0f; // CurrentDepth <= Closest Depth일 경우 그림자가 아니므로 1, 반대일경우 0, Bias는 편차값
+            taps++;
+        }
+    }
+    return sum / max(taps, 1); // 전체 깊이 비교 결과를 평균해 그림자 가시성을 구한다.
 }
 
 // 월드 위치를 해당 그림자의 투영 공간으로 옮겨 가시성을 구한다.
