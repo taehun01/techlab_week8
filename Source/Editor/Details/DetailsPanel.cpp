@@ -851,6 +851,31 @@ void FDetailsPanel::DrawShadowMapPreview(const ULightComponent& Light)
 		ImGui::TextDisabled("Cast Shadows is disabled.");
 		return;
 	}
+	// 선택한 라이트가 속한 World를 표시해 Editor·PIE 결과를 구분한다.
+	UWorld* LightWorld = Light.GetWorld();
+	if (LightWorld)
+	{
+		ImGui::TextDisabled("World: %s", LightWorld->IsPlayInEditor() ? "PIE" : "Editor");
+	}
+
+	if (Light.GetLightType() == ELightType::Directional)
+	{
+		// 화면 조명에 선택되지 않은 Directional에는 그림자 작업이 생성되지 않는다.
+		if (LightWorld && LightWorld->GetScene().GetPrimaryDirectionalLight() != Light.SceneProxy)
+		{
+			ImGui::TextDisabled("This directional light is not used by this world.");
+			ImGui::TextWrapped("Only the first visible directional light is used.");
+			return;
+		}
+
+		// 현재 편집값을 표시한다. 실제 투영 범위는 각 View의 클립 범위로 제한된다.
+		const auto& Directional = static_cast<const UDirectionalLightComponent&>(Light);
+		ImGui::Text("Requested ShadowDistance: %.1f", Directional.GetShadowDistance());
+		ImGui::TextWrapped("One shadow map covers the lit views in this world.");
+	}
+
+	// 설정 UI보다 그림자 패스가 먼저 실행되므로 변경 결과는 다음 프레임에 반영된다.
+	ImGui::TextDisabled("Shadow settings apply next frame.");
 
 	// 선택한 컴포넌트의 실제 Proxy로 조회하며, 타깃을 별도로 소유하지 않는다.
 	const FTexture2D* DepthTexture = Renderer && Light.SceneProxy

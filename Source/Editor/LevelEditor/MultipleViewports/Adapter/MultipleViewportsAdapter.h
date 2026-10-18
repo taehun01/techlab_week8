@@ -105,6 +105,8 @@ public:
     const FRect& GetViewRect(int32 ViewIndex) const;
     // Native View·Projection을 row-vector 순서로 합성한 엔진 행렬을 반환한다.
     FMatrix GetEngineViewProjection(int32 ViewIndex) const;
+    // 패널·별도 PIE의 실제 카메라와 영역으로 그림자 Receiver 꼭짓점을 추가한다.
+    bool AppendShadowFrustumCorners(int32 ViewIndex, float ShadowDistance, TArray<FVector>& OutCorners) const;
     // 지정 View 카메라 위치를 엔진 FVector 그대로 반환한다.
     FVector GetEngineCameraLocation(int32 ViewIndex) const;
     // 지정 View의 카메라 Forward를 엔진 FVector로 계산해 반환한다.

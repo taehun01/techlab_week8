@@ -2,6 +2,7 @@
 
 #include "Editor/HitoriEd/EditorViewportClient.h"
 #include "Editor/Rendering/GridRenderer.h"
+#include "Math/Vector4.h"
 
 #include <algorithm>
 #include <cmath>
@@ -249,6 +250,59 @@ FMatrix FEditorViewportClient::CalcViewProjection(
     if (OutFrustum)
         *OutFrustum = ExtractFrustumPlanes(ViewProjection);
     return ViewProjection;
+}
+
+// 실제 렌더 VP에서 깊이 구간을 정하고 역투영해 View별 Receiver 범위를 구한다.
+bool FEditorViewportClient::AppendShadowFrustumCorners(
+    const FViewCamera& InCamera, const FRect& Rect,
+    float ShadowDistance, TArray<FVector>& OutCorners)
+{
+    if (!IsViewRectValid(Rect) || ShadowDistance <= 0.0f)
+        return false;
+
+    const bool bOrthographic = InCamera.Projection.Mode == EProjectionMode::Orthographic;
+    const float FarDistance = bOrthographic
+        ? ShadowDistance : std::min(ShadowDistance, InCamera.Projection.FarClip);
+    if (!bOrthographic && FarDistance <= InCamera.Projection.NearClip)
+        return false;
+
+    // 직교 렌더 카메라의 후퇴 보정까지 포함해 화면 렌더링과 같은 행렬을 사용한다.
+    FMatrix View;
+    FMatrix Projection;
+    CalcViewMatrices(InCamera, Rect, View, Projection);
+    const FMatrix ViewProjection = View * Projection;
+    const FVector Forward = NormalizedOrZero(InCamera.Transform.Rotation.GetForwardVector());
+    const FVector Origin = InCamera.Transform.Location;
+    const auto ProjectDepth = [&ViewProjection](const FVector& WorldPosition)
+    {
+        const FVector4 ClipPosition = FVector4(WorldPosition, 1.0f) * ViewProjection;
+        return FMath::Clamp(ClipPosition.Z / ClipPosition.W, 0.0f, 1.0f);
+    };
+
+    // 원근은 실제 Near부터 전방 거리까지, 직교는 논리 원점의 앞뒤 거리까지 사용한다.
+    const float NearDepth = bOrthographic ? ProjectDepth(Origin - Forward * ShadowDistance) : 0.0f;
+    const float FarDepth = ProjectDepth(Origin + Forward * FarDistance);
+    if (FarDepth <= NearDepth)
+        return false;
+
+    const FMatrix InverseViewProjection = ViewProjection.Inverse();
+    OutCorners.Reserve(OutCorners.Num() + 8);
+    for (int32 DepthIndex = 0; DepthIndex < 2; ++DepthIndex)
+    {
+        const float Depth = DepthIndex == 0 ? NearDepth : FarDepth;
+        for (int32 Y = -1; Y <= 1; Y += 2)
+        {
+            for (int32 X = -1; X <= 1; X += 2)
+            {
+                // 역 VP 결과는 동차 좌표이므로 W를 나눠 월드 위치로 복원한다.
+                FVector4 WorldPosition = FVector4(static_cast<float>(X), static_cast<float>(Y), Depth, 1.0f)
+                    * InverseViewProjection;
+                WorldPosition /= WorldPosition.W;
+                OutCorners.Add(FVector(WorldPosition.X, WorldPosition.Y, WorldPosition.Z));
+            }
+        }
+    }
+    return true;
 }
 
 // 렌더링과 같은 깊이 보정을 적용해 직교 화면 뒤쪽 대상도 피킹한다.

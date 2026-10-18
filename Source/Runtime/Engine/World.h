@@ -70,8 +70,9 @@ public:
 		FRenderQueue* ArrowQueue = nullptr);
 
 
-	// BeginRenderViews 이후, 지원하는 모든 Spot의 투영·Caster 작업을 추가한다.
-	void GatherProjectedShadows(TArray<FProjectedShadowInfo>& OutShadows);
+	// BeginRenderViews 이후 Spot 전체와 선택된 Directional의 작업을 추가한다.
+	// ReceiverCorners는 이 World에서 그림자를 사용하는 View들의 범위를 합친 값이다.
+	void GatherProjectedShadows(TArray<FProjectedShadowInfo>& OutShadows, const TArray<FVector>& DirectionalReceiverCorners);
 
 	// BeginRenderViews와 SetupProjection 이후, 해당 작업에 한 번 호출한다.
 	// Light Frustum과 CastShadow 조건으로 정적 메시 Caster를 수집한다.

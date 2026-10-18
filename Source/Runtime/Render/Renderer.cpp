@@ -309,16 +309,16 @@ void FRenderer::UpdateShadowStats()
 	}
 
 	uint64 DepthBytes = 0;
-	for (const FShadowAtlas& Atlas : ShadowViewRenderer->ShadowAtlasArray)
+	// 사용 타일 수가 아니라 모든 타입에서 확보한 페이지 메모리를 합산한다.
+	for (const auto& PoolEntry : ShadowViewRenderer->GetAtlasPools())
 	{
-		const auto& Target = Atlas.Texture;
-		if (!Target)
+		for (const FShadowAtlas& Atlas : PoolEntry.second.ShadowAtlasArray)
 		{
-			continue;
+			const FTexture2D* Target = Atlas.Texture.get();
+			// 페이지 생성 시 검증을 마친 비압축·1 mip·1 slice·MSAA 1 자원이다.
+			DepthBytes += static_cast<uint64>(Target->GetWidth())
+				* Target->GetHeight() * FormatToBytes(Target->GetFormat());
 		}
-
-		// 현재 정책은 비압축·1 mip·1 slice·MSAA 1이다.
-		DepthBytes += static_cast<uint64>(Target->GetWidth()) * Target->GetHeight() * FormatToBytes(Target->GetFormat());
 	}
 
 	// 실제 사용 항목 수가 아니라 확보한 버퍼 용량이다.
@@ -420,11 +420,14 @@ void FRenderer::DrawStaticGroups()
 	LastMaterial = nullptr;
 }
 
-void FRenderer::RenderQueueSorting(FRenderQueue& InQueue, const FMatrix& ViewProjection, const FVector& CameraWorldPos)
+void FRenderer::RenderQueueSorting(FRenderQueue& InQueue, const FMatrix& ViewProjection,
+	const FVector& CameraWorldPos, bool bClampShadowNear)
 {
 	FViewConstants ViewConstants;
 	ViewConstants.ViewProjection = ViewProjection;
 	ViewConstants.CameraWorldPos = CameraWorldPos;
+	// 카메라·Spot 큐에서는 기본값 false를 업로드해 이전 Directional 상태를 남기지 않는다.
+	ViewConstants.ClampShadowNear = bClampShadowNear ? 1u : 0u;
 	RenderCommand::UpdateBufferData(ViewCB.get(), &ViewConstants);
 	{
 		SCOPE_CYCLE_COUNTER(STAT_RenderQueueSorting);
@@ -480,34 +483,41 @@ void FRenderer::PrepareShadowDepthTargets(TArray<FProjectedShadowInfo>& ShadowIn
 {
 	static_assert(ShadowAtlasTilesPerRow == FShadowViewRenderer::TilesPerRow);
 	static_assert(FShadowViewRenderer::TilesPerAtlas == ShadowAtlasTilesPerRow * ShadowAtlasTilesPerRow);
-	// 타깃을 교체하기 전에 전달받은 작업들의 이전 비소유 참조를 비운다.
-	// 투영 결과와 Caster 큐는 유지한다.
+	TMap<ELightType, TSet<FShadowAllocationKey>> ActiveKeysByType;
 	for (FProjectedShadowInfo& ShadowInfo : ShadowInfos)
 	{
+		// 타깃 재배정 전에 이전 비소유 참조를 비우고 전체 활성 키를 모은다.
 		ShadowInfo.SetRenderingInfo(FRenderingInfo{});
+		const ULightComponent* Light = ShadowInfo.LightProxy->GetLightComponent();
+		const FShadowAllocationKey Key{
+			Light->GetUUID(), ShadowInfo.ProjectionIndex, ShadowInfo.ViewId
+		};
+		ActiveKeysByType[Light->GetLightType()].Add(Key);
 	}
 
-	TSet<uint32> ActiveLightUUIDs;
-	for (const FProjectedShadowInfo& ShadowInfo : ShadowInfos)
-		ActiveLightUUIDs.Add(ShadowInfo.LightProxy->GetLightComponent()->GetUUID());
-	ShadowViewRenderer->ReleaseUnusedShadowInfos(ActiveLightUUIDs);
+	// 같은 라이트에서 사라진 Cascade·View의 타일도 반환한다.
+	ShadowViewRenderer->ReleaseUnusedShadowInfos(ActiveKeysByType);
 
 	for (FProjectedShadowInfo& ShadowInfo : ShadowInfos)
 	{
 		const ULightComponent* Light = ShadowInfo.LightProxy->GetLightComponent();
-		const uint32 UUID = Light->GetUUID();
+		const ELightType LightType = Light->GetLightType();
 		const uint32 Resolution = static_cast<uint32>(Light->GetShadowMapResolution());
-		if (!ShadowViewRenderer->AllocateShadowInfo(UUID, ShadowInfo.LightViewProjection, Resolution))
+		const FShadowAllocationKey Key{
+			Light->GetUUID(), ShadowInfo.ProjectionIndex, ShadowInfo.ViewId
+		};
+		const FShadowData* Data = ShadowViewRenderer->AllocateShadowInfo(LightType, Key, Resolution);
+		if (!Data)
 			continue;
 
-		// UUID가 있으면 기존 AtlasIndex·TileIndex를 사용하고 행렬만 갱신한 상태다.
-		const FShadowData& Data = *ShadowViewRenderer->ShadowInfoMap.Find(UUID);
+		// AtlasIndex는 타입 풀 내부 번호이며 Shader의 바인딩 번호와는 다르다.
+		const FShadowAtlasPool& Pool = *ShadowViewRenderer->FindPool(LightType);
 		FRenderingInfo RenderingInfo{};
-		RenderingInfo.ViewportSetting.StartX = (Data.TileIndex % ShadowAtlasTilesPerRow) * Resolution;
-		RenderingInfo.ViewportSetting.StartY = (Data.TileIndex / ShadowAtlasTilesPerRow) * Resolution;
+		RenderingInfo.ViewportSetting.StartX = (Data->TileIndex % ShadowAtlasTilesPerRow) * Resolution;
+		RenderingInfo.ViewportSetting.StartY = (Data->TileIndex / ShadowAtlasTilesPerRow) * Resolution;
 		RenderingInfo.ViewportSetting.Width = Resolution;
 		RenderingInfo.ViewportSetting.Height = Resolution;
-		RenderingInfo.DepthStencil.Texture = ShadowViewRenderer->ShadowAtlasArray[Data.AtlasIndex].Texture.get();
+		RenderingInfo.DepthStencil.Texture = Pool.ShadowAtlasArray[Data->AtlasIndex].Texture.get();
 		// 배정 완료 후 페이지를 한 번 초기화하고, 각 타일 패스에서는 다른 영역의 깊이를 보존한다.
 		RenderingInfo.DepthStencil.LoadOp = ERenderTargetLoadOp::Load;
 		RenderingInfo.DepthStencil.StoreOp = ERenderTargetStoreOp::Store;
@@ -557,25 +567,31 @@ void FRenderer::RenderShadowMaps(TArray<FProjectedShadowInfo>&& InShadows, FShad
 	UpdateShadowStats();
 }
 
-int32 FRenderer::GetShadowIndex(const FLightSceneProxy& LightProxy) const
+int32 FRenderer::GetShadowIndex(
+	const FLightSceneProxy& LightProxy, uint32 ProjectionIndex, uint32 ViewId) const
 {
 	for (uint32 Index = 0; Index < NumShadowParameters; ++Index)
 	{
-		// EditorWorld와 PlayWorld의 같은 배열 번호가 충돌하지 않도록 Proxy로 비교한다.
-		if (ProjectedShadows[Index].LightProxy == &LightProxy)
+		// 실제 Proxy와 투영·View를 함께 비교해 다른 작업의 GPU 번호를 반환하지 않는다.
+		const FProjectedShadowInfo& ShadowInfo = ProjectedShadows[Index];
+		if (ShadowInfo.LightProxy == &LightProxy
+			&& ShadowInfo.ProjectionIndex == ProjectionIndex && ShadowInfo.ViewId == ViewId)
 			return static_cast<int32>(Index);
 	}
 
 	return INDEX_NONE;
 }
 
-const FTexture2D* FRenderer::GetShadowDepthTexture(const FLightSceneProxy& LightProxy) const
+const FTexture2D* FRenderer::GetShadowDepthTexture(
+	const FLightSceneProxy& LightProxy, uint32 ProjectionIndex, uint32 ViewId) const
 {
 	// 전체 작업에서 조회한다. 화면 조명용 텍스처 바인딩 상한과는 독립적이다.
 	for (const FProjectedShadowInfo& ShadowInfo : ProjectedShadows)
 	{
 		// EditorWorld와 PlayWorld의 라이트를 실제 Proxy로 구분한다.
-		if (ShadowInfo.LightProxy == &LightProxy && ShadowInfo.HasDepthTarget())
+		if (ShadowInfo.LightProxy == &LightProxy
+			&& ShadowInfo.ProjectionIndex == ProjectionIndex && ShadowInfo.ViewId == ViewId
+			&& ShadowInfo.HasDepthTarget())
 		{
 			return ShadowInfo.RenderingInfo.DepthStencil.Texture;
 		}
@@ -585,12 +601,15 @@ const FTexture2D* FRenderer::GetShadowDepthTexture(const FLightSceneProxy& Light
 	return nullptr;
 }
 
-bool FRenderer::GetShadowDepthViewport(const FLightSceneProxy& LightProxy, FViewportSettings& OutViewport) const
+bool FRenderer::GetShadowDepthViewport(const FLightSceneProxy& LightProxy, FViewportSettings& OutViewport,
+	uint32 ProjectionIndex, uint32 ViewId) const
 {
 	OutViewport = FViewportSettings{};
 	for (const FProjectedShadowInfo& ShadowInfo : ProjectedShadows)
 	{
-		if (ShadowInfo.LightProxy == &LightProxy && ShadowInfo.HasDepthTarget())
+		if (ShadowInfo.LightProxy == &LightProxy
+			&& ShadowInfo.ProjectionIndex == ProjectionIndex && ShadowInfo.ViewId == ViewId
+			&& ShadowInfo.HasDepthTarget())
 		{
 			OutViewport = ShadowInfo.RenderingInfo.ViewportSetting;
 			return true;
@@ -607,7 +626,9 @@ void FRenderer::RenderShadowDepth(FProjectedShadowInfo& ShadowInfo)
 	bObjectConstantsPrepared = false;
 
 	// Caster 큐를 소비하고 라이트 기준 View·Object 상수를 준비한다.
-	RenderQueueSorting(ShadowInfo.CasterQueue, ShadowInfo.LightViewProjection, ShadowInfo.ShadowViewOrigin);
+	const bool bClampShadowNear = ShadowInfo.LightProxy->GetLightComponent()->GetLightType() == ELightType::Directional;
+	RenderQueueSorting(ShadowInfo.CasterQueue, ShadowInfo.LightViewProjection,
+		ShadowInfo.ShadowViewOrigin, bClampShadowNear);
 
 	// 기존 UberLit의 Unlit VS를 사용해 정점 조명 계산 없이 위치를 변환한다.
 	// 실제 화면 View의 Unlit 여부는 호출자가 판단한다.

@@ -36,7 +36,7 @@ struct FDirectionalLightInfo
     float3 Direction; // 빛이 향하는 방향
     float Intensity;
     float3 Color;
-    float Padding;
+    int ShadowIndex; // 음수이면 그림자를 적용하지 않는다.
 };
 
 // SceneManagement.h의 FLightRenderParameters와 바이트 단위로 같아야 한다.
@@ -67,7 +67,7 @@ cbuffer ViewConstants : register(b0)
 {
     matrix ViewProjection;
     float3 CameraWorldPos; // Specular의 V = normalize(CameraWorldPos - WorldPos)
-    float ViewPadding;
+    uint ClampShadowNear; // Directional Depth 패스에서만 Near Clamp를 적용한다.
 };
 
 cbuffer MaterialParams : register(b1)
@@ -406,6 +406,16 @@ bool bUseLightGrid, bool bReceiveShadow)
     // Directional Light는 처음에 한 번만 계산
     FLightContribution Total = CalcDirectionalLight(N, V, InShininess);
 
+#if defined(LIGHTING_MODEL_LAMBERT) || defined(LIGHTING_MODEL_BLINN_PHONG)
+    if (bReceiveShadow)
+    {
+        // 로컬 라이트를 누적하기 전에 Directional의 직접광에만 그림자를 적용한다.
+        const float Visibility = GetShadowVisibility(Directional.ShadowIndex, WorldPos);
+        Total.Diffuse *= Visibility;
+        Total.Specular *= Visibility;
+    }
+#endif
+
     uint LightCount = NumLocalLights;
     uint CellOffset = 0;
     bool bUseCellList = false;
@@ -449,6 +459,12 @@ VS_OUTPUT mainVS(VS_INPUT Input)
 
     const float4 WorldPos = mul(float4(Input.Position, 1.0f), World);
     Output.SvPosition = mul(WorldPos, ViewProjection);
+
+#if defined(LIGHTING_MODEL_UNLIT)
+    // 현재 엔진은 정방향 깊이 0~1을 사용하며 Directional 직교 투영의 W는 1이다.
+    if (ClampShadowNear != 0)
+        Output.SvPosition.z = max(Output.SvPosition.z, 0.0f);
+#endif
     Output.WorldPos = WorldPos.xyz;
 
     // 노멀은 역전치로, 탄젠트는 표면을 따라 놓인 방향이라 World로 변환한다.

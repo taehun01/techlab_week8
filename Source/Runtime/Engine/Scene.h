@@ -38,7 +38,7 @@ public:
 
 	void RemoveAllLights();
 	void UpdateLights(FRenderer* Renderer);
-
+	const FDirectionalLightSceneProxy* GetPrimaryDirectionalLight() const;
 	void AddFogInfo(uint32 Id, const FFogInfo& FogInfo);
 	void RemoveFogInfo(uint32 Id);
 	void RemoveAllFogInfo();

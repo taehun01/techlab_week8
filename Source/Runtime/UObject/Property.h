@@ -65,6 +65,7 @@ enum EPropertyFlags : uint32
 
 struct FProperty
 {
+    // TODO : FName으로 변경해서 속도올리는 방안 필요.
     FString Name;
     EPropertyType Type;
     size_t Offset;

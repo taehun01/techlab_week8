@@ -20,6 +20,8 @@
 
 #include "Math/Frustum.h"
 #include "ProjectedShadowInfo.h"
+#include "Engine/DirectionalLightSceneProxy.h"
+#include <utility>
 
 #include "Core/Stats/LightweightStats.h"
 #include "Core/Stats/EditorStats.h"
@@ -458,30 +460,38 @@ void UWorld::GatherRenderPackets(FRenderQueue& RenderQueue, const FLODViewContex
 	}
 }
 
-void UWorld::GatherProjectedShadows(TArray<FProjectedShadowInfo>& OutShadows)
+// Spot은 기존 경로를 사용하고, Directional은 합쳐진 Receiver 범위로 준비한다.
+void UWorld::GatherProjectedShadows(TArray<FProjectedShadowInfo>& OutShadows, const TArray<FVector>& DirectionalReceiverCorners)
 {
 	for (const FLocalLightSceneProxy* LightProxy : Scene.LocalLightProxies)
 	{
-		// TODO : SpotLight 이외의 다른 광원들도 지원해야함.
+		// 기존 Spot 수집 범위를 유지한다.
 		if (LightProxy->GetLightComponent()->GetLightType() != ELightType::Spot)
-		{
 			continue;
-		}
 
-		// Light 설정과 투영 유효성은 기존 계산 함수가 판단한다.
 		FVector ShadowViewOrigin = FVector::ZeroVector;
 		FMatrix LightViewProjection = FMatrix::Identity;
 		if (!LightProxy->GetShadowProjection(ShadowViewOrigin, LightViewProjection))
-		{
 			continue;
-		}
 
-		// Info 하나는 투영 작업 하나이며, Caster 수집은 기존 경로를 사용한다.
 		FProjectedShadowInfo& ShadowInfo = OutShadows.AddDefaulted_GetRef();
 		ShadowInfo.SetupProjection(*LightProxy, ShadowViewOrigin, LightViewProjection);
 		GatherShadowCasters(ShadowInfo);
 	}
 
+	// 화면 조명과 동일한 Directional 하나만 사용한다.
+	const FDirectionalLightSceneProxy* Directional = Scene.GetPrimaryDirectionalLight();
+	if (!Directional)
+		return;
+
+	// 설정이 꺼졌거나 Receiver 범위가 비어 있으면 Directional만 생략한다.
+	// Spot 작업은 위에서 이미 수집한 상태다.
+	FProjectedShadowInfo ShadowInfo;
+	if (!Directional->SetupShadowProjection(DirectionalReceiverCorners, ShadowInfo))
+		return;
+
+	GatherShadowCasters(ShadowInfo);
+	OutShadows.Add(std::move(ShadowInfo));
 }
 
 //void UWorld::GatherRenderPackets(TArray<FRenderPacket>& RenderArray, const FLODViewContext* LODView, const FFrustumPlanes* Frustum)
@@ -562,7 +572,7 @@ void UWorld::GatherShadowCasters(FProjectedShadowInfo& ShadowInfo)
 	// 전체 Scene BVH를 Light Frustum으로 탐색한다.
 	const FFrustumPlanes& Frustum = ShadowInfo.GetCasterFrustum();
 	Scene.BVH.QueryCull(
-		FrustumAllPlanesMask,
+		ShadowInfo.GetCasterPlaneMask(),
 		[&Frustum](const FBox& Bounds, uint32& Mask)
 		{
 			return static_cast<EBVHCullResult>(ClassifyBoxInFrustum(Bounds, Frustum, Mask));

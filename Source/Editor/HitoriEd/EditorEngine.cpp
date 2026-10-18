@@ -38,6 +38,8 @@
 // TODO : FSceneRenderer 도입 후 옮겨야함
 #include "ProjectedShadowInfo.h"
 #include <utility>
+#include "Components/DirectionalLightComponent.h"
+#include "Engine/DirectionalLightSceneProxy.h"
 
 namespace
 {
@@ -120,7 +122,6 @@ bool UEditorEngine::Init()
 	DepthViewRenderer = MakeUnique<FDepthViewRenderer>();
 	DepthViewRenderer->Init();
 	ShadowViewRenderer = MakeUnique<FShadowViewRenderer>();
-	ShadowViewRenderer->Init();
 
 	ToneMapRenderer = MakeUnique<FToneMapRenderer>();
 	ToneMapRenderer->Init();
@@ -422,7 +423,7 @@ void UEditorEngine::RenderMultipleViewports()
 	// TODO : FSceneRenderer 도입전 임시
 	// World 갱신 여부와 그림자 필요 여부를 별도로 관리한다.
 	TArray<UWorld*> PreparedWorlds;
-	TArray<UWorld*> ShadowWorlds;
+	TMap<UWorld*, TArray<int32>> ShadowViews;
 	const FEngineShowFlags& ShowFlags = SettingsPanel->GetSettings().ShowFlags;
 	const bool bDrawPrimitives = ShowFlags.IsEnabled(EEngineShowFlag::Primitives);
 	const bool bDynamicShadows = ShowFlags.IsEnabled(EEngineShowFlag::DynamicShadows);
@@ -448,8 +449,8 @@ void UEditorEngine::RenderMultipleViewports()
 				&& (ViewMode == EViewMode::Lit_Lambert || ViewMode == EViewMode::Lit_BlinnPhong);
 
 			// 앞 View가 Unlit이어도 뒤의 Lit View에서 같은 World를 등록할 수 있다.
-			if (bNeedsShadow && ShadowWorlds.Find(ViewWorld) == INDEX_NONE)
-				ShadowWorlds.Add(ViewWorld);
+			if (bNeedsShadow)
+				ShadowViews[ViewWorld].Add(ViewIndex);
 		};
 
 	// 패널 View는 계속 4개만 순회한다.
@@ -460,15 +461,43 @@ void UEditorEngine::RenderMultipleViewports()
 	if (bRenderPIEWindow)
 		PrepareView(PIEViewIndex);
 
-	// TODO: FSceneRenderer 분리 시 작업 목록 구성과 그림자 패스 호출을 이동한다.
+	// TODO: FSceneRenderer 분리 시 World별 View 그룹 구성과 패스 조정을 이동한다.
 	TArray<FProjectedShadowInfo> ShadowInfos;
-	for (UWorld* World : ShadowWorlds)
-		World->GatherProjectedShadows(ShadowInfos);
 
-	// 모든 World의 작업을 함께 전달해 타깃을 일괄 준비한다.
-	// 빈 목록도 전달하여 이전 프레임의 작업과 타깃을 정리한다.
+	// 기존 World 준비 순서대로 처리해 작업 등록 순서를 유지한다.
+	for (UWorld* World : PreparedWorlds)
+	{
+		const TArray<int32>* ViewIndices = ShadowViews.Find(World);
+		if (!ViewIndices)
+			continue;
+
+		TArray<FVector> ReceiverCorners;
+		const FDirectionalLightSceneProxy* Directional =
+			World->GetScene().GetPrimaryDirectionalLight();
+
+		// 그림자를 사용하지 않는 라이트에는 View 역투영 계산을 생략한다.
+		if (Directional && Directional->ShouldCastShadow())
+		{
+			const auto* Light =	static_cast<const UDirectionalLightComponent*>(Directional->GetLightComponent());
+			const float ShadowDistance = Light->GetShadowDistance();
+
+			ReceiverCorners.Reserve(ViewIndices->Num() * 8);
+			for (int32 ViewIndex : *ViewIndices)
+			{
+				// 기존 helper가 EffectiveCamera·직교 보정·실제 View 크기를 반영한다.
+				// 범위가 없는 View는 아무 점도 추가하지 않고 다음 View를 계속 처리한다.
+				MultipleViewportsAdapter.AppendShadowFrustumCorners(ViewIndex, ShadowDistance, ReceiverCorners);
+			}
+		}
+
+		// 전체 View 범위를 모은 뒤 World별 Directional 작업을 한 번 등록한다.
+		// Directional 범위가 없어도 기존 Spot 작업은 계속 수집한다.
+		World->GatherProjectedShadows(ShadowInfos, ReceiverCorners);
+	}
+
+	// 모든 World의 타깃을 배정하고 카메라 큐 수집 전에 Depth를 생성한다.
+	// 빈 목록도 전달해 이전 프레임의 작업과 배정을 정리한다.
 	Renderer->RenderShadowMaps(std::move(ShadowInfos), *ShadowViewRenderer);
-	// 그림자 관련 내용 여기까지
 
 	for (int32 ViewIndex = 0; ViewIndex < 4; ++ViewIndex)
 	{
