@@ -73,3 +73,51 @@ bool FDirectionalLightSceneProxy::SetupShadowProjection(
 	OutInfo.SetupProjection(*this, ViewOrigin, View * Projection, CasterFrustum, CasterPlaneMask);
 	return true;
 }
+
+bool FDirectionalLightSceneProxy::CalculateCascadeSplitDistances(float ViewNear, float ViewFar, TArray<float>& OutSplitDistances) const
+{
+	// 호출 간에 이전 View의 분할 결과가 남지 않도록 비운다.
+	OutSplitDistances.Reset();
+
+	const auto* Directional = static_cast<const UDirectionalLightComponent*>(LightComponent);
+	const float FarDistance = FMath::Min(ViewFar, Directional->GetShadowDistance());
+
+	// 원근 카메라의 유효한 전방 깊이 구간만 계산한다.
+	if (ViewNear <= 0.0f || FarDistance <= ViewNear)
+	{
+		return false;
+	}
+
+	// CSM을 끄면 같은 입력 범위를 분할하지 않고 한 구간으로 반환한다.
+	const int32 CascadeCount = Directional->IsCSMEnabled()
+		? Directional->GetCascadeCount() : 1;
+	const float Exponent = Directional->GetCascadeDistributionExponent();
+
+	// 구간 길이의 가중치 1, E, E²...의 전체 합을 구한다.
+	float TotalWeight = 0.0f;
+	float Weight = 1.0f;
+	for (int32 CascadeIndex = 0; CascadeIndex < CascadeCount; ++CascadeIndex)
+	{
+		TotalWeight += Weight;
+		Weight *= Exponent;
+	}
+
+	OutSplitDistances.Reserve(CascadeCount + 1);
+	OutSplitDistances.Add(ViewNear);
+
+	// 누적 가중치를 전체 깊이 범위에 적용해 내부 경계를 계산한다.
+	float AccumulatedWeight = 0.0f;
+	Weight = 1.0f;
+	for (int32 CascadeIndex = 0; CascadeIndex < CascadeCount - 1; ++CascadeIndex)
+	{
+		AccumulatedWeight += Weight;
+		const float Fraction = AccumulatedWeight / TotalWeight;
+		OutSplitDistances.Add(ViewNear + (FarDistance - ViewNear) * Fraction);
+		Weight *= Exponent;
+	}
+
+	// 마지막 경계는 입력 Far에 정확히 맞춰 누적 오차를 피한다.
+	OutSplitDistances.Add(FarDistance);
+	return true;
+
+}
