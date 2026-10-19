@@ -283,6 +283,50 @@ float SampleShadowMap(FShadowShaderParameters Shadow, float3 LightNDC)
     return VisibilitySum / float(KernelSize * KernelSize);
 }
 
+float2 PCSS_BlockerDistance(Texture2D<float2> tex, SamplerState state, float3 projCoord, float searchUV, float2 rotationTrig)
+{
+    // Perform N samples with pre-defined offset and random rotation, scale by input search size
+    int blockers = 0;
+    float avgBlocker = 0.0f;
+    for (int i = 0; i < (int) PCSS_SampleCount; i++)
+    {
+        // Calculate sample offset (technically anything can be used here - standard NxN kernel, random samples with scale, etc.)
+        float2 offset = PCSS_Samples[i] * searchUV;
+        offset = PCSS_Rotate(offset, rotationTrig);
+
+        // Compare given sample depth with receiver depth, if it puts receiver into shadow, this sample is a blocker
+        float z = tex.SampleLevel(state, projCoord.xy + offset, 0.0f).x;
+        if (z < projCoord.z)
+        {
+            blockers++;
+            avgBlockerDistance += z;
+        }
+    }
+
+    // Calculate average blocker depth
+    avgBlocker /= blockers;
+
+    // To solve cases where there are no blockers - we output 2 values - average blocker depth and no. of blockers
+    return float2(avgBlocker, (float) blockers);
+}
+
+float ShadowMapPCSS(...)
+{
+    float averageBlockerDistance = PCSS_BlockerDistance(...);
+  
+    // If there isn't any average blocker distance - it means that there is no blocker at all
+    if (averageBlockerDistance < 1.0)
+    {
+        return 1.0f;
+    }
+    else
+    {
+        float penumbraSize = lightSize * (receiverDepth - averageBlockerDepth) / averageBlockerDepth
+        float shadow = ShadowPCF(..., penumbraSize);
+        return shadow;
+    }
+}
+
 // 양수 인덱스의 범위는 CPU가 보장하고, 실제 타깃 존재 여부만 확인한다.
 bool HasShadowMap(int ShadowIndex)
 {
