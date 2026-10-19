@@ -4,6 +4,12 @@
 
 #include "SceneManagement.h"
 
+struct FShadowProjection
+{
+	FVector ViewOrigin = FVector::ZeroVector;
+	TArray<FMatrix> ViewProjections;
+};
+
 //MSVC 전용 최적화
 //vftable을 만들게 되면 8byte를 먼저 쓰게 되는데
 //alignas(16)과 같은 구조체를 멤버로 가지는 경우
@@ -26,7 +32,7 @@ public:
 	
 	// 지원하는 라이트가 그림자 View 원점과 VP를 계산한다.
 	// false이면 출력값을 사용하지 않고 해당 작업을 생략한다.
-	virtual bool GetShadowProjection(FVector& OutViewOrigin, FMatrix& OutViewProjection) const{ return false; }
+	virtual bool GetShadowProjection(FShadowProjection& OutShadowProjection) const{ return false; }
 	// 라이트 공통 설정에 따른 그림자 생성 가능 여부다.
 	bool ShouldCastShadow() const { return IsVisible() && LightComponent->CastsShadows() && LightComponent->GetIntensity() > 0.0f; }
 	const ULightComponent* GetLightComponent() const { return LightComponent; }

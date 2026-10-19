@@ -45,6 +45,7 @@ const FShadowData* FShadowViewRenderer::AllocateShadowInfo(ELightType Type, cons
 	{
 	case ELightType::Directional:
 	case ELightType::Spot:
+	case ELightType::Point:
 		break;
 	default:
 		return nullptr;
