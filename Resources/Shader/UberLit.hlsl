@@ -643,10 +643,57 @@ bool bUseLightGrid, bool bReceiveShadow)
 #if defined(LIGHTING_MODEL_LAMBERT) || defined(LIGHTING_MODEL_BLINN_PHONG)
         if (bReceiveShadow)
         {
-        // 해당 라이트의 직접광만 가린다. Ambient와 다른 라이트는 유지한다.
-            const float Visibility = GetShadowVisibility(Light.ShadowIndex, WorldPos);
-            LightContribution.Diffuse *= Visibility;
-            LightContribution.Specular *= Visibility;
+            // 해당 라이트의 직접광만 가린다. Ambient와 다른 라이트는 유지한다.
+            if (Light.Type == LIGHT_TYPE_SPOT)
+            {
+                const float Visibility = GetShadowVisibility(Light.ShadowIndex, WorldPos);
+                LightContribution.Diffuse *= Visibility;
+                LightContribution.Specular *= Visibility;
+            }
+
+            // 없는 그림자의 -1에 면 번호를 더해 다른 라이트의 맵을 읽지 않는다.
+            if (Light.Type == LIGHT_TYPE_POINT && Light.ShadowIndex >= 0)
+            {
+                int FaceIndex = 0;
+
+                float3 Direction = WorldPos - Light.Position;
+                float3 AbsDir = abs(Direction);
+                //float Largest = max(AbsDirection.x, max(AbsDirection.y, AbsDirection.z));
+
+                // Face 순서와 View 행렬 순서 같아야함
+                // Direction의 절대값이 가장 큰 요소(|x| |y| |z|) 따라 FaceIndex 결정
+                // |X|가 가장 클때 X >= 0 -> FaceIndex 0    X < 0 -> FaceIndex 1
+                // |Y|가 가장 클때 Y >= 0 -> FaceIndex 2    Y < 0 -> FaceIndex 3
+                // |Z|가 가장 클때 Z >= 0 -> FaceIndex 4    Z < 0 -> FaceIndex 5
+
+                if (AbsDir.x >= AbsDir.y && AbsDir.x >= AbsDir.z)
+                {
+                    if (Direction.x >= 0)
+                        FaceIndex = 0;
+                    else
+                        FaceIndex = 1;
+                }
+                else if (AbsDir.y >= AbsDir.x && AbsDir.y >= AbsDir.z)
+                {
+                    if (Direction.y >= 0)
+                        FaceIndex = 2;
+                    else
+                        FaceIndex = 3;
+                }
+                else if (AbsDir.z >= AbsDir.x && AbsDir.z >= AbsDir.y)
+                {
+                    if (Direction.z >= 0)
+                        FaceIndex = 4;
+                    else
+                        FaceIndex = 5;
+                }
+                // 현재 World가 같은 Point의 6면을 순서대로 연속 등록한다.
+                // TODO(Shadow): 빈 면 생략·작업 정렬 도입 시 면별 GPU 인덱스 연결을 갱신한다.
+                const float Visibility = GetShadowVisibility(Light.ShadowIndex + FaceIndex, WorldPos);
+                LightContribution.Diffuse *= Visibility;
+                LightContribution.Specular *= Visibility;
+            }
+
         }
 #endif
         Total.Diffuse += LightContribution.Diffuse;

@@ -25,6 +25,7 @@ bool FOutputLogPanel::Init()
 	Commands.Add("HISTORY");
 	Commands.Add("CLEAR");
 	Commands.Add("STAT");
+	Commands.Add("CSM");
 
 	HistoryPos = -1;
 	InputBuf[0] = '\0';
@@ -175,6 +176,15 @@ void FOutputLogPanel::ExecCommand(const FString& CommandLine)
 		return;
 	}
 
+	// World가 필요한 명령은 외부 처리기에 전달하고 결과만 출력한다.
+	FString CommandMessage;
+	if (CommandHandler && CommandHandler(CommandLine, CommandMessage))
+	{
+		FLog::Log(ELogVerbosity::Info, "{}", CommandMessage);
+		ScrollToBottom = true;
+		return;
+	}
+
 	if (EqualsIgnoreCase(CommandLine, "CLEAR"))
 	{
 		ClearLog();
@@ -185,6 +195,7 @@ void FOutputLogPanel::ExecCommand(const FString& CommandLine)
 		for (const FString& Command : Commands)
 			FLog::Log(ELogVerbosity::Info, "- {}", Command);
 		OnLog(ELogVerbosity::Info, "- STAT <fps|memory|profile|shadow|all|none>");
+		OnLog(ELogVerbosity::Info, "- CSM [ON|OFF|SET <0-4>]");
 	}
 	else if (EqualsIgnoreCase(CommandLine, "HISTORY"))
 	{

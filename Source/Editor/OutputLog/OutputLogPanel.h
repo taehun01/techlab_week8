@@ -3,7 +3,8 @@
 #include <format>
 #include "Editor/EditorUI/EditorPanel.h"
 #include "Core/EngineLog.h"
-
+#include <functional>
+#include <utility>
 
 struct FLogData
 {
@@ -28,7 +29,10 @@ public:
 	//}
 
 	void ExecCommand(const FString& command_line);
-
+	void SetCommandHandler(std::function<bool(const FString&, FString&)> InHandler)
+	{
+		CommandHandler = std::move(InHandler);
+	}
 	int TextEditCallback(ImGuiInputTextCallbackData* data);
 
 private:
@@ -40,7 +44,7 @@ private:
 	ImGuiTextFilter       Filter;
 	bool                  AutoScroll;
 	bool                  ScrollToBottom;
-
+	std::function<bool(const FString&, FString&)> CommandHandler;
 	// Inherited via ILogSink
 	void OnLog(ELogVerbosity, const FString& Message) override;
 };
