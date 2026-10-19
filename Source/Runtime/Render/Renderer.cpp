@@ -662,7 +662,9 @@ void FRenderer::RenderShadowDepth(FProjectedShadowInfo& ShadowInfo)
 
 	// 이전 View의 Wireframe·오버레이 상태가 그림자에 영향을 주지 않게 한다.
 	RenderCommand::SetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-	RenderCommand::SetRasterizerState(ERasterizerState::SolidBack);
+	//RenderCommand::SetRasterizerState(ERasterizerState::SolidBack);
+	// Slope Bias를 위한 전용 RasterizerSate를 설정한다.
+	RenderCommand::SetRasterizerState(ERasterizerState::ShadowDepth); 
 
 	// 뎁스를 그린다
 	const uint64 DrawStart = RenderCommand::GetDrawIndexedCount();

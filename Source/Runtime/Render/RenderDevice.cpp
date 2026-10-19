@@ -412,4 +412,17 @@ void FRenderDevice::CreateStates()
 
 		Device->CreateSamplerState(&Desc, SamplerStates[(uint8)ESamplerState::ShadowPCF].GetAddressOf());
 	}
+
+	// ---------- ShadowDepth ----------
+	{
+		D3D11_RASTERIZER_DESC Desc = {};
+		Desc.FillMode = D3D11_FILL_SOLID;
+		Desc.CullMode = D3D11_CULL_BACK;
+		Desc.DepthClipEnable = true;
+		Desc.DepthBias = 10000;
+		Desc.SlopeScaledDepthBias = 1.0f;
+		Desc.DepthBiasClamp = 0.01f;
+
+		Device->CreateRasterizerState(&Desc, RasterizerStates[(uint8)ERasterizerState::ShadowDepth].GetAddressOf());
+	}
 }
