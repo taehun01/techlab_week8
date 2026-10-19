@@ -424,6 +424,9 @@ void FViewportsPanel::DrawStatOverlay(ImDrawList* DrawList, const ImVec2& ViewMi
 	if (FStatOverlay::IsEnabled(EStatFlags::Shadow))
 	{
 		Lines.Add({ "Shadow / CPU time", TitleColor });
+		// 준비와 Renderer 처리 시간을 기존 Shadow Stat 안에서 구분한다.
+		Lines.Add({ std::format("  Setup: {:.3f} ms",
+			FStatRegistry::GetCurrentFrameMs(ShadowStats::STAT_SetupCPU)), ValueColor });
 		Lines.Add({ std::format("  Renderer: {:.3f} ms", FStatRegistry::GetCurrentFrameMs(ShadowStats::STAT_RenderCPU)), ValueColor });
 
 		Lines.Add({ "Shadow / Frame counters", TitleColor });
@@ -435,6 +438,10 @@ void FViewportsPanel::DrawStatOverlay(ImDrawList* DrawList, const ImVec2& ViewMi
 		Lines.Add({ std::format("  Maps: {}  Bound SRVs: {}",
 			FStatRegistry::GetCounter(ShadowStats::STAT_Maps),
 			FStatRegistry::GetCounter(ShadowStats::STAT_BoundTextures)), ValueColor });
+		// CSM OFF와 직교 View의 단일 맵도 실제 Directional 투영에 포함한다.
+		Lines.Add({ std::format("  Directional views: {}  Projections: {}",
+			FStatRegistry::GetCounter(ShadowStats::STAT_DirectionalViews),
+			FStatRegistry::GetCounter(ShadowStats::STAT_DirectionalProjections)), ValueColor });
 
 		Lines.Add({ std::format("  Draws: {}  Map updates: {}",
 			FStatRegistry::GetCounter(ShadowStats::STAT_DrawCalls),

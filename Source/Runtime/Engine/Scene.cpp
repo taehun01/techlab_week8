@@ -166,15 +166,13 @@ void FScene::UpdateLights(FRenderer* Renderer)
 		break;
 	}
 
-	for (FDirectionalLightSceneProxy* Proxy : DirectionalLightProxies)
+	if (const FDirectionalLightSceneProxy* Proxy = GetPrimaryDirectionalLight())
 	{
-		if (!Proxy->IsVisible()) continue;
 		FLightRenderParameters P;
 		Proxy->GetLightShaderParameters(P);
 		Constants.Directional.Direction = P.Direction;
 		Constants.Directional.Color = P.Color;
 		Constants.Directional.Intensity = P.Intensity;
-		break;                                            // 셰이더는 하나만 받음
 	}
 
 	for (FLocalLightSceneProxy* Proxy : LocalLightProxies)
@@ -240,6 +238,15 @@ void FScene::UpdateLights(FRenderer* Renderer)
 	Renderer->SetLighting(Constants, LocalLightParameters);
 }
 
+const FDirectionalLightSceneProxy* FScene::GetPrimaryDirectionalLight() const
+{
+	for (const FDirectionalLightSceneProxy* Proxy : DirectionalLightProxies)
+	{
+		if (Proxy->IsVisible())
+			return Proxy;
+	}
+	return nullptr;
+}
 void FScene::AddFogInfo(uint32 Id, const FFogInfo& FogInfo)
 {
 	FExponentialHeightFogSceneInfo sceneFogInfo;

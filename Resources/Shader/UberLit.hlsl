@@ -36,7 +36,7 @@ struct FDirectionalLightInfo
     float3 Direction; // 빛이 향하는 방향
     float Intensity;
     float3 Color;
-    float Padding;
+    uint DirectionalPadding;
 };
 
 // SceneManagement.h의 FLightRenderParameters와 바이트 단위로 같아야 한다.
@@ -67,6 +67,18 @@ cbuffer ViewConstants : register(b0)
 {
     matrix ViewProjection;
     float3 CameraWorldPos; // Specular의 V = normalize(CameraWorldPos - WorldPos)
+    uint ClampShadowNear; // Directional Depth 패스에서만 Near Clamp를 적용한다.
+    
+    float3 CameraForward;
+    uint DirectionalCascadeCount;
+
+    // CPU의 연속된 4원소 배열과 일치하도록 벡터로 선언한다.
+    int4 DirectionalShadowIndices;
+    float4 DirectionalCascadeFarDistances;
+
+    float DirectionalShadowNearDistance;
+    float DirectionalCascadeTransitionFraction;
+    uint VisualizeShadowCascades;
     float ViewPadding;
 };
 
@@ -120,6 +132,7 @@ StructuredBuffer<uint> CellLightIndices : register(t12);
 Texture2D DiffuseTexture : register(t0);
 Texture2D NormalTexture : register(t1);
 SamplerState MaterialSampler : register(s0);
+SamplerComparisonState PCFSampler : register(s1);
 
 #if defined(LIGHTING_MODEL_LAMBERT) || defined(LIGHTING_MODEL_BLINN_PHONG)
 
@@ -127,15 +140,16 @@ SamplerState MaterialSampler : register(s0);
 #define MAX_BOUND_SHADOW_ATLASES 8
 #define SHADOW_ATLAS_TILES_PER_ROW 2
 
-// C++ FShadowShaderParameters와 동일한 80바이트 레이아웃이다.
+// C++ FShadowShaderParameters와 동일한 96바이트 레이아웃이다.
 struct FShadowShaderParameters
 {
     matrix LightViewProjection;
     float Bias;
     uint Resolution;
-
     int AtlasPageIndex;
     uint TileIndex;
+    int ShadowPCFKernelSize;
+    float3 pad;
 };
 
 // 전체 그림자 정보는 가변 개수로 전달한다.
@@ -182,10 +196,10 @@ struct FLightContribution
 
 #if defined(LIGHTING_MODEL_LAMBERT) || defined(LIGHTING_MODEL_BLINN_PHONG)
 
-// 현재 SM5.0 경로에서 텍스처 접근을 정적 인덱스로 만든다.
-float LoadShadowDepth(int AtlasPageIndex, int2 Texel)
+// 하드웨어 비교 필터로 계산한 그림자 가시성을 반환한다.
+float SampleShadowAtlas(int AtlasPageIndex, SamplerComparisonState Sampler, float2 UV, float CompareValue)
 {
-#define SHADOW_DEPTH_CASE(Index) case Index: return ShadowAtlases[Index].Load(int3(Texel, 0))
+#define SHADOW_DEPTH_CASE(Index) case Index: return ShadowAtlases[Index].SampleCmpLevelZero(Sampler, UV, CompareValue)
 
     switch (AtlasPageIndex)
     {
@@ -198,33 +212,95 @@ float LoadShadowDepth(int AtlasPageIndex, int2 Texel)
 #undef SHADOW_DEPTH_CASE
 }
 
-// 저장 방식에 따른 좌표 변환과 Hard Shadow 깊이 비교를 담당한다.
+// Hard Shadow에 사용할 깊이 한 개를 필터 없이 읽는다.
+float LoadShadowDepth(int AtlasPageIndex, int2 Texel)
+{
+#define SHADOW_DEPTH_LOAD_CASE(Index) case Index: return ShadowAtlases[Index].Load(int3(Texel, 0))
+
+    // 기존 SM5 경로처럼 텍스처 인덱스를 정적 분기로 선택한다.
+    switch (AtlasPageIndex)
+    {
+        SHADOW_DEPTH_LOAD_CASE(0);SHADOW_DEPTH_LOAD_CASE(1);
+        SHADOW_DEPTH_LOAD_CASE(2);SHADOW_DEPTH_LOAD_CASE(3);
+        SHADOW_DEPTH_LOAD_CASE(4);SHADOW_DEPTH_LOAD_CASE(5);
+        SHADOW_DEPTH_LOAD_CASE(6);SHADOW_DEPTH_LOAD_CASE(7);
+        default:
+            return 1.0f;
+    }
+
+#undef SHADOW_DEPTH_LOAD_CASE
+}
+
+// Atlas 타일 좌표 변환과 하드웨어 PCF 가시성 계산을 담당한다.
 float SampleShadowMap(FShadowShaderParameters Shadow, float3 LightNDC)
 {
     // D3D 텍스처의 좌상단 원점에 맞춰 Y를 뒤집는다.
     const float2 UV = LightNDC.xy * float2(0.5f, -0.5f) + 0.5f;
-    const int MaxTexel = int(Shadow.Resolution) - 1;
-    // 타일 안에서 좌표를 제한해 UV=1에서도 이웃 조명의 깊이를 읽지 않는다.
-    const int2 LocalTexel = clamp(int2(UV * Shadow.Resolution), int2(0, 0), int2(MaxTexel, MaxTexel));
-    const uint2 Tile = uint2(Shadow.TileIndex % SHADOW_ATLAS_TILES_PER_ROW,
-                            Shadow.TileIndex / SHADOW_ATLAS_TILES_PER_ROW);
-    const int2 Texel = int2(Tile * Shadow.Resolution) + LocalTexel;
-    const float StoredDepth = LoadShadowDepth(Shadow.AtlasPageIndex, Texel);
-    return LightNDC.z - Shadow.Bias <= StoredDepth ? 1.0f : 0.0f;
+    if (!(all(UV >= 0.0.xx) && all(UV <= 1.0.xx)))
+        return 1.0f;
+
+    const uint2 Tile = uint2(
+        Shadow.TileIndex % SHADOW_ATLAS_TILES_PER_ROW,
+        Shadow.TileIndex / SHADOW_ATLAS_TILES_PER_ROW
+    );
+    const float CompareDepth = LightNDC.z - Shadow.Bias;
+    const int KernelSize = Shadow.ShadowPCFKernelSize;
+
+    if (KernelSize == 0)
+    {
+        // UV 1에서도 현재 타일의 마지막 텍셀만 읽도록 제한한다.
+        const uint2 LocalTexel = min(uint2(UV * Shadow.Resolution), uint2(Shadow.Resolution - 1, Shadow.Resolution - 1));
+        const int2 AtlasTexel = int2(Tile * Shadow.Resolution + LocalTexel);
+        const float Depth = LoadShadowDepth(Shadow.AtlasPageIndex, AtlasTexel);
+
+        // 기존 LESS_EQUAL 비교 Sampler와 같은 비교식을 사용한다.
+        return CompareDepth <= Depth ? 1.0f : 0.0f;
+    }
+
+    // Resolution은 기존 HasShadowMap에서 양수임을 확인한다.
+    const float TexelSize = 1.0f / float(Shadow.Resolution);
+    const float HalfTexel = 0.5f * TexelSize;
+    const float HalfKernel = float(KernelSize - 1) * 0.5f;
+    float VisibilitySum = 0.0f;
+
+    [loop]
+    for (int Y = 0; Y < KernelSize; ++Y)
+    {
+        [loop]
+        for (int X = 0; X < KernelSize; ++X)
+        {
+            // 홀수는 정수 오프셋, 짝수는 반 텍셀 오프셋으로 중심을 맞춘다.
+            const float2 Offset = float2(X, Y) - HalfKernel;
+            const float2 LocalUV = clamp(UV + Offset * TexelSize, float2(HalfTexel, HalfTexel), float2(1.0f - HalfTexel, 1.0f - HalfTexel));
+            const float2 AtlasUV =(float2(Tile) + LocalUV) / float(SHADOW_ATLAS_TILES_PER_ROW);
+
+            // 각 호출에서 기존 하드웨어 2×2 비교 필터를 사용한다.
+            VisibilitySum += SampleShadowAtlas(Shadow.AtlasPageIndex, PCFSampler, AtlasUV, CompareDepth);
+        }
+    }
+
+    // 양수 커널만 이 경로에 도달하므로 분모는 항상 양수다.
+    return VisibilitySum / float(KernelSize * KernelSize);
+}
+
+// 양수 인덱스의 범위는 CPU가 보장하고, 실제 타깃 존재 여부만 확인한다.
+bool HasShadowMap(int ShadowIndex)
+{
+    if (ShadowIndex < 0)
+        return false;
+
+    const FShadowShaderParameters Shadow = ShadowParameters[ShadowIndex];
+    return Shadow.AtlasPageIndex >= 0 && Shadow.Resolution > 0;
 }
 
 // 월드 위치를 해당 그림자의 투영 공간으로 옮겨 가시성을 구한다.
 float GetShadowVisibility(int ShadowIndex, float3 WorldPos)
 {
-    // 유효한 양수 인덱스의 범위는 CPU의 GetShadowIndex가 보장한다.
-    if (ShadowIndex < 0)
+    // 타깃 실패·바인딩 상한 초과를 공통 경로에서 처리한다.
+    if (!HasShadowMap(ShadowIndex))
         return 1.0f;
 
     const FShadowShaderParameters Shadow = ShadowParameters[ShadowIndex];
-
-    // 타깃 실패·임시 바인딩 상한 초과 작업은 그림자를 적용하지 않는다.
-    if (Shadow.AtlasPageIndex < 0 || Shadow.Resolution == 0)
-        return 1.0f;
 
     const float4 LightClip = mul(float4(WorldPos, 1.0f), Shadow.LightViewProjection);
     if (LightClip.w <= 0.0f)
@@ -238,6 +314,86 @@ float GetShadowVisibility(int ShadowIndex, float3 WorldPos)
     return SampleShadowMap(Shadow, LightNDC);
 }
 
+// 실제 그림자와 색상 표시가 동일한 선택 구간을 사용한다.
+int SelectDirectionalCascade(float ViewDepth)
+{
+    if (ViewDepth < DirectionalShadowNearDistance)
+        return -1;
+
+    [loop]
+    for (uint Index = 0; Index < DirectionalCascadeCount; ++Index)
+    {
+        if (ViewDepth <= DirectionalCascadeFarDistances[Index])
+            return int(Index);
+    }
+    return -1;
+}
+
+// 다음 맵이 존재하는 전환 구간에서만 보간한다.
+float GetDirectionalCascadeBlend(uint CascadeIndex, float ViewDepth)
+{
+    if (CascadeIndex + 1 >= DirectionalCascadeCount || DirectionalCascadeTransitionFraction <= 0.0f)
+        return 0.0f;
+
+    const float NearDistance = CascadeIndex == 0 ? DirectionalShadowNearDistance : DirectionalCascadeFarDistances[CascadeIndex - 1];
+    const float FarDistance = DirectionalCascadeFarDistances[CascadeIndex];
+    const float Width = (FarDistance - NearDistance) * DirectionalCascadeTransitionFraction;
+    const float Start = FarDistance - Width;
+
+    if (ViewDepth <= Start || !HasShadowMap(DirectionalShadowIndices[CascadeIndex + 1]))
+        return 0.0f;
+
+    return saturate((ViewDepth - Start) / Width);
+}
+
+// 깊이 비교와 PCF를 마친 가시성을 전환 구간에서 보간한다.
+float GetDirectionalShadowVisibility(float3 WorldPos)
+{
+    const float ViewDepth = dot(WorldPos - CameraWorldPos, CameraForward);
+    const int Selected = SelectDirectionalCascade(ViewDepth);
+    if (Selected < 0)
+        return 1.0f;
+
+    const uint CascadeIndex = uint(Selected);
+    const int ShadowIndex = DirectionalShadowIndices[CascadeIndex];
+    if (!HasShadowMap(ShadowIndex))
+        return 1.0f;
+
+    const float Visibility = GetShadowVisibility(ShadowIndex, WorldPos);
+    const float Blend = GetDirectionalCascadeBlend(CascadeIndex, ViewDepth);
+    if (Blend <= 0.0f)
+        return Visibility;
+
+    const float NextVisibility = GetShadowVisibility(DirectionalShadowIndices[CascadeIndex + 1], WorldPos);
+    return lerp(Visibility, NextVisibility, Blend);
+}
+
+// 전환 구간은 두 색을 섞고, 범위 밖이나 사용 불가능한 맵은 회색으로 표시한다.
+float3 GetDirectionalCascadeDebugColor(float3 WorldPos)
+{
+    const float ViewDepth = dot(WorldPos - CameraWorldPos, CameraForward);
+    const int Selected = SelectDirectionalCascade(ViewDepth);
+    if (Selected < 0)
+        return float3(0.25f, 0.25f, 0.25f);
+
+    const uint CascadeIndex = uint(Selected);
+    if (!HasShadowMap(DirectionalShadowIndices[CascadeIndex]))
+        return float3(0.25f, 0.25f, 0.25f); 
+
+    static const float3 Colors[4] =
+    {
+        float3(1.0f, 0.2f, 0.2f),
+        float3(0.2f, 1.0f, 0.2f),
+        float3(0.2f, 0.4f, 1.0f),
+        float3(1.0f, 1.0f, 0.2f)
+    };
+
+    float3 Color = Colors[CascadeIndex];
+    const float Blend = GetDirectionalCascadeBlend(CascadeIndex, ViewDepth);
+    if (Blend > 0.0f)
+        Color = lerp(Color, Colors[CascadeIndex + 1], Blend);
+    return Color;
+}
 #endif
 
 // 원뿔 감쇠량. 0(Outer 밖) ~ 1(Inner 안)
@@ -406,6 +562,16 @@ bool bUseLightGrid, bool bReceiveShadow)
     // Directional Light는 처음에 한 번만 계산
     FLightContribution Total = CalcDirectionalLight(N, V, InShininess);
 
+#if defined(LIGHTING_MODEL_LAMBERT) || defined(LIGHTING_MODEL_BLINN_PHONG)
+    if (bReceiveShadow)
+    {
+        // 로컬 라이트를 누적하기 전에 Directional의 직접광에만 그림자를 적용한다.
+        const float Visibility = GetDirectionalShadowVisibility(WorldPos);
+        Total.Diffuse *= Visibility;
+        Total.Specular *= Visibility;
+    }
+#endif
+
     uint LightCount = NumLocalLights;
     uint CellOffset = 0;
     bool bUseCellList = false;
@@ -494,6 +660,12 @@ VS_OUTPUT mainVS(VS_INPUT Input)
 
     const float4 WorldPos = mul(float4(Input.Position, 1.0f), World);
     Output.SvPosition = mul(WorldPos, ViewProjection);
+
+#if defined(LIGHTING_MODEL_UNLIT)
+    // 현재 엔진은 정방향 깊이 0~1을 사용하며 Directional 직교 투영의 W는 1이다.
+    if (ClampShadowNear != 0)
+        Output.SvPosition.z = max(Output.SvPosition.z, 0.0f);
+#endif
     Output.WorldPos = WorldPos.xyz;
 
     // 노멀은 역전치로, 탄젠트는 표면을 따라 놓인 방향이라 World로 변환한다.
@@ -568,6 +740,21 @@ float4 mainPS(VS_OUTPUT Input) : SV_TARGET
     DiffuseLighting += Input.VertexDiffuse;
 #endif
 
-    return float4(Albedo.rgb * DiffuseLighting + SpecularLighting, Alpha);
+    // 먼저 기존 조명과 그림자를 모두 반영한 표면 색을 계산한다.
+    float3 FinalColor = Albedo.rgb * DiffuseLighting + SpecularLighting;
+
+#if defined(LIGHTING_MODEL_LAMBERT) || defined(LIGHTING_MODEL_BLINN_PHONG)
+    if (VisualizeShadowCascades != 0 && Input.ReceivesShadow != 0)
+    {
+        // Directional의 깊이 비교 결과로만 마스크를 만든다.
+        const float ShadowMask = saturate(1.0f - GetDirectionalShadowVisibility(Input.WorldPos));
+        const float3 CascadeColor = GetDirectionalCascadeDebugColor(Input.WorldPos);
+
+        // 그림자로 가려진 부분에만 색상을 섞고 기존 Alpha는 유지한다.
+        FinalColor = lerp(FinalColor, CascadeColor, ShadowMask * 0.8f);
+    }
+#endif
+
+    return float4(FinalColor, Alpha);
 #endif
 }

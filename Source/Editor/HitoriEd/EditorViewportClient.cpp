@@ -2,6 +2,7 @@
 
 #include "Editor/HitoriEd/EditorViewportClient.h"
 #include "Editor/Rendering/GridRenderer.h"
+#include "Math/Vector4.h"
 
 #include <algorithm>
 #include <cmath>
@@ -251,12 +252,91 @@ FMatrix FEditorViewportClient::CalcViewProjection(
     return ViewProjection;
 }
 
-// 렌더링과 같은 깊이 보정을 적용해 직교 화면 뒤쪽 대상도 피킹한다.
-FRay FEditorViewportClient::DeprojectView(
-    const FViewCamera& InCamera, const FRect& Rect, FVector2 ViewLocalPosition)
+// 실제 렌더 VP에서 깊이 구간을 정하고 역투영해 View별 Receiver 범위를 구한다.
+bool FEditorViewportClient::AppendShadowFrustumCorners(
+    const FViewCamera& InCamera, const FRect& Rect,
+    float ShadowDistance, TArray<FVector>& OutCorners)
 {
-    return Deproject(BuildRenderCamera(InCamera, Rect),
-        ViewLocalPosition, { Rect.Width, Rect.Height });
+    if (ShadowDistance <= 0.0f)
+        return false;
+
+    // 직교는 논리 원점 앞뒤를, 원근은 실제 Near부터 사용한다.
+    const bool bOrthographic = InCamera.Projection.Mode == EProjectionMode::Orthographic;
+    const float NearDistance = bOrthographic ? -ShadowDistance : InCamera.Projection.NearClip;
+
+    return AppendShadowFrustumCorners(InCamera, Rect, NearDistance, ShadowDistance, OutCorners);
+}
+
+bool FEditorViewportClient::AppendShadowFrustumCorners(const FViewCamera& InCamera, const FRect& Rect,
+    float NearDistance, float FarDistance, TArray<FVector>& OutCorners)
+{
+    if (!IsViewRectValid(Rect))
+        return false;
+    const bool bOrthographic = InCamera.Projection.Mode == EProjectionMode::Orthographic;
+
+    // 원근 구간이 실제 카메라 Frustum을 벗어나지 않도록 제한한다.
+    if (!bOrthographic)
+    {
+        NearDistance = FMath::Max(NearDistance, InCamera.Projection.NearClip);
+        FarDistance = FMath::Min(FarDistance, InCamera.Projection.FarClip);
+    }
+
+    if (FarDistance <= NearDistance)
+        return false;
+
+    // 직교 렌더 카메라의 후퇴 보정까지 포함해 화면 렌더링과 같은 행렬을 사용한다.
+    FMatrix View;
+    FMatrix Projection;
+    CalcViewMatrices(InCamera, Rect, View, Projection);
+    const FMatrix ViewProjection = View * Projection;
+
+    // 거리의 기준은 후퇴 보정 전의 논리 카메라다.
+    const FVector Origin = InCamera.Transform.Location;
+    const FVector Forward = NormalizedOrZero(InCamera.Transform.Rotation.GetForwardVector());
+
+    // 선형 전방 거리를 현재 렌더 VP의 NDC 깊이로 변환한다.
+    const auto ProjectDepth = [&ViewProjection](const FVector& WorldPosition)
+        {
+            const FVector4 ClipPosition = FVector4(WorldPosition, 1.0f) * ViewProjection;
+            return FMath::Clamp(ClipPosition.Z / ClipPosition.W, 0.0f, 1.0f);
+        };
+
+    const float NearDepth = ProjectDepth(Origin + Forward * NearDistance);
+    const float FarDepth = ProjectDepth(Origin + Forward * FarDistance);
+    if (FarDepth <= NearDepth)
+        return false;
+
+    // 각 깊이 평면의 화면 네 모서리를 월드 공간으로 복원한다.
+    const FMatrix InverseViewProjection = ViewProjection.Inverse();
+    OutCorners.Reserve(OutCorners.Num() + 8);
+
+    for (int32 DepthIndex = 0; DepthIndex < 2; ++DepthIndex)
+    {
+        const float Depth = DepthIndex == 0 ? NearDepth : FarDepth;
+        for (int32 Y = -1; Y <= 1; Y += 2)
+        {
+            for (int32 X = -1; X <= 1; X += 2)
+            {
+                // X·Y는 NDC 화면 좌표이며, 깊이는 투영된 Z를 사용한다.
+                FVector4 WorldPosition = FVector4(static_cast<float>(X), static_cast<float>(Y), Depth, 1.0f) * InverseViewProjection;
+
+                // 역투영 결과의 동차 좌표를 월드 위치로 변환한다.
+                WorldPosition /= WorldPosition.W;
+
+                FVector OutCorner(WorldPosition.X, WorldPosition.Y, WorldPosition.Z);
+                OutCorners.Add(OutCorner);
+            }
+        }
+    }
+
+    return true;
+
+}
+
+// 렌더링과 같은 깊이 보정을 적용해 직교 화면 뒤쪽 대상도 피킹한다.
+FRay FEditorViewportClient::DeprojectView(const FViewCamera& InCamera, const FRect& Rect, FVector2 ViewLocalPosition)
+{
+    return Deproject(BuildRenderCamera(InCamera, Rect), ViewLocalPosition, { Rect.Width, Rect.Height });
 }
 
 // 직교의 고정 화면 기저와 원근의 기존 Core 계산으로 Billboard 행렬을 만든다.

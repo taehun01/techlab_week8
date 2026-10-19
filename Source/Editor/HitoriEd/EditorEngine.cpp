@@ -38,7 +38,9 @@
 // TODO : FSceneRenderer 도입 후 옮겨야함
 #include "ProjectedShadowInfo.h"
 #include <utility>
-
+#include "Components/DirectionalLightComponent.h"
+#include "Engine/DirectionalLightSceneProxy.h"
+#include "Core/Stats/ShadowStats.h"
 namespace
 {
 	DECLARE_CYCLE_STAT("Viewport Update", STAT_ViewportUpdate);
@@ -120,7 +122,6 @@ bool UEditorEngine::Init()
 	DepthViewRenderer = MakeUnique<FDepthViewRenderer>();
 	DepthViewRenderer->Init();
 	ShadowViewRenderer = MakeUnique<FShadowViewRenderer>();
-	ShadowViewRenderer->Init();
 
 	ToneMapRenderer = MakeUnique<FToneMapRenderer>();
 	ToneMapRenderer->Init();
@@ -130,6 +131,27 @@ bool UEditorEngine::Init()
 	DetailsPanel = EditorUI->AddEditorPanel<FDetailsPanel>();
 	// 패널에는 조회 대상만 전달하고, 그림자 작업이나 타깃을 보관하지 않는다.
 	DetailsPanel->SetRenderer(Renderer);
+
+	DetailsPanel->SetShadowCascadeDebugCallbacks(
+		[this](uint32 ViewId)
+		{
+			if (ViewId == 0 || ViewId > FMultipleViewportsAdapter::MaxViewCount)
+				return false;
+
+			return MultipleViewportsAdapter.GetViewShowFlags(static_cast<int32>(ViewId - 1)).IsEnabled(EEngineShowFlag::ShadowCascades);
+		},
+		[this](uint32 ViewId, bool bEnabled)
+		{
+			if (ViewId == 0 || ViewId > FMultipleViewportsAdapter::MaxViewCount)
+				return;
+
+			// 다른 View 플래그는 유지하고 색상 표시만 변경한다.
+			const int32 ViewIndex = static_cast<int32>(ViewId - 1);
+			FEngineShowFlags Flags = MultipleViewportsAdapter.GetViewShowFlags(ViewIndex);
+			Flags.SetEnabled(EEngineShowFlag::ShadowCascades, bEnabled);
+			MultipleViewportsAdapter.SetViewShowFlags(ViewIndex, Flags);
+		});
+
 	EditorControlsPanel = EditorUI->AddEditorPanel<FEditorControlsPanel>();
 	ViewportsPanel = EditorUI->AddEditorPanel<FViewportsPanel>();
 	ContentDrawerPanel = EditorUI->AddEditorPanel<FContentDrawerPanel>();
@@ -422,7 +444,7 @@ void UEditorEngine::RenderMultipleViewports()
 	// TODO : FSceneRenderer 도입전 임시
 	// World 갱신 여부와 그림자 필요 여부를 별도로 관리한다.
 	TArray<UWorld*> PreparedWorlds;
-	TArray<UWorld*> ShadowWorlds;
+	TMap<UWorld*, TArray<int32>> ShadowViews;
 	const FEngineShowFlags& ShowFlags = SettingsPanel->GetSettings().ShowFlags;
 	const bool bDrawPrimitives = ShowFlags.IsEnabled(EEngineShowFlag::Primitives);
 	const bool bDynamicShadows = ShowFlags.IsEnabled(EEngineShowFlag::DynamicShadows);
@@ -448,8 +470,8 @@ void UEditorEngine::RenderMultipleViewports()
 				&& (ViewMode == EViewMode::Lit_Lambert || ViewMode == EViewMode::Lit_BlinnPhong);
 
 			// 앞 View가 Unlit이어도 뒤의 Lit View에서 같은 World를 등록할 수 있다.
-			if (bNeedsShadow && ShadowWorlds.Find(ViewWorld) == INDEX_NONE)
-				ShadowWorlds.Add(ViewWorld);
+			if (bNeedsShadow)
+				ShadowViews[ViewWorld].Add(ViewIndex);
 		};
 
 	// 패널 View는 계속 4개만 순회한다.
@@ -460,15 +482,78 @@ void UEditorEngine::RenderMultipleViewports()
 	if (bRenderPIEWindow)
 		PrepareView(PIEViewIndex);
 
-	// TODO: FSceneRenderer 분리 시 작업 목록 구성과 그림자 패스 호출을 이동한다.
+	// TODO: FSceneRenderer 분리 시 World별 View 그룹 구성과 패스 조정을 이동한다.
 	TArray<FProjectedShadowInfo> ShadowInfos;
-	for (UWorld* World : ShadowWorlds)
-		World->GatherProjectedShadows(ShadowInfos);
 
-	// 모든 World의 작업을 함께 전달해 타깃을 일괄 준비한다.
-	// 빈 목록도 전달하여 이전 프레임의 작업과 타깃을 정리한다.
+	// World 공유 작업과 View별 Directional 작업을 같은 프레임 목록에 모은다.
+	for (UWorld* World : PreparedWorlds)
+	{
+		const TArray<int32>* ViewIndices = ShadowViews.Find(World);
+		if (!ViewIndices)
+			continue;
+		SCOPE_CYCLE_COUNTER(ShadowStats::STAT_SetupCPU);
+		// 여러 View에서 같은 Spot을 중복 생성하지 않는다.
+		World->GatherLocalProjectedShadows(ShadowInfos);
+
+		const FDirectionalLightSceneProxy* Directional =
+			World->GetScene().GetPrimaryDirectionalLight();
+		if (!Directional || !Directional->ShouldCastShadow())
+			continue;
+
+		const auto* Light = static_cast<const UDirectionalLightComponent*>(Directional->GetLightComponent());
+		const float ShadowDistance = Light->GetShadowDistance();
+
+		// 각 작업을 설정한 뒤 재사용하는 임시 계산 버퍼다.
+		TArray<float> SplitDistances;
+		TArray<FVector> ReceiverCorners;
+		ReceiverCorners.Reserve(8);
+
+		for (int32 ViewIndex : *ViewIndices)
+		{
+			// 0은 World 공유 작업에 남겨두고 View 슬롯으로 안정적인 ID를 만든다.
+			const uint32 ViewId = static_cast<uint32>(ViewIndex + 1);
+			ReceiverCorners.Reset();
+
+			if (MultipleViewportsAdapter.IsOrthographic(ViewIndex))
+			{
+				// 직교 View는 논리 원점 앞뒤의 기존 단일 범위를 사용한다.
+				if (MultipleViewportsAdapter.AppendShadowFrustumCorners(
+					ViewIndex, ShadowDistance, ReceiverCorners))
+				{
+					World->GatherDirectionalShadow(
+						ShadowInfos, ReceiverCorners, 0, ViewId);
+				}
+				continue;
+			}
+
+			// 패널 PIE와 별도 PIE도 실제 게임 카메라 Override를 사용한다.
+			const FViewCamera& Camera =	MultipleViewportsAdapter.GetEffectiveCamera(ViewIndex);
+			if (!Directional->CalculateCascadeSplitDistances(Camera.Projection.NearClip, Camera.Projection.FarClip, SplitDistances))
+				continue;
+
+			for (int32 CascadeIndex = 0; CascadeIndex + 1 < SplitDistances.Num(); ++CascadeIndex)
+			{
+				// 이전 구간의 CascadeTransitionFraction 비율만큼 생성 Near 확장
+				float RenderNear = SplitDistances[CascadeIndex];
+				if (CascadeIndex > 0)
+				{
+					const float PreviousLength = SplitDistances[CascadeIndex] - SplitDistances[CascadeIndex - 1];
+					RenderNear -= PreviousLength * Light->GetCascadeTransitionFraction();
+				}
+
+				ReceiverCorners.Reset();
+				if (!MultipleViewportsAdapter.AppendShadowFrustumCorners(ViewIndex, RenderNear, SplitDistances[CascadeIndex + 1], ReceiverCorners))
+					continue;
+
+				World->GatherDirectionalShadow(ShadowInfos, ReceiverCorners,
+					static_cast<uint32>(CascadeIndex), ViewId);
+			}
+		}
+	}
+
+	// 모든 World·View의 작업을 모은 뒤 Atlas 배정과 Depth 실행을 한 번 수행한다.
+	// 빈 목록도 전달해 이전 프레임의 작업·바인딩·타일 할당을 정리한다.
 	Renderer->RenderShadowMaps(std::move(ShadowInfos), *ShadowViewRenderer);
-	// 그림자 관련 내용 여기까지
 
 	for (int32 ViewIndex = 0; ViewIndex < 4; ++ViewIndex)
 	{
@@ -615,8 +700,10 @@ FWorldContext* UEditorEngine::GetPIEWorldContext(int32 WorldPIEInstance)
 }
 
 // 입력 View의 Ray와 피킹으로 Gizmo·공유 선택을 갱신한다.
-void UEditorEngine::RenderOpaquePass(const int32 ViewIndex, const FRenderingInfo& ViewRenderingInfo, const FMatrix& ViewProjection, const FVector& ViewCameraLocation, const FVector& ViewCameraForward, FRenderQueue& RenderQueue)
+void UEditorEngine::RenderOpaquePass(int32 ViewIndex, const FRenderingInfo& ViewRenderingInfo, const FViewConstants& ViewConstants, FRenderQueue& RenderQueue)
 {
+	const FMatrix& ViewProjection = ViewConstants.ViewProjection;
+	const FVector& ViewCameraLocation = ViewConstants.CameraWorldPos;
 	FRenderingInfo HDRInfo = ViewRenderingInfo;
 	HDRInfo.ColorRenderTargets[0].Texture = GetHDRTargetForView(ViewIndex);
 	RenderCommand::BeginRenderPass(HDRInfo);
@@ -638,7 +725,7 @@ void UEditorEngine::RenderOpaquePass(const int32 ViewIndex, const FRenderingInfo
 
 		RenderCommand::SetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 		// 반투명은 Grid 뒤에 합성되어야 하므로 불투명만 먼저 그린다.
-		Renderer->RenderQueueSorting(RenderQueue, ViewProjection, ViewCameraLocation);
+		Renderer->RenderQueueSorting(RenderQueue, ViewConstants);
 
 		// 2.5D는 타일의 실제 깊이가 필요하므로 불투명 깊이를 먼저 채운 뒤 컬링한다.
 		FTexture2D* DepthTexture = ViewRenderingInfo.DepthStencil.Texture;
@@ -1022,7 +1109,68 @@ void UEditorEngine::RenderFrame(const int32 ViewIndex, UWorld& ViewWorld, const 
 {
 	const FEngineShowFlags& ShowFlags = SettingsPanel->GetSettings().ShowFlags;
 
-	RenderOpaquePass(ViewIndex, ViewRenderingInfo, ViewProjection, ViewCameraLocation, ViewCameraForward, RenderQueue);
+	// GPU의 int4·float4와 Component의 분할 상한이 일치해야 한다.
+	static_assert(UDirectionalLightComponent::MaxShadowCascades == 4);
+
+	FViewConstants ViewConstants{};
+	ViewConstants.ViewProjection = ViewProjection;
+	ViewConstants.CameraWorldPos = ViewCameraLocation;
+	ViewConstants.CameraForward = ViewCameraForward;
+	// 패널과 별도 PIE 모두 해당 Client의 표시 상태를 전달한다.
+	ViewConstants.VisualizeShadowCascades = MultipleViewportsAdapter.GetViewShowFlags(ViewIndex).IsEnabled(EEngineShowFlag::ShadowCascades) ? 1u : 0u;
+
+
+	// 작업 생성과 동일한 표시 조건으로 Directional 수신 데이터를 준비한다.
+	const EViewMode ViewMode = MultipleViewportsAdapter.GetViewMode(ViewIndex);
+	const bool bUseDirectionalShadows =
+		ShowFlags.IsEnabled(EEngineShowFlag::Primitives)
+		&& ShowFlags.IsEnabled(EEngineShowFlag::DynamicShadows)
+		&& (ViewMode == EViewMode::Lit_Lambert || ViewMode == EViewMode::Lit_BlinnPhong);
+
+	const FDirectionalLightSceneProxy* Directional = bUseDirectionalShadows ? ViewWorld.GetScene().GetPrimaryDirectionalLight() : nullptr;
+
+	if (Directional && Directional->ShouldCastShadow())
+	{
+		TArray<float> SplitDistances;
+
+		if (MultipleViewportsAdapter.IsOrthographic(ViewIndex))
+		{
+			// 직교 작업 생성과 같은 논리 원점 앞뒤의 단일 구간이다.
+			const auto* Light = static_cast<const UDirectionalLightComponent*>(Directional->GetLightComponent());
+			const float ShadowDistance = Light->GetShadowDistance();
+			SplitDistances.Add(-ShadowDistance);
+			SplitDistances.Add(ShadowDistance);
+		}
+		else
+		{
+			// 작업 생성에 사용한 것과 같은 EffectiveCamera·분할 규칙을 사용한다.
+			const FViewCamera& Camera =	MultipleViewportsAdapter.GetEffectiveCamera(ViewIndex);
+			Directional->CalculateCascadeSplitDistances(Camera.Projection.NearClip, Camera.Projection.FarClip, SplitDistances);
+		}
+
+		// 분할 실패 시 배열이 비어 있으므로 기본 CascadeCount 0을 유지한다.
+		if (SplitDistances.Num() >= 2)
+		{
+			const uint32 ViewId = static_cast<uint32>(ViewIndex + 1);
+			const uint32 CascadeCount = static_cast<uint32>(SplitDistances.Num() - 1);
+			ViewConstants.DirectionalCascadeCount = CascadeCount;
+			ViewConstants.DirectionalShadowNearDistance = SplitDistances[0];
+			if (CascadeCount > 1)
+			{
+				const auto* Light = static_cast<const UDirectionalLightComponent*>(Directional->GetLightComponent());
+				ViewConstants.DirectionalCascadeTransitionFraction = Light->GetCascadeTransitionFraction();
+			}
+			for (uint32 CascadeIndex = 0; CascadeIndex < CascadeCount; ++CascadeIndex)
+			{
+				// GPU 인덱스는 연속 번호라고 가정하지 않고 각각 조회한다.
+				ViewConstants.DirectionalShadowIndices[CascadeIndex] = Renderer->GetShadowIndex(*Directional, CascadeIndex, ViewId);
+				ViewConstants.DirectionalCascadeFarDistances[CascadeIndex] = SplitDistances[CascadeIndex + 1];
+			}
+		}
+	}
+
+	// 준비한 View 상수를 장면 패스에 전달한다.
+	RenderOpaquePass(ViewIndex, ViewRenderingInfo, ViewConstants, RenderQueue);
 
 	if (ShowFlags.IsEnabled(EEngineShowFlag::DepthView))
 	{
@@ -1131,6 +1279,7 @@ UWorld* UEditorEngine::CreatePIEWorldByDuplication(FWorldContext& PIEContext, UW
 void UEditorEngine::OnActiveWorldChanged()
 {
 	ResetSceneSelection();
+	OutlinerPanel->SetWorld(GetActiveWorld());
 }
 
 void UEditorEngine::EndPlayMap()

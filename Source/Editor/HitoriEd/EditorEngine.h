@@ -106,7 +106,7 @@ private:
 	void EndFrame();
 
 	//불투명 물체에 대한 Pass
-	void RenderOpaquePass(const int32 ViewIndex, const FRenderingInfo& ViewRenderingInfo, const FMatrix& ViewProjection, const FVector& ViewCameraLocation, const FVector& ViewCameraForward, FRenderQueue& RenderQueue);
+	void RenderOpaquePass(int32 ViewIndex, const FRenderingInfo& ViewRenderingInfo,	const FViewConstants& ViewConstants, FRenderQueue& RenderQueue);
 	//안개에 대한 Pass
 	void RenderFogPass(const int32 ViewIndex, UWorld& ViewWorld, const FRenderingInfo& ViewRenderingInfo, const FVector& ViewCameraLocation,const FMatrix& ViewProjection, FRenderQueue& RenderQueue);
 	//Overlay Pass

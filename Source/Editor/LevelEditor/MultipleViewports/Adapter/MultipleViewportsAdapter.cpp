@@ -198,6 +198,27 @@ FMatrix FMultipleViewportsAdapter::GetEngineViewProjection(const int32 ViewIndex
 		GetEffectiveCamera(ViewIndex), GetViewRect(ViewIndex));
 }
 
+// 활성 View의 Override·외부 PIE 크기를 반영하고 절두체 계산은 Client에 맡긴다.
+bool FMultipleViewportsAdapter::AppendShadowFrustumCorners(
+    int32 ViewIndex, float ShadowDistance, TArray<FVector>& OutCorners) const
+{
+    if (!IsViewActive(ViewIndex))
+        return false;
+
+    return FEditorViewportClient::AppendShadowFrustumCorners(
+        GetEffectiveCamera(ViewIndex), GetViewRect(ViewIndex), ShadowDistance, OutCorners);
+}
+// View 선택은 Adapter가, 카메라 구간의 역투영은 Client가 담당한다.
+bool FMultipleViewportsAdapter::AppendShadowFrustumCorners(int32 ViewIndex, float NearDistance, float FarDistance, TArray<FVector>& OutCorners) const
+{
+	if (!IsViewActive(ViewIndex))
+		return false;
+
+	return FEditorViewportClient::AppendShadowFrustumCorners(GetEffectiveCamera(ViewIndex), GetViewRect(ViewIndex),
+		NearDistance, FarDistance, OutCorners);
+
+}
+
 // Native 카메라 위치를 엔진 FVector 그대로 반환한다.
 FVector FMultipleViewportsAdapter::GetEngineCameraLocation(const int32 ViewIndex) const
 {

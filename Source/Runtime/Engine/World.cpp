@@ -20,6 +20,8 @@
 
 #include "Math/Frustum.h"
 #include "ProjectedShadowInfo.h"
+#include "Engine/DirectionalLightSceneProxy.h"
+#include <utility>
 
 #include "Core/Stats/LightweightStats.h"
 #include "Core/Stats/EditorStats.h"
@@ -458,7 +460,8 @@ void UWorld::GatherRenderPackets(FRenderQueue& RenderQueue, const FLODViewContex
 	}
 }
 
-void UWorld::GatherProjectedShadows(TArray<FProjectedShadowInfo>& OutShadows)
+// 지역광 그림자는 같은 World의 여러 View가 공유한다.
+void UWorld::GatherLocalProjectedShadows(TArray<FProjectedShadowInfo>& OutShadows)
 {
 	for (const FLocalLightSceneProxy* LightProxy : Scene.LocalLightProxies)
 	{
@@ -484,16 +487,7 @@ void UWorld::GatherProjectedShadows(TArray<FProjectedShadowInfo>& OutShadows)
 			GatherShadowCasters(ShadowInfo);
 		}
 
-		// Light 설정과 투영 유효성은 기존 계산 함수가 판단한다.
-		/*FVector ShadowViewOrigin = FVector::ZeroVector;
-		FMatrix LightViewProjection = FMatrix::Identity;
-
-		if (!LightProxy->GetShadowProjection(ShadowViewOrigin, LightViewProjection))
-		{
-			continue;
-		}*/
-
-		// 포인트 라이트면 셰도우 인포 6개 : 어떻게 6개를 모음?
+		// 포인트 라이트면 셰도우 인포 6개
 		if (LightProxy->GetLightComponent()->GetLightType() == ELightType::Point)
 		{
 			// Light 설정과 투영 유효성은 기존 계산 함수가 판단한다.
@@ -517,7 +511,25 @@ void UWorld::GatherProjectedShadows(TArray<FProjectedShadowInfo>& OutShadows)
 			}
 		}
 	}
+}
 
+// 하나의 Receiver 구간마다 독립적인 Directional 작업을 추가한다.
+void UWorld::GatherDirectionalShadow(TArray<FProjectedShadowInfo>& OutShadows,
+	const TArray<FVector>& ReceiverCorners, uint32 ProjectionIndex, uint32 ViewId)
+{
+	// 화면 조명과 동일한 Directional 하나를 사용한다.
+	const FDirectionalLightSceneProxy* Directional = Scene.GetPrimaryDirectionalLight();
+	if (!Directional)
+		return;
+
+	FProjectedShadowInfo ShadowInfo;
+	if (!Directional->SetupShadowProjection(
+		ReceiverCorners, ShadowInfo, ProjectionIndex, ViewId))
+		return;
+
+	// 해당 투영의 열린 Caster Frustum과 CastShadow 조건을 재사용한다.
+	GatherShadowCasters(ShadowInfo);
+	OutShadows.Add(std::move(ShadowInfo));
 }
 
 //void UWorld::GatherRenderPackets(TArray<FRenderPacket>& RenderArray, const FLODViewContext* LODView, const FFrustumPlanes* Frustum)
@@ -598,7 +610,7 @@ void UWorld::GatherShadowCasters(FProjectedShadowInfo& ShadowInfo)
 	// 전체 Scene BVH를 Light Frustum으로 탐색한다.
 	const FFrustumPlanes& Frustum = ShadowInfo.GetCasterFrustum();
 	Scene.BVH.QueryCull(
-		FrustumAllPlanesMask,
+		ShadowInfo.GetCasterPlaneMask(),
 		[&Frustum](const FBox& Bounds, uint32& Mask)
 		{
 			return static_cast<EBVHCullResult>(ClassifyBoxInFrustum(Bounds, Frustum, Mask));

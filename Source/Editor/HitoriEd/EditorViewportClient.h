@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Editor/LevelEditor/MultipleViewports/Adapter/MultipleViewportsAdapterTypes.h"
+#include "Containers/Array.h"
 #include "Math/Frustum.h"
 #include "Render/ViewMode.h"
 #include "Render/EngineShowFlags.h"
@@ -60,6 +61,17 @@ public:
     // 같은 VP로 Frustum도 필요할 때 함께 계산한다.
     static FMatrix CalcViewProjection(const FViewCamera& InCamera, const FRect& Rect,
         FFrustumPlanes* OutFrustum = nullptr);
+
+    // 그림자 거리 안의 Receiver 절두체 꼭짓점 8개를 기존 목록에 추가한다.
+    // 직교 View는 논리 원점의 앞뒤를 사용하며, 유효한 깊이 구간이 없으면 목록을 유지한다.
+    static bool AppendShadowFrustumCorners(const FViewCamera& InCamera, const FRect& Rect,
+        float ShadowDistance, TArray<FVector>& OutCorners);
+
+    // 논리 카메라의 전방 선형 거리 구간을 월드 꼭짓점 8개로 변환한다.
+    // 원근은 카메라 클립 범위로 제한하고, 직교는 음수 거리도 허용한다.
+    // 성공하면 기존 목록에 추가하며, 실패하면 목록을 변경하지 않는다.
+    static bool AppendShadowFrustumCorners(const FViewCamera& InCamera, const FRect& Rect,
+        float NearDistance, float FarDistance, TArray<FVector>& OutCorners);
 
     // View 원점을 뺀 화면 좌표를 렌더 카메라 기준으로 역투영한다.
     static FRay DeprojectView(const FViewCamera& InCamera, const FRect& Rect,

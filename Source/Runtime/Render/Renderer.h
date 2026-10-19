@@ -35,11 +35,36 @@ inline void WritePerObjectConstants(uint8* Dest, const FMatrix& World, const FMa
 // b0(ViewConstants)와 바이트 단위로 같아야 한다. View마다 RenderQueueSorting에서 한 번 올린다.
 struct alignas(16) FViewConstants
 {
-	FMatrix ViewProjection;
-	FVector CameraWorldPos;
-	float Padding = 0.0f;
+	FMatrix ViewProjection = FMatrix::Identity;
+	FVector CameraWorldPos = FVector::ZeroVector;
+
+	// Directional Depth 패스에서만 Near 밖의 정점을 깊이 0으로 제한한다.
+	uint32 ClampShadowNear = 0;
+
+	// 논리 카메라의 정규화된 전방 축이다.
+	FVector CameraForward = FVector::ZeroVector;
+
+	uint32 DirectionalCascadeCount = 0;
+
+	// ProjectionIndex와 별개인 StructuredBuffer의 실제 인덱스다.
+	int32 DirectionalShadowIndices[4] =
+	{
+		INDEX_NONE, INDEX_NONE, INDEX_NONE, INDEX_NONE
+	};
+
+	// 카메라 전방 선형 깊이로 표현한 각 구간의 끝 거리다.
+	float DirectionalCascadeFarDistances[4]{};
+
+	/// 원근은 NearClip, 직교는 -ShadowDistance를 사용한다.
+	float DirectionalShadowNearDistance = 0.0f;
+
+	// 여러 Cascade를 사용하는 View에서만 전환 비율을 전달한다.
+	float DirectionalCascadeTransitionFraction = 0.0f;
+	uint32 VisualizeShadowCascades = 0;
+	float ViewPadding = 0.0f;
 };
-static_assert(sizeof(FViewConstants) == 80, "UberLit.hlsl cbuffer ViewConstants 크기와 맞아야 한다");
+
+static_assert(sizeof(FViewConstants) == 144, "UberLit.hlsl cbuffer ViewConstants 크기와 맞아야 한다");
 
 constexpr uint32 MaxLocalLights = 1024;
 
@@ -50,12 +75,13 @@ struct alignas(16) FShadowShaderParameters
 	FMatrix LightViewProjection = FMatrix::Identity;
 	float Bias = 0.0f;
 	uint32 Resolution = 0;
-
 	// 같은 해상도의 그림자 네 개가 Atlas 페이지 한 장을 공유한다.
 	int32 AtlasPageIndex = -1;
 	uint32 TileIndex = 0;
+	int32 ShadowPCFKernelSize = 0;
+	float pad[3];
 };
-static_assert(sizeof(FShadowShaderParameters) == 80);
+static_assert(sizeof(FShadowShaderParameters) == 96);
 
 // 컬링 방식별 셀 크기. Tiled는 슬라이스 1개인 Clustered와 같다.
 constexpr uint32 TiledTileSize = 16;
@@ -74,10 +100,10 @@ struct FAmbientLightInfo
 
 struct FDirectionalLightInfo
 {
-	FVector Direction;	// 빛이 향하는 방향
+	FVector Direction;
 	float Intensity;
 	FVector Color;
-	float Padding;
+	uint32 Padding = 0;
 };
 
 struct FPointLightInfo
@@ -225,7 +251,11 @@ public:
 
 	// 큐를 Material, Opaque, Mesh에 따라 정렬한다
 	// CameraWorldPos는 ViewProjection과 함께 b0에 올라가 Specular 계산(V 벡터)에 쓰인다.
-	void RenderQueueSorting(FRenderQueue& InQueue, const FMatrix& ViewProjection, const FVector& CameraWorldPos);
+	void RenderQueueSorting(FRenderQueue& InQueue, const FMatrix& ViewProjection,
+		const FVector& CameraWorldPos, bool bClampShadowNear = false);
+	
+	// 호출자가 준비한 View별 GPU 상수를 업로드하고 같은 정렬 경로를 사용한다.
+	void RenderQueueSorting(FRenderQueue& InQueue, const FViewConstants& ViewConstants);
 
 	// Depth Prepass: 불투명만 PS 없이 그려 깊이 버퍼를 채운다. RenderQueueSorting 뒤, RenderOpaque 전에 부른다.
 	// 같은 VS·행렬이라 깊이가 비트 단위로 같으므로 본 패스는 LESS_EQUAL로 통과한다.
@@ -235,19 +265,24 @@ public:
 	// 목록은 화면 조명·Preview 소비가 끝날 때까지 유지한다.
 	void RenderShadowMaps(TArray<FProjectedShadowInfo>&& InShadows, FShadowViewRenderer& InShadowViewRenderer);
 
-	// 현재 라이트의 GPU 그림자 정보 번호를 반환한다. 없으면 INDEX_NONE이다.
-	int32 GetShadowIndex(const FLightSceneProxy& LightProxy) const;
+	// 지정한 투영의 GPU 그림자 정보 번호를 반환한다. 없으면 INDEX_NONE이다.
+	int32 GetShadowIndex(const FLightSceneProxy& LightProxy,
+		uint32 ProjectionIndex = 0, uint32 ViewId = 0) const;
 
-	// 현재 프레임에 생성한 Spot Shadow Atlas를 읽기 전용으로 제공한다.
+	// 현재 프레임에 지정한 투영의 Shadow Atlas를 읽기 전용으로 제공한다.
 	// 텍스처는 Engine의 ShadowViewRenderer 소유이며 다음 프레임까지 보관하지 않는다.
-	const FTexture2D* GetShadowDepthTexture(const FLightSceneProxy& LightProxy) const;
+	const FTexture2D* GetShadowDepthTexture(const FLightSceneProxy& LightProxy,
+		uint32 ProjectionIndex = 0, uint32 ViewId = 0) const;
 	// Preview에서 Atlas 전체 대신 해당 라이트의 타일만 표시한다.
-	bool GetShadowDepthViewport(const FLightSceneProxy& LightProxy, FViewportSettings& OutViewport) const;
+	bool GetShadowDepthViewport(const FLightSceneProxy& LightProxy, FViewportSettings& OutViewport,
+		uint32 ProjectionIndex = 0, uint32 ViewId = 0) const;
 
 	// [측정 전용] RenderOpaque 직후에 호출한다. 불투명 패킷을 깊이 LESS_EQUAL·색 쓰기 없이 다시 그리며
 	// 패킷마다 오클루전 쿼리를 걸어, 최종 화면에 실제로 픽셀을 남긴 물체 수를 센다.
 	// GPU 결과를 기다리므로 매우 느리다. 버튼 등으로 한 프레임만 실행할 것.
 	FOcclusionMeasureResult MeasureOpaqueOcclusion(const FMatrix& ViewProjection);
+
+	void GetShadowViewIds(const FLightSceneProxy& LightProxy, TArray<uint32>& OutViewIds) const;
 
 	uint8* BeginObjectConstants(uint32 MaxSlots);
 	void EndObjectConstants();
@@ -295,7 +330,7 @@ private:
 	static constexpr uint32 MaxBoundShadowAtlases = 8;
 	static constexpr uint32 ShadowAtlasTilesPerRow = 2;
 
-	// Engine이 소유한 UUID Map·Atlas 관리자를 빌려 타깃과 GPU 정보를 연결한다.
+	// Engine이 소유한 타입별 Atlas 관리자를 빌려 타깃과 GPU 정보를 연결한다.
 	FShadowViewRenderer* ShadowViewRenderer = nullptr;
 	TArray<FProjectedShadowInfo> ProjectedShadows;
 

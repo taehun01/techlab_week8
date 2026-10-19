@@ -851,16 +851,111 @@ void FDetailsPanel::DrawShadowMapPreview(const ULightComponent& Light)
 		ImGui::TextDisabled("Cast Shadows is disabled.");
 		return;
 	}
-
-	// 선택한 컴포넌트의 실제 Proxy로 조회하며, 타깃을 별도로 소유하지 않는다.
-	const FTexture2D* DepthTexture = Renderer && Light.SceneProxy
-		? Renderer->GetShadowDepthTexture(*Light.SceneProxy)
-		: nullptr;
-
-	FViewportSettings ShadowViewport;
-	if (!DepthTexture || !Renderer->GetShadowDepthViewport(*Light.SceneProxy, ShadowViewport))
+	// 선택한 라이트가 속한 World를 표시해 Editor·PIE 결과를 구분한다.
+	UWorld* LightWorld = Light.GetWorld();
+	if (LightWorld)
 	{
-		// Unlit만 활성화된 경우나 지원하지 않는 라이트 종류도 여기에 해당한다.
+		ImGui::TextDisabled("World: %s", LightWorld->IsPlayInEditor() ? "PIE" : "Editor");
+	}
+
+	if (Light.GetLightType() == ELightType::Directional)
+	{
+		// 화면 조명에 선택되지 않은 Directional에는 그림자 작업이 생성되지 않는다.
+		if (LightWorld && LightWorld->GetScene().GetPrimaryDirectionalLight() != Light.SceneProxy)
+		{
+			ImGui::TextDisabled("This directional light is not used by this world.");
+			ImGui::TextWrapped("Only the first visible directional light is used.");
+			return;
+		}
+
+		// 현재 편집값을 표시한다. 실제 투영 범위는 각 View의 클립 범위로 제한된다.
+		const auto& Directional = static_cast<const UDirectionalLightComponent&>(Light);
+		ImGui::Text("Requested ShadowDistance: %.1f", Directional.GetShadowDistance());
+		// Directional은 View마다 단일 맵 또는 Cascade 맵을 만든다.
+		ImGui::TextWrapped("Each view has its own directional shadow projection(s).");
+	}
+
+	// 설정 UI보다 그림자 패스가 먼저 실행되므로 변경 결과는 다음 프레임에 반영된다.
+	ImGui::TextDisabled("Shadow settings apply next frame.");
+
+	// 선택한 실제 라이트의 현재 프레임 작업만 사용한다.
+	if (!Renderer || !Light.SceneProxy)
+	{
+		ImGui::TextDisabled("No shadow map generated this frame.");
+		return;
+	}
+
+	uint32 ViewId = 0;
+	uint32 ProjectionIndex = 0;
+
+	if (Light.GetLightType() == ELightType::Directional)
+	{
+		TArray<uint32> ViewIds;
+		Renderer->GetShadowViewIds(*Light.SceneProxy, ViewIds);
+		if (ViewIds.IsEmpty())
+		{
+			ImGui::TextDisabled("No shadow map generated this frame.");
+			return;
+		}
+
+		// 레이아웃·PIE·ViewMode 변경으로 사라진 선택을 복구한다.
+		if (ViewIds.Find(ShadowPreviewViewId) == INDEX_NONE)
+			ShadowPreviewViewId = ViewIds[0];
+
+		const FString ViewLabel = std::format("View {}", ShadowPreviewViewId);
+		if (ImGui::BeginCombo("Shadow View", ViewLabel.c_str()))
+		{
+			for (uint32 Candidate : ViewIds)
+			{
+				const FString Label = std::format("View {}", Candidate);
+				if (ImGui::Selectable(Label.c_str(), Candidate == ShadowPreviewViewId))
+					ShadowPreviewViewId = Candidate;
+			}
+			ImGui::EndCombo();
+		}
+
+		// 선택된 View의 Client 상태를 편집한다. 라이트 설정으로 저장하지 않는다.
+		if (ShadowCascadeDebugGetter && ShadowCascadeDebugSetter)
+		{
+			bool bVisualize = ShadowCascadeDebugGetter(ShadowPreviewViewId);
+			if (ImGui::Checkbox("Cascade Colors (Selected View)", &bVisualize))
+				ShadowCascadeDebugSetter(ShadowPreviewViewId, bVisualize);
+		}
+
+		// 편집된 Cascade 개수보다 실제 생성된 타깃을 기준으로 목록을 만든다.
+		TArray<uint32> Projections;
+		for (uint32 Index = 0; Index < UDirectionalLightComponent::MaxShadowCascades; ++Index)
+		{
+			if (Renderer->GetShadowDepthTexture(*Light.SceneProxy, Index, ShadowPreviewViewId))
+				Projections.Add(Index);
+		}
+		if (Projections.IsEmpty())
+			return;
+
+		if (Projections.Find(ShadowPreviewProjectionIndex) == INDEX_NONE)
+			ShadowPreviewProjectionIndex = Projections[0];
+
+		const FString ProjectionLabel = std::format("Cascade {}", ShadowPreviewProjectionIndex + 1);
+		if (ImGui::BeginCombo("Shadow Cascade", ProjectionLabel.c_str()))
+		{
+			for (uint32 Candidate : Projections)
+			{
+				const FString Label = std::format("Cascade {}", Candidate + 1);
+				if (ImGui::Selectable(Label.c_str(), Candidate == ShadowPreviewProjectionIndex))
+					ShadowPreviewProjectionIndex = Candidate;
+			}
+			ImGui::EndCombo();
+		}
+
+		ViewId = ShadowPreviewViewId;
+		ProjectionIndex = ShadowPreviewProjectionIndex;
+	}
+
+	// Spot은 기존 공유 키 (0, 0)를 사용한다.
+	const FTexture2D* DepthTexture = Renderer->GetShadowDepthTexture(*Light.SceneProxy, ProjectionIndex, ViewId);
+	FViewportSettings ShadowViewport;
+	if (!DepthTexture || !Renderer->GetShadowDepthViewport(*Light.SceneProxy, ShadowViewport, ProjectionIndex, ViewId))
+	{
 		ImGui::TextDisabled("No shadow map generated this frame.");
 		return;
 	}
