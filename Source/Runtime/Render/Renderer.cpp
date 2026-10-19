@@ -144,7 +144,8 @@ void FRenderer::UploadPerObjectConstants()
 		FRenderPacket& P = RenderPackets[Index];
 		const FMatrix& Model = GetPacketWorld(P);
 		const FMatrix WorldToLocal = P.Proxy ? P.Proxy->GetWorldToLocal() : Model.Inverse();
-		WritePerObjectConstants(Dest + static_cast<size_t>(Index) * ObjectSlotBytes, Model, WorldToLocal);
+		WritePerObjectConstants(Dest + static_cast<size_t>(Index) * ObjectSlotBytes, Model, WorldToLocal,
+			P.Proxy ? P.Proxy->IsReceiveShadow() : true);
 		P.Slot = Index;
 	}
 
@@ -225,7 +226,7 @@ void FRenderer::DrawStaticGroups()
 			else
 			{
 				RenderCommand::BindConstantBuffer(2, PerObjectCB.get(), EShaderBindFlagBits::Vertex);
-				UpdatePerObjectConstants(Item.Proxy->GetLocalToWorld());
+				UpdatePerObjectConstants(Item.Proxy->GetLocalToWorld(), Item.Proxy->IsReceiveShadow());
 			}
 			RenderCommand::DrawIndexed(Item.IndexCount, Item.StartIndex);
 		}
@@ -580,15 +581,16 @@ void FRenderer::UpdatePerObjectConstants(const FRenderPacket& RenderPacket, cons
 	// rp.Transform 과 Camera VP 행렬 곱
 	// 행렬곱의 결과 (MVP Matrix) Constant Buffer 업데이트 필요
 
-	UpdatePerObjectConstants(GetPacketWorld(RenderPacket));
+	UpdatePerObjectConstants(GetPacketWorld(RenderPacket), RenderPacket.Proxy ? RenderPacket.Proxy->IsReceiveShadow() : true);
 }
 
-void FRenderer::UpdatePerObjectConstants(const FMatrix& World)
+void FRenderer::UpdatePerObjectConstants(const FMatrix& World, bool bReceiveShadow)
 {
 	FPerObjectConstants Constants;
 
 	Constants.World = World;
 	Constants.NormalMatrix = World.Inverse().GetTransposed();
+	Constants.bReceiveShadow = bReceiveShadow ? 1.0f : 0.0f;
 
 	RenderCommand::UpdateBufferData(PerObjectCB.get(), &Constants);
 }

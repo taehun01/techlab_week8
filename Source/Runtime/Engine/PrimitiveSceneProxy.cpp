@@ -60,9 +60,12 @@ void FPrimitiveSceneProxy::UpdateRenderState()
     Mesh = nullptr;
     RenderState.reset();
     bVisible = Component->IsVisible();
-    bCastShadow = Component->IsCastShadow();
-    bReceivesShadow = Component->IsReceiveShadow();
     UStaticMeshComponent* StaticMeshComponent = Cast<UStaticMeshComponent>(Component);
+    // 라이트 방향 화살표 같은 에디터 아이콘은 라이트 원점에 붙어 있어, 그림자를 드리우면 라이트 렌즈를 막아
+    // 원뿔 전체가 그림자가 된다. 씬 파일에 bCastShadow=true로 저장돼 있어도 여기서 항상 뺀다.
+    const bool bEditorIcon = StaticMeshComponent && StaticMeshComponent->IsEditorIcon();
+    bCastShadow = !bEditorIcon && Component->IsCastShadow();
+    bReceivesShadow = !bEditorIcon && Component->IsReceiveShadow();
     if (StaticMeshComponent) Mesh = StaticMeshComponent->GetStaticMesh();
     if (Mesh != PreviousMesh)
     {

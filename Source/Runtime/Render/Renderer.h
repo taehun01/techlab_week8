@@ -20,12 +20,16 @@ struct FPerObjectConstants
 	FMatrix World;
 	// (World^-1)^T. 비균등 스케일에서도 노멀이 표면에 수직으로 남도록 노멀 변환에 쓴다.
 	FMatrix NormalMatrix;
+	// 1이면 그림자를 받는다(Receiver). UberLit이 GetSpotShadowFactor에서 읽는다. 프록시가 없는 패킷은 1.
+	float bReceiveShadow = 1.0f;
+	float Padding[3] = {};
 };
+static_assert(sizeof(FPerObjectConstants) == 144, "UberLit.hlsl cbuffer PerObjectConstants 크기와 맞아야 한다");
 
 // 오브젝트 칸 하나를 채운다. 프록시는 WorldToLocal을 이미 들고 있어 역행렬 계산을 건너뛸 수 있다.
-inline void WritePerObjectConstants(uint8* Dest, const FMatrix& World, const FMatrix& WorldToLocal)
+inline void WritePerObjectConstants(uint8* Dest, const FMatrix& World, const FMatrix& WorldToLocal, bool bReceiveShadow = true)
 {
-	const FPerObjectConstants Constants{ World, WorldToLocal.GetTransposed() };
+	const FPerObjectConstants Constants{ World, WorldToLocal.GetTransposed(), bReceiveShadow ? 1.0f : 0.0f };
 	std::memcpy(Dest, &Constants, sizeof(Constants));
 }
 
@@ -249,7 +253,7 @@ private:
 	void BindShadowResources();
 	void DrawPackets(uint32 Begin, uint32 End, const FMatrix& ViewProjection);
 	void DrawStaticGroups();
-	void UpdatePerObjectConstants(const FMatrix& World);
+	void UpdatePerObjectConstants(const FMatrix& World, bool bReceiveShadow = true);
 	void BindMaterial(UMaterial* Material);
 	void UpdateMaterialParams(const FRenderPacket& RenderPacket);
 	void UpdatePerObjectConstants(const FRenderPacket& RenderPacket, const FMatrix& ViewProjection);

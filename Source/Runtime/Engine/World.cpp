@@ -345,7 +345,7 @@ void UWorld::GatherRenderPackets(FRenderQueue& RenderQueue, const FLODViewContex
 					{
 						// 칸 VisibleIndex는 이 반복만 쓴다 → 스레드끼리 겹치지 않음
 						WritePerObjectConstants(SlotDest + size_t(VisibleIndex) * ObjectSlotBytes,
-							Proxy->GetLocalToWorld(), Proxy->GetWorldToLocal());
+							Proxy->GetLocalToWorld(), Proxy->GetWorldToLocal(), Proxy->IsReceiveShadow());
 						Slot = VisibleIndex;
 					}
 
@@ -434,7 +434,8 @@ void UWorld::GatherRenderPackets(FRenderQueue& RenderQueue, const FLODViewContex
 					FRenderPacket& Packet = RenderQueue[p];
 					const FMatrix& Model = Packet.Proxy ? Packet.Proxy->GetLocalToWorld() : Packet.Model ? *Packet.Model : FMatrix::Identity;
 					const FMatrix WorldToLocal = Packet.Proxy ? Packet.Proxy->GetWorldToLocal() : Model.Inverse();
-					WritePerObjectConstants(SlotDest + size_t(NextExtraSlot) * ObjectSlotBytes, Model, WorldToLocal);
+					WritePerObjectConstants(SlotDest + size_t(NextExtraSlot) * ObjectSlotBytes, Model, WorldToLocal,
+						Packet.Proxy ? Packet.Proxy->IsReceiveShadow() : true);
 					Packet.Slot = NextExtraSlot++;
 				}
 			}

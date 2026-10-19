@@ -64,7 +64,9 @@ bool FSpotLightSceneProxy::GetShadowView(uint32 ViewIndex, FShadowViewInfo& Out)
     FTransform Transform;
     Transform.Rotation = Spot->GetWorldRotation();
     FVector Location = Spot->GetWorldLocation();
-    FVector Direction = Spot->GetTransform().GetForward();
+    // GetTransform()은 부모 기준(로컬) Transform이다. 조명(GetLightShaderParameters)과 같은 월드 회전을 써야
+    // 원뿔과 그림자 방향이 어긋나지 않는다.
+    FVector Direction = Transform.GetForward();
 
     const float Outer = FMath::Clamp(Spot->GetOuterConeAngle(), 0.f, 89.f);
     const float HalfFovDeg = std::min(Outer + ShadowConeMarginDeg, MaxShadowFovDeg);

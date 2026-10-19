@@ -93,7 +93,13 @@ cbuffer PerObjectConstants : register(b2)
 {
     matrix World;
     matrix WorldInverseTranspose; // (World^-1)^T
+    float bReceiveShadow;         // 1 = 그림자를 받는다. b2는 VS에만 묶이므로 PS는 VS_OUTPUT.ReceiveShadow로 받는다
+    float3 PerObjectPadding;
 };
+
+// 현재 셰이딩 중인 오브젝트가 그림자를 받는지. VS는 cbuffer에서, PS는 보간 없는 VS 출력에서 채운다.
+// 조명 함수들에 인자를 일일이 넘기지 않으려고 셰이더 호출 단위 static 변수로 둔다.
+static float GReceiveShadow = 1.0f;
 
 // b3는 FireBall이 쓰는 동안 비워 둔다.
 
@@ -152,6 +158,7 @@ struct VS_OUTPUT
     float4 Tangent : TANGENT;
     float2 UV : TEXCOORD0;
     float4 Color : COLOR;
+    nointerpolation float ReceiveShadow : TEXCOORD2;  // PerObjectConstants.bReceiveShadow
 #if LIGHTING_MODEL_GOURAUD
     float3 VertexDiffuse : COLOR1;   // 정점에서 미리 계산한 Diffuse 조명
 #endif
@@ -223,12 +230,51 @@ FLightContribution CalcPointLight(FLightRenderParameters Light, float3 N, float3
     return SurfaceShading(N, L, V, Light.Color * Light.Intensity * Attenuation, InShininess);
 }
 
-// Spot은 Point에서 원뿔 감쇠만 곱하면 된다
+// 8단계에서 FShadowData.DepthBias / SlopeBias 기반 Bias로 교체한다. 지금은 Acne를 줄이는 임시 상수.
+#define SHADOW_TEMP_DEPTH_BIAS 0.0005f
+
+// Spot 그림자: WorldPos를 라이트 클립 공간으로 옮겨 Shadow Map 깊이와 비교한다.
+// 1 = 빛을 받음, 0 = 그림자. 하드웨어 비교 샘플러(LINEAR)가 주변 2x2를 보간해 경계가 살짝 부드럽다.
+float GetSpotShadowFactor(int ShadowIndex, float3 WorldPos)
+{
+    // Receiver가 아니거나 그림자 칸이 없는 라이트면 항상 밝다
+    if (ShadowIndex < 0 || GReceiveShadow < 0.5f)
+        return 1.0f;
+
+    const FShadowData Shadow = ShadowDatas[ShadowIndex];
+    const float4 LightClip = mul(float4(WorldPos, 1.0f), Shadow.LightViewProjection);
+    if (LightClip.w <= 0.0f)
+        return 1.0f;                                   // 라이트 뒤쪽
+
+    const float3 LightNDC = LightClip.xyz / LightClip.w;
+    // NDC → UV. D3D 텍스처는 V가 아래로 증가하므로 Y를 뒤집는다.
+    const float2 ShadowUV = LightNDC.xy * float2(0.5f, -0.5f) + 0.5f;
+
+    // 프러스텀 밖(Near 앞, Far 뒤, 반각 상한을 넘는 원뿔 가장자리)은 가리는 물체가 없는 것으로 본다
+    if (LightNDC.z < 0.0f || LightNDC.z > 1.0f || any(ShadowUV < 0.0f) || any(ShadowUV > 1.0f))
+        return 1.0f;
+
+    // 해상도를 줄인 라이트는 슬라이스의 왼쪽 위 UVScale 영역만 그렸다
+    const float2 SliceUV = ShadowUV * Shadow.UVScale;
+    const float CompareDepth = LightNDC.z - SHADOW_TEMP_DEPTH_BIAS;
+
+    // LESS_EQUAL 비교: 내 깊이 <= 저장 깊이면 1 (밝음)
+    return SpotShadowMaps.SampleCmpLevelZero(ShadowSampler, float3(SliceUV, (float) ShadowIndex), CompareDepth);
+}
+
+// Spot은 Point에서 원뿔 감쇠와 그림자만 곱하면 된다
 FLightContribution CalcSpotLight(FLightRenderParameters Light, float3 N, float3 V, float3 WorldPos, float InShininess)
 {
     float3 L;
     const float Attenuation = GetDistanceAttenuation(Light.Position, Light.Radius, Light.FalloffExponent, WorldPos, L);
-    return SurfaceShading(N, L, V, Light.Color * Light.Intensity * Attenuation * GetSpotConeAttenuation(Light, L), InShininess);
+    const float Cone = GetSpotConeAttenuation(Light, L);
+
+    // 빛이 닿지 않는 픽셀은 Shadow Map을 읽지 않는다
+    float Shadow = 1.0f;
+    if (Attenuation * Cone > 0.0f)
+        Shadow = GetSpotShadowFactor(Light.ShadowIndex, WorldPos);
+
+    return SurfaceShading(N, L, V, Light.Color * Light.Intensity * Attenuation * Cone * Shadow, InShininess);
 }
 
 FLightContribution CalcRectLight(FLightRenderParameters Light, float3 N, float3 V, float3 WorldPos, float InShininess)
@@ -370,6 +416,8 @@ VS_OUTPUT mainVS(VS_INPUT Input)
 
     Output.UV = Input.UV;
     Output.Color = Input.Color;
+    Output.ReceiveShadow = bReceiveShadow;
+    GReceiveShadow = bReceiveShadow;   // Gouraud는 VS에서 조명(그림자 포함)을 계산한다
 #if LIGHTING_MODEL_GOURAUD
     const float3 V = normalize(CameraWorldPos - Output.WorldPos);
     const FLightContribution Contribution = AccumulateDirectLighting(normalize(Output.Normal), V, Output.WorldPos, 1, Output.SvPosition, false);
@@ -380,6 +428,7 @@ VS_OUTPUT mainVS(VS_INPUT Input)
 
 float4 mainPS(VS_OUTPUT Input) : SV_TARGET
 {
+    GReceiveShadow = Input.ReceiveShadow;
     const float2 UV = Input.UV + UVOffset;
     const float4 TexColor = DiffuseTexture.Sample(MaterialSampler, UV);
     float4 Albedo = TexColor * BaseColor;
