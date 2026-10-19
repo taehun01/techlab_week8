@@ -10,6 +10,7 @@ class UDirectionalLightComponent :public ULightComponent
 		PROPERTY(bUseCSM)
 		PROPERTY(CascadeCount)
 		PROPERTY(CascadeDistributionExponent)
+		PROPERTY(CascadeTransitionFraction)
 	REFLECT_END()
 public:
 	UDirectionalLightComponent();
@@ -34,7 +35,10 @@ public:
 	{
 		return FMath::Clamp(CascadeDistributionExponent, 1.0f, 10.0f);
 	}
-
+	float GetCascadeTransitionFraction() const
+	{
+		return FMath::Clamp(CascadeTransitionFraction, 0.0f, 0.5f);
+	}
 	// 편집한 값도 실제 계산에 사용하는 범위로 맞춘다.
 	void PostEditChangeProperty(const FProperty& Property) override;
 private:
@@ -49,4 +53,7 @@ private:
 
 	// 각 구간 길이의 가중치를 1, E, E² 순서로 증가시킨다.
 	float CascadeDistributionExponent = 3.0f;
+
+	// Cascade 경계에서 두 그림자 결과를 섞을 구간의 비율이다.
+	float CascadeTransitionFraction = 0.1f;
 };

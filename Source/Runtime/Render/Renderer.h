@@ -55,14 +55,16 @@ struct alignas(16) FViewConstants
 	// 카메라 전방 선형 깊이로 표현한 각 구간의 끝 거리다.
 	float DirectionalCascadeFarDistances[4]{};
 
-	// 원근은 NearClip, 직교는 -ShadowDistance를 사용한다.
+	/// 원근은 NearClip, 직교는 -ShadowDistance를 사용한다.
 	float DirectionalShadowNearDistance = 0.0f;
-	float ViewPadding[3]{};
+
+	// 여러 Cascade를 사용하는 View에서만 전환 비율을 전달한다.
+	float DirectionalCascadeTransitionFraction = 0.0f;
+	uint32 VisualizeShadowCascades = 0;
+	float ViewPadding = 0.0f;
 };
 
 static_assert(sizeof(FViewConstants) == 144, "UberLit.hlsl cbuffer ViewConstants 크기와 맞아야 한다");
-static_assert(offsetof(FViewConstants, DirectionalShadowIndices) == 96);
-static_assert(offsetof(FViewConstants, DirectionalShadowNearDistance) == 128);
 
 constexpr uint32 MaxLocalLights = 1024;
 
@@ -279,6 +281,8 @@ public:
 	// 패킷마다 오클루전 쿼리를 걸어, 최종 화면에 실제로 픽셀을 남긴 물체 수를 센다.
 	// GPU 결과를 기다리므로 매우 느리다. 버튼 등으로 한 프레임만 실행할 것.
 	FOcclusionMeasureResult MeasureOpaqueOcclusion(const FMatrix& ViewProjection);
+
+	void GetShadowViewIds(const FLightSceneProxy& LightProxy, TArray<uint32>& OutViewIds) const;
 
 	uint8* BeginObjectConstants(uint32 MaxSlots);
 	void EndObjectConstants();

@@ -275,6 +275,9 @@ void FRenderer::UpdateShadowStats()
 	uint64 PointLights = 0;
 	uint64 SpotLights = 0;
 	uint64 MapCount = 0;
+	// 라이트 개수와 View별 Directional 투영 작업 수는 별도로 집계한다.
+	uint64 DirectionalProjections = 0;
+	TSet<uint32> DirectionalViewIds;
 
 	// Point의 여러 면이나 CSM Cascade에서 같은 라이트를 중복 계산하지 않는다.
 	TSet<const FLightSceneProxy*> CountedLights;
@@ -288,12 +291,20 @@ void FRenderer::UpdateShadowStats()
 		}
 
 		++MapCount;
+		const ELightType LightType = ShadowInfo.LightProxy->GetLightComponent()->GetLightType();
+		// 같은 라이트의 여러 Cascade도 각각 하나의 투영 작업으로 센다.
+		if (LightType == ELightType::Directional)
+		{
+			++DirectionalProjections;
+			if (ShadowInfo.ViewId != 0)
+				DirectionalViewIds.Add(ShadowInfo.ViewId);
+		}
 		if (!CountedLights.Add(ShadowInfo.LightProxy))
 		{
 			continue;
 		}
 
-		switch (ShadowInfo.LightProxy->GetLightComponent()->GetLightType())
+		switch (LightType)
 		{
 		case ELightType::Directional:
 			++DirectionalLights;
@@ -330,6 +341,9 @@ void FRenderer::UpdateShadowStats()
 	FStatRegistry::SetCounter(ShadowStats::STAT_PointLights, PointLights);
 	FStatRegistry::SetCounter(ShadowStats::STAT_SpotLights, SpotLights);
 	FStatRegistry::SetCounter(ShadowStats::STAT_Maps, MapCount);
+	// ViewId는 프레임 전체에서 같은 View 슬롯을 식별한다.
+	FStatRegistry::SetCounter(ShadowStats::STAT_DirectionalViews, DirectionalViewIds.Num());
+	FStatRegistry::SetCounter(ShadowStats::STAT_DirectionalProjections, DirectionalProjections);
 	FStatRegistry::SetCounter(ShadowStats::STAT_BoundTextures, ShadowDepthBindings.Num());
 
 	FStatRegistry::SetMemory(ShadowStats::STAT_DepthMemory, DepthBytes);
@@ -860,6 +874,18 @@ FOcclusionMeasureResult FRenderer::MeasureOpaqueOcclusion(const FMatrix& ViewPro
 	Result.ElapsedMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - StartTime).count();
 	Result.bValid = true;
 	return Result;
+}
+
+void FRenderer::GetShadowViewIds(const FLightSceneProxy& LightProxy, TArray<uint32>& OutViewIds) const
+{
+	OutViewIds.Reset();
+	for (const FProjectedShadowInfo& ShadowInfo : ProjectedShadows)
+	{
+		if (ShadowInfo.LightProxy == &LightProxy && ShadowInfo.HasDepthTarget()	&& OutViewIds.Find(ShadowInfo.ViewId) == INDEX_NONE)
+		{
+			OutViewIds.Add(ShadowInfo.ViewId);
+		}
+	}
 }
 
 uint8* FRenderer::BeginObjectConstants(uint32 MaxSlots)

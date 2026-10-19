@@ -29,23 +29,50 @@ bool FDirectionalLightSceneProxy::SetupShadowProjection(
 	// Directional 위치·Scale은 무시하고 회전으로 광원 축만 결정한다.
 	const FMatrix Rotation = LightComponent->GetWorldRotation().Quaternion().ToFMatrix();
 	const FMatrix WorldToLight = Rotation.GetTransposed();
+
+	// 같은 Frustum 형상에서는 이동·회전해도 구의 반경이 유지된다.
+	FVector SphereCenter = FVector::ZeroVector;
+	for (const FVector& Corner : ReceiverCorners)
+		SphereCenter += Corner;
+	SphereCenter /= static_cast<float>(ReceiverCorners.Num());
+
 	FVector Min = WorldToLight.TransformPosition(ReceiverCorners[0]);
 	FVector Max = Min;
+	float RadiusSquared = 0.0f;
+
 	for (const FVector& Corner : ReceiverCorners)
 	{
-		const FVector LightCorner = WorldToLight.TransformPosition(Corner);
-		for (int32 Axis = 0; Axis < 3; ++Axis)
-		{
-			Min[Axis] = FMath::Min(Min[Axis], LightCorner[Axis]);
-			Max[Axis] = FMath::Max(Max[Axis], LightCorner[Axis]);
-		}
-	}
+		RadiusSquared = FMath::Max(RadiusSquared, (Corner - SphereCenter).SizeSquared());
 
-	// 경계 오차와 납작한 범위에서도 유효한 직교 투영을 확보한다.
-	Min -= FVector(0.1f);
-	Max += FVector(0.1f);
+		// 깊이 범위는 기존처럼 실제 Receiver에 맞춘다.
+		const FVector LightCorner = WorldToLight.TransformPosition(Corner);
+		Min.X = FMath::Min(Min.X, LightCorner.X);
+		Max.X = FMath::Max(Max.X, LightCorner.X);
+	}
+	Min.X -= 0.1f;
+	Max.X += 0.1f;
+
+	// 반경을 1/16 월드 단위로 올려 역투영 오차에 따른 미세한 크기 변화를 줄인다.
+	const float Radius = FMath::Max(std::ceil(std::sqrt(RadiusSquared) * 16.0f) / 16.0f, 0.1f);
+
+	// Atlas 전체 크기가 아닌, 실제로 배정하는 개별 타일 해상도다.
+	const float Resolution = static_cast<float>(LightComponent->GetShadowMapResolution());
+
+	// 한 텍셀의 여유로 중심 반올림 때문에 Receiver가 잘리는 것을 방지한다.
+	// TODO: PCF 필터 범위가 정리되면 필터 샘플 여유도 함께 반영한다.
+	const float HalfExtent = Radius * Resolution / (Resolution - 2.0f);
+	const float WorldUnitsPerTexel = 2.0f * HalfExtent / Resolution;
+
+	FVector Center = WorldToLight.TransformPosition(SphereCenter);
+	Center.Y = std::round(Center.Y / WorldUnitsPerTexel) * WorldUnitsPerTexel;
+	Center.Z = std::round(Center.Z / WorldUnitsPerTexel) * WorldUnitsPerTexel;
+
+	Min.Y = Center.Y - HalfExtent;
+	Max.Y = Center.Y + HalfExtent;
+	Min.Z = Center.Z - HalfExtent;
+	Max.Z = Center.Z + HalfExtent;
+
 	const FVector Size = Max - Min;
-	const FVector Center = (Min + Max) * 0.5f;
 	const FVector ViewOrigin = Rotation.TransformPosition(FVector(Min.X, Center.Y, Center.Z));
 	const FMatrix View = FMatrix::MakeTranslation(-ViewOrigin) * WorldToLight;
 

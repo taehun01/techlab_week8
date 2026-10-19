@@ -5,7 +5,6 @@
 #include "Core/EngineLog.h"
 
 
-
 struct FLogData
 {
 	FString message;

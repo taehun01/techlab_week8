@@ -77,7 +77,9 @@ cbuffer ViewConstants : register(b0)
     float4 DirectionalCascadeFarDistances;
 
     float DirectionalShadowNearDistance;
-    float3 ViewPadding;
+    float DirectionalCascadeTransitionFraction;
+    uint VisualizeShadowCascades;
+    float ViewPadding;
 };
 
 cbuffer MaterialParams : register(b1)
@@ -242,18 +244,24 @@ float SampleShadowMap(FShadowShaderParameters Shadow, float3 LightNDC)
     return sum / max(taps, 1); // 전체 깊이 비교 결과를 평균해 그림자 가시성을 구한다.
 }
 
+// 양수 인덱스의 범위는 CPU가 보장하고, 실제 타깃 존재 여부만 확인한다.
+bool HasShadowMap(int ShadowIndex)
+{
+    if (ShadowIndex < 0)
+        return false;
+
+    const FShadowShaderParameters Shadow = ShadowParameters[ShadowIndex];
+    return Shadow.AtlasPageIndex >= 0 && Shadow.Resolution > 0;
+}
+
 // 월드 위치를 해당 그림자의 투영 공간으로 옮겨 가시성을 구한다.
 float GetShadowVisibility(int ShadowIndex, float3 WorldPos)
 {
-    // 유효한 양수 인덱스의 범위는 CPU의 GetShadowIndex가 보장한다.
-    if (ShadowIndex < 0)
+    // 타깃 실패·바인딩 상한 초과를 공통 경로에서 처리한다.
+    if (!HasShadowMap(ShadowIndex))
         return 1.0f;
 
     const FShadowShaderParameters Shadow = ShadowParameters[ShadowIndex];
-
-    // 타깃 실패·임시 바인딩 상한 초과 작업은 그림자를 적용하지 않는다.
-    if (Shadow.AtlasPageIndex < 0 || Shadow.Resolution == 0)
-        return 1.0f;
 
     const float4 LightClip = mul(float4(WorldPos, 1.0f), Shadow.LightViewProjection);
     if (LightClip.w <= 0.0f)
@@ -267,31 +275,86 @@ float GetShadowVisibility(int ShadowIndex, float3 WorldPos)
     return SampleShadowMap(Shadow, LightNDC);
 }
 
-// 카메라 선형 깊이로 해당 View의 Directional Cascade 하나를 선택한다.
-// CPU는 CascadeCount 4 이하와 GPU 인덱스의 유효 범위를 보장한다.
-float GetDirectionalShadowVisibility(float3 WorldPos)
+// 실제 그림자와 색상 표시가 동일한 선택 구간을 사용한다.
+int SelectDirectionalCascade(float ViewDepth)
 {
-    if (DirectionalCascadeCount == 0)
-        return 1.0f;
-
-    const float ViewDepth = dot(WorldPos - CameraWorldPos, CameraForward);
     if (ViewDepth < DirectionalShadowNearDistance)
-        return 1.0f;
+        return -1;
 
     [loop]
-    for (uint CascadeIndex = 0; CascadeIndex < DirectionalCascadeCount; ++CascadeIndex)
+    for (uint Index = 0; Index < DirectionalCascadeCount; ++Index)
     {
-        if (ViewDepth <= DirectionalCascadeFarDistances[CascadeIndex])
-        {
-            // 누락된 인덱스 -1도 기존 함수가 그림자 없음으로 처리한다.
-            return GetShadowVisibility(DirectionalShadowIndices[CascadeIndex], WorldPos);
-        }
+        if (ViewDepth <= DirectionalCascadeFarDistances[Index])
+            return int(Index);
     }
-
-    // 마지막 구간 밖에는 동적 Directional 그림자를 제공하지 않는다.
-    return 1.0f;
+    return -1;
 }
 
+// 다음 맵이 존재하는 전환 구간에서만 보간한다.
+float GetDirectionalCascadeBlend(uint CascadeIndex, float ViewDepth)
+{
+    if (CascadeIndex + 1 >= DirectionalCascadeCount || DirectionalCascadeTransitionFraction <= 0.0f)
+        return 0.0f;
+
+    const float NearDistance = CascadeIndex == 0 ? DirectionalShadowNearDistance : DirectionalCascadeFarDistances[CascadeIndex - 1];
+    const float FarDistance = DirectionalCascadeFarDistances[CascadeIndex];
+    const float Width = (FarDistance - NearDistance) * DirectionalCascadeTransitionFraction;
+    const float Start = FarDistance - Width;
+
+    if (ViewDepth <= Start || !HasShadowMap(DirectionalShadowIndices[CascadeIndex + 1]))
+        return 0.0f;
+
+    return saturate((ViewDepth - Start) / Width);
+}
+
+// 깊이 비교와 PCF를 마친 가시성을 전환 구간에서 보간한다.
+float GetDirectionalShadowVisibility(float3 WorldPos)
+{
+    const float ViewDepth = dot(WorldPos - CameraWorldPos, CameraForward);
+    const int Selected = SelectDirectionalCascade(ViewDepth);
+    if (Selected < 0)
+        return 1.0f;
+
+    const uint CascadeIndex = uint(Selected);
+    const int ShadowIndex = DirectionalShadowIndices[CascadeIndex];
+    if (!HasShadowMap(ShadowIndex))
+        return 1.0f;
+
+    const float Visibility = GetShadowVisibility(ShadowIndex, WorldPos);
+    const float Blend = GetDirectionalCascadeBlend(CascadeIndex, ViewDepth);
+    if (Blend <= 0.0f)
+        return Visibility;
+
+    const float NextVisibility = GetShadowVisibility(DirectionalShadowIndices[CascadeIndex + 1], WorldPos);
+    return lerp(Visibility, NextVisibility, Blend);
+}
+
+// 전환 구간은 두 색을 섞고, 범위 밖이나 사용 불가능한 맵은 회색으로 표시한다.
+float3 GetDirectionalCascadeDebugColor(float3 WorldPos)
+{
+    const float ViewDepth = dot(WorldPos - CameraWorldPos, CameraForward);
+    const int Selected = SelectDirectionalCascade(ViewDepth);
+    if (Selected < 0)
+        return float3(0.25f, 0.25f, 0.25f);
+
+    const uint CascadeIndex = uint(Selected);
+    if (!HasShadowMap(DirectionalShadowIndices[CascadeIndex]))
+        return float3(0.25f, 0.25f, 0.25f); 
+
+    static const float3 Colors[4] =
+    {
+        float3(1.0f, 0.2f, 0.2f),
+        float3(0.2f, 1.0f, 0.2f),
+        float3(0.2f, 0.4f, 1.0f),
+        float3(1.0f, 1.0f, 0.2f)
+    };
+
+    float3 Color = Colors[CascadeIndex];
+    const float Blend = GetDirectionalCascadeBlend(CascadeIndex, ViewDepth);
+    if (Blend > 0.0f)
+        Color = lerp(Color, Colors[CascadeIndex + 1], Blend);
+    return Color;
+}
 #endif
 
 // 원뿔 감쇠량. 0(Outer 밖) ~ 1(Inner 안)
@@ -593,6 +656,21 @@ float4 mainPS(VS_OUTPUT Input) : SV_TARGET
     DiffuseLighting += Input.VertexDiffuse;
 #endif
 
-    return float4(Albedo.rgb * DiffuseLighting + SpecularLighting, Alpha);
+    // 먼저 기존 조명과 그림자를 모두 반영한 표면 색을 계산한다.
+    float3 FinalColor = Albedo.rgb * DiffuseLighting + SpecularLighting;
+
+#if defined(LIGHTING_MODEL_LAMBERT) || defined(LIGHTING_MODEL_BLINN_PHONG)
+    if (VisualizeShadowCascades != 0 && Input.ReceivesShadow != 0)
+    {
+        // Directional의 깊이 비교 결과로만 마스크를 만든다.
+        const float ShadowMask = saturate(1.0f - GetDirectionalShadowVisibility(Input.WorldPos));
+        const float3 CascadeColor = GetDirectionalCascadeDebugColor(Input.WorldPos);
+
+        // 그림자로 가려진 부분에만 색상을 섞고 기존 Alpha는 유지한다.
+        FinalColor = lerp(FinalColor, CascadeColor, ShadowMask * 0.8f);
+    }
+#endif
+
+    return float4(FinalColor, Alpha);
 #endif
 }

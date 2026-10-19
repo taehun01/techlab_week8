@@ -21,4 +21,5 @@
     X(Grid,           1u << 6, "Draw Batch Line / Grid", true,  Global, Grid)      \
     X(PSGrid,         1u << 7, "Draw PS Grid",           false, Global, Grid)      \
     X(Wireframe,      1u << 8, "Wireframe",              false, View,   Viewport)  \
-    X(DynamicShadows, 1u << 9, "Dynamic Shadows",        true,  Global, Rendering)
+    X(DynamicShadows, 1u << 9, "Dynamic Shadows",        true,  Global, Rendering) \
+    X(ShadowCascades, 1u << 10, "Shadow Cascades", false, View,   Viewport)

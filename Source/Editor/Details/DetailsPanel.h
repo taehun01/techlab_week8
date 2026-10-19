@@ -2,7 +2,8 @@
 
 #include <format>
 #include "Editor/EditorUI/EditorPanel.h"
-
+#include <functional>
+#include <utility>
 #include "Engine/World.h"
 
 struct FTransform;
@@ -40,7 +41,11 @@ public:
 	void SetWorld(UWorld* InWorld) { World = InWorld; }
 	// Renderer를 소유하지 않으며, 미리보기 조회에만 사용한다.
 	void SetRenderer(const FRenderer* InRenderer) { Renderer = InRenderer; }
-
+	void SetShadowCascadeDebugCallbacks(std::function<bool(uint32)> InGetter, std::function<void(uint32, bool)> InSetter)
+	{
+		ShadowCascadeDebugGetter = std::move(InGetter);
+		ShadowCascadeDebugSetter = std::move(InSetter);
+	}
 	ImFont* GetCustomFont() { return CustomFont; }
 
 private:
@@ -67,5 +72,13 @@ private:
 
 	USceneComponent* PendingDroppedComponent = nullptr;
 	USceneComponent* PendingDragComponent = nullptr;
+
+	// 숫자 선택값만 유지하고 Proxy·텍스처는 매 프레임 다시 조회한다.
+	uint32 ShadowPreviewViewId = 0;
+	uint32 ShadowPreviewProjectionIndex = 0;
+
+	// 실제 표시 상태는 Client에만 저장한다.
+	std::function<bool(uint32)> ShadowCascadeDebugGetter;
+	std::function<void(uint32, bool)> ShadowCascadeDebugSetter;
 };
 

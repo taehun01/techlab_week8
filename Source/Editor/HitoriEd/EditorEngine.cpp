@@ -40,7 +40,7 @@
 #include <utility>
 #include "Components/DirectionalLightComponent.h"
 #include "Engine/DirectionalLightSceneProxy.h"
-
+#include "Core/Stats/ShadowStats.h"
 namespace
 {
 	DECLARE_CYCLE_STAT("Viewport Update", STAT_ViewportUpdate);
@@ -131,6 +131,27 @@ bool UEditorEngine::Init()
 	DetailsPanel = EditorUI->AddEditorPanel<FDetailsPanel>();
 	// 패널에는 조회 대상만 전달하고, 그림자 작업이나 타깃을 보관하지 않는다.
 	DetailsPanel->SetRenderer(Renderer);
+
+	DetailsPanel->SetShadowCascadeDebugCallbacks(
+		[this](uint32 ViewId)
+		{
+			if (ViewId == 0 || ViewId > FMultipleViewportsAdapter::MaxViewCount)
+				return false;
+
+			return MultipleViewportsAdapter.GetViewShowFlags(static_cast<int32>(ViewId - 1)).IsEnabled(EEngineShowFlag::ShadowCascades);
+		},
+		[this](uint32 ViewId, bool bEnabled)
+		{
+			if (ViewId == 0 || ViewId > FMultipleViewportsAdapter::MaxViewCount)
+				return;
+
+			// 다른 View 플래그는 유지하고 색상 표시만 변경한다.
+			const int32 ViewIndex = static_cast<int32>(ViewId - 1);
+			FEngineShowFlags Flags = MultipleViewportsAdapter.GetViewShowFlags(ViewIndex);
+			Flags.SetEnabled(EEngineShowFlag::ShadowCascades, bEnabled);
+			MultipleViewportsAdapter.SetViewShowFlags(ViewIndex, Flags);
+		});
+
 	EditorControlsPanel = EditorUI->AddEditorPanel<FEditorControlsPanel>();
 	ViewportsPanel = EditorUI->AddEditorPanel<FViewportsPanel>();
 	ContentDrawerPanel = EditorUI->AddEditorPanel<FContentDrawerPanel>();
@@ -470,7 +491,7 @@ void UEditorEngine::RenderMultipleViewports()
 		const TArray<int32>* ViewIndices = ShadowViews.Find(World);
 		if (!ViewIndices)
 			continue;
-
+		SCOPE_CYCLE_COUNTER(ShadowStats::STAT_SetupCPU);
 		// 여러 View에서 같은 Spot을 중복 생성하지 않는다.
 		World->GatherLocalProjectedShadows(ShadowInfos);
 
@@ -479,8 +500,7 @@ void UEditorEngine::RenderMultipleViewports()
 		if (!Directional || !Directional->ShouldCastShadow())
 			continue;
 
-		const auto* Light = static_cast<const UDirectionalLightComponent*>(
-			Directional->GetLightComponent());
+		const auto* Light = static_cast<const UDirectionalLightComponent*>(Directional->GetLightComponent());
 		const float ShadowDistance = Light->GetShadowDistance();
 
 		// 각 작업을 설정한 뒤 재사용하는 임시 계산 버퍼다.
@@ -507,19 +527,22 @@ void UEditorEngine::RenderMultipleViewports()
 			}
 
 			// 패널 PIE와 별도 PIE도 실제 게임 카메라 Override를 사용한다.
-			const FViewCamera& Camera =
-				MultipleViewportsAdapter.GetEffectiveCamera(ViewIndex);
-			if (!Directional->CalculateCascadeSplitDistances(
-				Camera.Projection.NearClip, Camera.Projection.FarClip, SplitDistances))
+			const FViewCamera& Camera =	MultipleViewportsAdapter.GetEffectiveCamera(ViewIndex);
+			if (!Directional->CalculateCascadeSplitDistances(Camera.Projection.NearClip, Camera.Projection.FarClip, SplitDistances))
 				continue;
 
 			for (int32 CascadeIndex = 0; CascadeIndex + 1 < SplitDistances.Num(); ++CascadeIndex)
 			{
-				// 이전 View나 Cascade의 꼭짓점을 합치지 않는다.
+				// 이전 구간의 CascadeTransitionFraction 비율만큼 생성 Near 확장
+				float RenderNear = SplitDistances[CascadeIndex];
+				if (CascadeIndex > 0)
+				{
+					const float PreviousLength = SplitDistances[CascadeIndex] - SplitDistances[CascadeIndex - 1];
+					RenderNear -= PreviousLength * Light->GetCascadeTransitionFraction();
+				}
+
 				ReceiverCorners.Reset();
-				if (!MultipleViewportsAdapter.AppendShadowFrustumCorners(
-					ViewIndex, SplitDistances[CascadeIndex],
-					SplitDistances[CascadeIndex + 1], ReceiverCorners))
+				if (!MultipleViewportsAdapter.AppendShadowFrustumCorners(ViewIndex, RenderNear, SplitDistances[CascadeIndex + 1], ReceiverCorners))
 					continue;
 
 				World->GatherDirectionalShadow(ShadowInfos, ReceiverCorners,
@@ -1093,6 +1116,9 @@ void UEditorEngine::RenderFrame(const int32 ViewIndex, UWorld& ViewWorld, const 
 	ViewConstants.ViewProjection = ViewProjection;
 	ViewConstants.CameraWorldPos = ViewCameraLocation;
 	ViewConstants.CameraForward = ViewCameraForward;
+	// 패널과 별도 PIE 모두 해당 Client의 표시 상태를 전달한다.
+	ViewConstants.VisualizeShadowCascades = MultipleViewportsAdapter.GetViewShowFlags(ViewIndex).IsEnabled(EEngineShowFlag::ShadowCascades) ? 1u : 0u;
+
 
 	// 작업 생성과 동일한 표시 조건으로 Directional 수신 데이터를 준비한다.
 	const EViewMode ViewMode = MultipleViewportsAdapter.GetViewMode(ViewIndex);
@@ -1129,7 +1155,11 @@ void UEditorEngine::RenderFrame(const int32 ViewIndex, UWorld& ViewWorld, const 
 			const uint32 CascadeCount = static_cast<uint32>(SplitDistances.Num() - 1);
 			ViewConstants.DirectionalCascadeCount = CascadeCount;
 			ViewConstants.DirectionalShadowNearDistance = SplitDistances[0];
-
+			if (CascadeCount > 1)
+			{
+				const auto* Light = static_cast<const UDirectionalLightComponent*>(Directional->GetLightComponent());
+				ViewConstants.DirectionalCascadeTransitionFraction = Light->GetCascadeTransitionFraction();
+			}
 			for (uint32 CascadeIndex = 0; CascadeIndex < CascadeCount; ++CascadeIndex)
 			{
 				// GPU 인덱스는 연속 번호라고 가정하지 않고 각각 조회한다.
@@ -1249,6 +1279,7 @@ UWorld* UEditorEngine::CreatePIEWorldByDuplication(FWorldContext& PIEContext, UW
 void UEditorEngine::OnActiveWorldChanged()
 {
 	ResetSceneSelection();
+	OutlinerPanel->SetWorld(GetActiveWorld());
 }
 
 void UEditorEngine::EndPlayMap()
