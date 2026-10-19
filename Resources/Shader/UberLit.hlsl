@@ -132,7 +132,7 @@ StructuredBuffer<uint> CellLightIndices : register(t12);
 Texture2D DiffuseTexture : register(t0);
 Texture2D NormalTexture : register(t1);
 SamplerState MaterialSampler : register(s0);
-SamplerState PCFSampler : register(s1);
+SamplerComparisonState PCFSampler : register(s1);
 
 #if defined(LIGHTING_MODEL_LAMBERT) || defined(LIGHTING_MODEL_BLINN_PHONG)
 
@@ -196,10 +196,10 @@ struct FLightContribution
 
 #if defined(LIGHTING_MODEL_LAMBERT) || defined(LIGHTING_MODEL_BLINN_PHONG)
 
-// 현재 SM5.0 경로에서 텍스처 접근을 정적 인덱스로 만든다.
-float LoadShadowDepth(int AtlasPageIndex, int2 Texel)
+// 현재 SM5.0 경로에서 정적 텍스처 인덱스로 비교 샘플링한 가시성을 반환한다.
+float LoadShadowDepth(int AtlasPageIndex, SamplerComparisonState Sampler, float2 UV, float CompareValue)
 {
-#define SHADOW_DEPTH_CASE(Index) case Index: return ShadowAtlases[Index].Load(int3(Texel, 0))
+#define SHADOW_DEPTH_CASE(Index) case Index: return ShadowAtlases[Index].SampleCmpLevelZero(Sampler, UV, CompareValue)
 
     switch (AtlasPageIndex)
     {
@@ -212,7 +212,7 @@ float LoadShadowDepth(int AtlasPageIndex, int2 Texel)
 #undef SHADOW_DEPTH_CASE
 }
 
-// 저장 방식에 따른 좌표 변환과 Hard Shadow 깊이 비교를 담당한다.
+// Atlas 타일 좌표 변환과 하드웨어 PCF 가시성 계산을 담당한다.
 float SampleShadowMap(FShadowShaderParameters Shadow, float3 LightNDC)
 {
     // D3D 텍스처의 좌상단 원점에 맞춰 Y를 뒤집는다.
@@ -222,22 +222,23 @@ float SampleShadowMap(FShadowShaderParameters Shadow, float3 LightNDC)
     if (!(all(UV >= 0.0.xx) && all(UV <= 1.0.xx)))
         return 1.0f;
 
-    float texel = 1.0f / max(Shadow.Resolution, 1.0f); // Texture에서 한칸의 크기
-    int r = max(int(Shadow.ShadowPCFRadius), 0); // 반경 r의 (2r + 1) x (2r + 1) 깊이 비교 결과를 평균한다.
+    float texel = 1.0f / max(Shadow.Resolution, 1.0f); // 타일 기준 한 텍셀의 UV 크기다.
+    float halftexel = 0.5f * texel; // 비교 필터가 인접 타일을 읽지 않도록 텍셀 중심까지 제한한다.
+    int r = max(int(Shadow.ShadowPCFRadius), 1); // (2r) x (2r)회 호출하며, 각 호출은 하드웨어의 2 x 2 비교 필터를 사용한다.
     float sum = 0.0f;
     int taps = 0;   // 평균 나눌때 분모, 픽셀 연산 횟수
     [loop]
-    for (int dy = -r; dy <= r; ++dy)
+    for (int dy = -r; dy < r; ++dy)
     {
         [loop]
-        for (int dx = -r; dx <= r; ++dx)
+        for (int dx = -r; dx < r; ++dx)
         {
-            float2 uvOff = UV + float2(dx, dy) * texel; // 초기 UV + texel 단위로 dx, dy 이동량
-            const int MaxTexel = int(Shadow.Resolution) - 1;    // Texture 끝점
-            const int2 LocalTexel = clamp(int2(uvOff * Shadow.Resolution), int2(0, 0), int2(MaxTexel, MaxTexel));   // 한 Tile(Atlas 4등분 구역) 기준 Texel 좌표값
-            const int2 Texel = int2(Tile * Shadow.Resolution) + LocalTexel; // Tile 위치 반영한 전체 Atlas 기준 Texel 좌표값
-            float d = LoadShadowDepth(Shadow.AtlasPageIndex, Texel); // 카메라 기준으로 계산한 조명 좌표에서의 ShadowMap Depth 값
-            sum += (LightNDC.z - Shadow.Bias<= d) ? 1.0f : 0.0f; // CurrentDepth <= Closest Depth일 경우 그림자가 아니므로 1, 반대일경우 0, Bias는 편차값
+            float2 offset = float2(dx, dy) + 0.5f; // 짝수 격자의 샘플 위치를 중심 양쪽에 대칭으로 배치한다.
+            float2 uvOff = UV + offset * texel;
+            float2 localUV = clamp(uvOff, float2(halftexel, halftexel), float2(1.0f - halftexel, 1.0f - halftexel));
+            float2 atlasUV = (float2(Tile) + localUV) / float(SHADOW_ATLAS_TILES_PER_ROW);
+            float d = LoadShadowDepth(Shadow.AtlasPageIndex, PCFSampler, atlasUV, LightNDC.z - Shadow.Bias);
+            sum += d; // 깊이 비교와 선형 필터링을 마친 가시성을 누적한다.
             taps++;
         }
     }

@@ -47,6 +47,6 @@ private:
 	// Receiver의 깊이 비교에 사용할 Bias
 	float ShadowBias = 0.001f;
 	// PCF에 사용되는 Radius 값
-	float ShadowPCFRadius = 0.1f;
+	float ShadowPCFRadius = 1.0f;
 
 };
