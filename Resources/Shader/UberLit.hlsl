@@ -232,7 +232,7 @@ float LoadShadowDepth(int AtlasPageIndex, int2 Texel)
 }
 
 // Atlas 타일 좌표 변환과 하드웨어 PCF 가시성 계산을 담당한다.
-float SampleShadowMap(FShadowShaderParameters Shadow, float3 LightNDC)
+float SampleShadowMap(FShadowShaderParameters Shadow, float3 LightNDC, int Lightindex)
 {
     // D3D 텍스처의 좌상단 원점에 맞춰 Y를 뒤집는다.
     const float2 UV = LightNDC.xy * float2(0.5f, -0.5f) + 0.5f;
@@ -251,9 +251,11 @@ float SampleShadowMap(FShadowShaderParameters Shadow, float3 LightNDC)
 // 선택된 Blocker 깊이를 각각 선형으로 복원한 뒤 평균 계산
     float AverageBlockerDepth;
 // Receiver와 평균 Blocker 선형 깊이, 광원 크기로 Penumbra 폭 계산
-    float PenumbraWidth = Lightsize * (ReceiverDepth - AverageBlockerDepth) / AverageBlockerDepth
+    float PenumbraWidth = Lightsize * (ReceiverDepth - AverageBlockerDepth) / AverageBlockerDepth;
 // Penumbra 폭을 타일 UV 기준 PCF 반경으로 변환
-
+    float Frustumwidth = 2.0f * ReceiverDepth * tan(acos(LocalLights[Lightindex].OuterConeCos));
+    float PCFDiameterUV = PenumbraWidth / Frustumwidth;
+    float PCFradiusUV = PCFDiameterUV * 0.5f;
 // 계산한 반경으로 샘플 위치를 조절하며 PCF 수행
 // 실제 깊이 비교에는 기존 투영 깊이와 Bias 사용
     
@@ -326,23 +328,6 @@ float2 PCSS_BlockerDistance(Texture2D<float2> tex, SamplerState state, float3 pr
 
     // To solve cases where there are no blockers - we output 2 values - average blocker depth and no. of blockers
     return float2(avgBlocker, (float) blockers);
-}
-
-float ShadowMapPCSS(...)
-{
-    float averageBlockerDistance = PCSS_BlockerDistance(...);
-  
-    // If there isn't any average blocker distance - it means that there is no blocker at all
-    if (averageBlockerDistance < 1.0)
-    {
-        return 1.0f;
-    }
-    else
-    {
-        float penumbraSize = lightSize * (receiverDepth - averageBlockerDepth) / averageBlockerDepth
-        float shadow = ShadowPCF(..., penumbraSize);
-        return shadow;
-    }
 }
 
 // 양수 인덱스의 범위는 CPU가 보장하고, 실제 타깃 존재 여부만 확인한다.
