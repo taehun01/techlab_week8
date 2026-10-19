@@ -45,14 +45,24 @@ bool FPointLightSceneProxy::GetShadowProjection(FShadowProjection& OutShadowProj
     FMatrix Rotation0 = FMatrix::Identity;
     FMatrix Rotation1 = FMatrix::Identity;
     Rotation1[0][0] *= -1; Rotation1[1][1] *= -1; Rotation1[2][2] *= 1;
+
     FMatrix Rotation2 = FMatrix::Identity;
-    Rotation2[0][0] *= 1; Rotation2[1][1] *= -1; Rotation2[2][2] *= 1;
+    Rotation2[0][0] = 0; Rotation2[0][1] = 1; Rotation2[0][2] = 0;
+    Rotation2[1][0] = -1; Rotation2[1][1] = 0; Rotation2[1][2] = 0;
+    Rotation2[2][0] = 0; Rotation2[2][1] = 0; Rotation2[2][2] = 1;
     FMatrix Rotation3 = FMatrix::Identity;
-    Rotation3[0][0] *= -1; Rotation3[1][1] *= 1; Rotation3[2][2] *= 1;
+    Rotation3[0][0] = 0; Rotation3[0][1] = -1; Rotation3[0][2] = 0;
+    Rotation3[1][0] = 1; Rotation3[1][1] = 0; Rotation3[1][2] = 0;
+    Rotation3[2][0] = 0; Rotation3[2][1] = 0; Rotation3[2][2] = 1;
+
     FMatrix Rotation4 = FMatrix::Identity;
-    Rotation4[0][0] *= 1; Rotation4[1][1] *= 1; Rotation4[2][2] *= -1;
+    Rotation4[0][0] = 0; Rotation4[0][1] = 0; Rotation4[0][2] = 1;
+    Rotation4[1][0] = 0; Rotation4[1][1] = 1; Rotation4[1][2] = 0;
+    Rotation4[2][0] = -1; Rotation4[2][1] = 0; Rotation4[2][2] = 0;
     FMatrix Rotation5 = FMatrix::Identity;
-    Rotation5[0][0] *= -1; Rotation5[1][1] *= 1; Rotation5[2][2] *= 1;
+    Rotation5[0][0] = 0; Rotation5[0][1] = 0; Rotation5[0][2] = -1;
+    Rotation5[1][0] = 0; Rotation5[1][1] = 1; Rotation5[1][2] = 0;
+    Rotation5[2][0] = 1; Rotation5[2][1] = 0; Rotation5[2][2] = 0;
 
     FMatrix View0 = Translation * Rotation0.GetTransposed();
     FMatrix View1 = Translation * Rotation1.GetTransposed();

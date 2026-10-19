@@ -77,3 +77,4 @@ private:
 
 	TMap<ELightType, FShadowAtlasPool> AtlasPools;
 };
+ 

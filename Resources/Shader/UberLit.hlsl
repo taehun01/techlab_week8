@@ -614,6 +614,7 @@ bool bUseLightGrid, bool bReceiveShadow)
                 float3 AbsDir = abs(Direction);
                 //float Largest = max(AbsDirection.x, max(AbsDirection.y, AbsDirection.z));
                 
+                // Face 순서와 View 행렬 순서 같아야함
                 // Direction의 절대값이 가장 큰 요소(|x| |y| |z|) 따라 FaceIndex 결정
                 // |X|가 가장 클때 X >= 0 -> FaceIndex 0    X < 0 -> FaceIndex 1
                 // |Y|가 가장 클때 Y >= 0 -> FaceIndex 2    Y < 0 -> FaceIndex 3
