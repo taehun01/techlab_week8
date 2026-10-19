@@ -346,14 +346,10 @@ float SampleSpotShadowMap(FShadowShaderParameters Shadow, float3 LightNDC, FLigh
 // Blocker가 없으면 가시성 1 반환
     if (numBlockers < 1) return 1.0f;
     
-// Receiver와 평균 Blocker Depth, 광원 Radius UV로 Penumbra 영역의 폭 계산
-    float PenumbraWidth = (LightRadiusUV * 2) * (ReceiverDepth - AverageBlockerDepth) / AverageBlockerDepth;
+// Receiver와 평균 Blocker Depth, 광원 Radius UV로 Penumbra 영역의 Ratio 계산 후 UV 기준 PCFRadius 추출
+    float PenumbraRatio = (ReceiverDepth - AverageBlockerDepth) / AverageBlockerDepth;
+    float PCFradiusUV = PenumbraRatio * LightRadiusUV * 0.1f / ReceiverDepth;
     
-// Penumbra 폭을 타일 UV 기준 PCF 반경으로 변환
-    float PCFDiameterUV = PenumbraWidth / Frustumwidth;
-    float PCFradiusUV = PCFDiameterUV * 0.5f;
-// 계산한 반경으로 샘플 위치를 조절하며 PCF 수행
-
     if (KernelSize == 0)
     {
         // UV 1에서도 현재 타일의 마지막 텍셀만 읽도록 제한한다.
