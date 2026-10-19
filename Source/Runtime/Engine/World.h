@@ -15,7 +15,7 @@
 #include "Camera/CameraActor.h"
 #include "Asset/LOD/StaticMeshLODSelector.h"
 #include "Engine/EngineTypes.h"
-
+#include "Containers/Queue.h"
 //class ACameraActor;
 class ULevel;
 class UBillboardComponent;
@@ -70,9 +70,12 @@ public:
 		FRenderQueue* ArrowQueue = nullptr);
 
 
-	// BeginRenderViews 이후 Spot 전체와 선택된 Directional의 작업을 추가한다.
-	// ReceiverCorners는 이 World에서 그림자를 사용하는 View들의 범위를 합친 값이다.
-	void GatherProjectedShadows(TArray<FProjectedShadowInfo>& OutShadows, const TArray<FVector>& DirectionalReceiverCorners);
+	// BeginRenderViews 이후 World 공유 지역광 작업을 한 번 추가한다.
+	void GatherLocalProjectedShadows(TArray<FProjectedShadowInfo>& OutShadows);
+
+	// 지정한 View·Cascade의 Directional 투영을 만들고 Caster를 수집한다.
+	void GatherDirectionalShadow(TArray<FProjectedShadowInfo>& OutShadows,
+		const TArray<FVector>& ReceiverCorners, uint32 ProjectionIndex, uint32 ViewId);
 
 	// BeginRenderViews와 SetupProjection 이후, 해당 작업에 한 번 호출한다.
 	// Light Frustum과 CastShadow 조건으로 정적 메시 Caster를 수집한다.

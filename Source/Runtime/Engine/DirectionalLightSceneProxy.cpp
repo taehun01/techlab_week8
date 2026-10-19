@@ -20,7 +20,8 @@ void FDirectionalLightSceneProxy::GetLightShaderParameters(FLightRenderParameter
 
 // 카메라의 Receiver 범위를 광원 축의 AABB로 감싸 단일 직교 투영을 만든다.
 bool FDirectionalLightSceneProxy::SetupShadowProjection(
-    const TArray<FVector>& ReceiverCorners, FProjectedShadowInfo& OutInfo) const
+    const TArray<FVector>& ReceiverCorners, FProjectedShadowInfo& OutInfo,
+	uint32 ProjectionIndex, uint32 ViewId) const
 {
 	if (!ShouldCastShadow() || ReceiverCorners.IsEmpty())
 		return false;
@@ -70,7 +71,7 @@ bool FDirectionalLightSceneProxy::SetupShadowProjection(
 	CasterFrustum.Planes[5] = { -Forward, Max.X };
 	const uint32 CasterPlaneMask = FrustumAllPlanesMask & ~(1u << 4);
 
-	OutInfo.SetupProjection(*this, ViewOrigin, View * Projection, CasterFrustum, CasterPlaneMask);
+	OutInfo.SetupProjection(*this, ViewOrigin, View * Projection, CasterFrustum, CasterPlaneMask, ProjectionIndex, ViewId);
 	return true;
 }
 
@@ -88,9 +89,8 @@ bool FDirectionalLightSceneProxy::CalculateCascadeSplitDistances(float ViewNear,
 		return false;
 	}
 
-	// CSM을 끄면 같은 입력 범위를 분할하지 않고 한 구간으로 반환한다.
-	const int32 CascadeCount = Directional->IsCSMEnabled()
-		? Directional->GetCascadeCount() : 1;
+	// CSM을 끄면 같은 입력 범위를 분할하지 않는다.
+	const int32 CascadeCount = Directional->IsCSMEnabled() ? Directional->GetCascadeCount() : 1;
 	const float Exponent = Directional->GetCascadeDistributionExponent();
 
 	// 구간 길이의 가중치 1, E, E²...의 전체 합을 구한다.

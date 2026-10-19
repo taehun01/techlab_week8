@@ -464,39 +464,72 @@ void UEditorEngine::RenderMultipleViewports()
 	// TODO: FSceneRenderer 분리 시 World별 View 그룹 구성과 패스 조정을 이동한다.
 	TArray<FProjectedShadowInfo> ShadowInfos;
 
-	// 기존 World 준비 순서대로 처리해 작업 등록 순서를 유지한다.
+	// World 공유 작업과 View별 Directional 작업을 같은 프레임 목록에 모은다.
 	for (UWorld* World : PreparedWorlds)
 	{
 		const TArray<int32>* ViewIndices = ShadowViews.Find(World);
 		if (!ViewIndices)
 			continue;
 
-		TArray<FVector> ReceiverCorners;
+		// 여러 View에서 같은 Spot을 중복 생성하지 않는다.
+		World->GatherLocalProjectedShadows(ShadowInfos);
+
 		const FDirectionalLightSceneProxy* Directional =
 			World->GetScene().GetPrimaryDirectionalLight();
+		if (!Directional || !Directional->ShouldCastShadow())
+			continue;
 
-		// 그림자를 사용하지 않는 라이트에는 View 역투영 계산을 생략한다.
-		if (Directional && Directional->ShouldCastShadow())
+		const auto* Light = static_cast<const UDirectionalLightComponent*>(
+			Directional->GetLightComponent());
+		const float ShadowDistance = Light->GetShadowDistance();
+
+		// 각 작업을 설정한 뒤 재사용하는 임시 계산 버퍼다.
+		TArray<float> SplitDistances;
+		TArray<FVector> ReceiverCorners;
+		ReceiverCorners.Reserve(8);
+
+		for (int32 ViewIndex : *ViewIndices)
 		{
-			const auto* Light =	static_cast<const UDirectionalLightComponent*>(Directional->GetLightComponent());
-			const float ShadowDistance = Light->GetShadowDistance();
+			// 0은 World 공유 작업에 남겨두고 View 슬롯으로 안정적인 ID를 만든다.
+			const uint32 ViewId = static_cast<uint32>(ViewIndex + 1);
+			ReceiverCorners.Reset();
 
-			ReceiverCorners.Reserve(ViewIndices->Num() * 8);
-			for (int32 ViewIndex : *ViewIndices)
+			if (MultipleViewportsAdapter.IsOrthographic(ViewIndex))
 			{
-				// 기존 helper가 EffectiveCamera·직교 보정·실제 View 크기를 반영한다.
-				// 범위가 없는 View는 아무 점도 추가하지 않고 다음 View를 계속 처리한다.
-				MultipleViewportsAdapter.AppendShadowFrustumCorners(ViewIndex, ShadowDistance, ReceiverCorners);
+				// 직교 View는 논리 원점 앞뒤의 기존 단일 범위를 사용한다.
+				if (MultipleViewportsAdapter.AppendShadowFrustumCorners(
+					ViewIndex, ShadowDistance, ReceiverCorners))
+				{
+					World->GatherDirectionalShadow(
+						ShadowInfos, ReceiverCorners, 0, ViewId);
+				}
+				continue;
+			}
+
+			// 패널 PIE와 별도 PIE도 실제 게임 카메라 Override를 사용한다.
+			const FViewCamera& Camera =
+				MultipleViewportsAdapter.GetEffectiveCamera(ViewIndex);
+			if (!Directional->CalculateCascadeSplitDistances(
+				Camera.Projection.NearClip, Camera.Projection.FarClip, SplitDistances))
+				continue;
+
+			for (int32 CascadeIndex = 0; CascadeIndex + 1 < SplitDistances.Num(); ++CascadeIndex)
+			{
+				// 이전 View나 Cascade의 꼭짓점을 합치지 않는다.
+				ReceiverCorners.Reset();
+				if (!MultipleViewportsAdapter.AppendShadowFrustumCorners(
+					ViewIndex, SplitDistances[CascadeIndex],
+					SplitDistances[CascadeIndex + 1], ReceiverCorners))
+					continue;
+
+				World->GatherDirectionalShadow(ShadowInfos, ReceiverCorners,
+					static_cast<uint32>(CascadeIndex), ViewId);
 			}
 		}
-
-		// 전체 View 범위를 모은 뒤 World별 Directional 작업을 한 번 등록한다.
-		// Directional 범위가 없어도 기존 Spot 작업은 계속 수집한다.
-		World->GatherProjectedShadows(ShadowInfos, ReceiverCorners);
 	}
 
-	// 모든 World의 타깃을 배정하고 카메라 큐 수집 전에 Depth를 생성한다.
-	// 빈 목록도 전달해 이전 프레임의 작업과 배정을 정리한다.
+	// 모든 World·View의 작업을 모은 뒤 Atlas 배정과 Depth 실행을 한 번 수행한다.
+	// 빈 목록도 전달해 이전 프레임의 작업·바인딩·타일 할당을 정리한다.
 	Renderer->RenderShadowMaps(std::move(ShadowInfos), *ShadowViewRenderer);
 
 	for (int32 ViewIndex = 0; ViewIndex < 4; ++ViewIndex)

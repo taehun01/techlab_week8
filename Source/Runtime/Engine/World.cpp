@@ -460,8 +460,8 @@ void UWorld::GatherRenderPackets(FRenderQueue& RenderQueue, const FLODViewContex
 	}
 }
 
-// Spot은 기존 경로를 사용하고, Directional은 합쳐진 Receiver 범위로 준비한다.
-void UWorld::GatherProjectedShadows(TArray<FProjectedShadowInfo>& OutShadows, const TArray<FVector>& DirectionalReceiverCorners)
+// 지역광 그림자는 같은 World의 여러 View가 공유한다.
+void UWorld::GatherLocalProjectedShadows(TArray<FProjectedShadowInfo>& OutShadows)
 {
 	for (const FLocalLightSceneProxy* LightProxy : Scene.LocalLightProxies)
 	{
@@ -474,22 +474,28 @@ void UWorld::GatherProjectedShadows(TArray<FProjectedShadowInfo>& OutShadows, co
 		if (!LightProxy->GetShadowProjection(ShadowViewOrigin, LightViewProjection))
 			continue;
 
+		// 기본 식별자 0·0을 사용하는 World 공유 작업이다.
 		FProjectedShadowInfo& ShadowInfo = OutShadows.AddDefaulted_GetRef();
 		ShadowInfo.SetupProjection(*LightProxy, ShadowViewOrigin, LightViewProjection);
 		GatherShadowCasters(ShadowInfo);
 	}
+}
 
-	// 화면 조명과 동일한 Directional 하나만 사용한다.
+// 하나의 Receiver 구간마다 독립적인 Directional 작업을 추가한다.
+void UWorld::GatherDirectionalShadow(TArray<FProjectedShadowInfo>& OutShadows,
+	const TArray<FVector>& ReceiverCorners, uint32 ProjectionIndex, uint32 ViewId)
+{
+	// 화면 조명과 동일한 Directional 하나를 사용한다.
 	const FDirectionalLightSceneProxy* Directional = Scene.GetPrimaryDirectionalLight();
 	if (!Directional)
 		return;
 
-	// 설정이 꺼졌거나 Receiver 범위가 비어 있으면 Directional만 생략한다.
-	// Spot 작업은 위에서 이미 수집한 상태다.
 	FProjectedShadowInfo ShadowInfo;
-	if (!Directional->SetupShadowProjection(DirectionalReceiverCorners, ShadowInfo))
+	if (!Directional->SetupShadowProjection(
+		ReceiverCorners, ShadowInfo, ProjectionIndex, ViewId))
 		return;
 
+	// 해당 투영의 열린 Caster Frustum과 CastShadow 조건을 재사용한다.
 	GatherShadowCasters(ShadowInfo);
 	OutShadows.Add(std::move(ShadowInfo));
 }

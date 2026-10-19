@@ -107,6 +107,8 @@ public:
     FMatrix GetEngineViewProjection(int32 ViewIndex) const;
     // 패널·별도 PIE의 실제 카메라와 영역으로 그림자 Receiver 꼭짓점을 추가한다.
     bool AppendShadowFrustumCorners(int32 ViewIndex, float ShadowDistance, TArray<FVector>& OutCorners) const;
+    // 지정 View의 실제 카메라·렌더 영역으로 Receiver 구간을 계산한다.
+    bool AppendShadowFrustumCorners(int32 ViewIndex, float NearDistance, float FarDistance, TArray<FVector>& OutCorners) const;
     // 지정 View 카메라 위치를 엔진 FVector 그대로 반환한다.
     FVector GetEngineCameraLocation(int32 ViewIndex) const;
     // 지정 View의 카메라 Forward를 엔진 FVector로 계산해 반환한다.
@@ -129,6 +131,12 @@ public:
     FMatrix GetEngineView(int32 ViewIndex) const;
     FMatrix GetEngineProjection(int32 ViewIndex) const;
 
+    // 실제 카메라를 조회하는 공통 경로에서 배열 범위를 검증한다.
+    const FViewCamera& GetEffectiveCamera(int32 ViewIndex) const
+    {
+        assert(IsViewIndex(ViewIndex));
+        return ViewportClients[ViewIndex].GetEffectiveCamera();
+    }
 private:
     // 편집 카메라·프리셋·Grid는 패널 View만 대상으로 한다.
     static constexpr bool IsPanelViewIndex(int32 Index)
@@ -139,12 +147,6 @@ private:
     static constexpr bool IsViewIndex(int32 Index)
     {
         return Index >= 0 && Index < MaxViewCount;
-    }
-    // 실제 카메라를 조회하는 공통 경로에서 배열 범위를 검증한다.
-    const FViewCamera& GetEffectiveCamera(int32 ViewIndex) const
-    {
-        assert(IsViewIndex(ViewIndex));
-        return ViewportClients[ViewIndex].GetEffectiveCamera();
     }
     // 패널 배치는 Layout이, 카메라·표시 상태는 패널 4개와 외부 PIE의 Client가 소유한다.
     FLevelViewportLayout Layout;
