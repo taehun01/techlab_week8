@@ -120,7 +120,7 @@ StructuredBuffer<uint> CellLightIndices : register(t12);
 Texture2D DiffuseTexture : register(t0);
 Texture2D NormalTexture : register(t1);
 SamplerState MaterialSampler : register(s0);
-SamplerState PCFSampler : register(s1);
+SamplerComparisonState PCFSampler : register(s1);
 
 #if defined(LIGHTING_MODEL_LAMBERT) || defined(LIGHTING_MODEL_BLINN_PHONG)
 
@@ -185,9 +185,9 @@ struct FLightContribution
 #if defined(LIGHTING_MODEL_LAMBERT) || defined(LIGHTING_MODEL_BLINN_PHONG)
 
 // 현재 SM5.0 경로에서 텍스처 접근을 정적 인덱스로 만든다.
-float LoadShadowDepth(int AtlasPageIndex, int2 Texel)
+float LoadShadowDepth(int AtlasPageIndex, SamplerComparisonState Sampler, float2 UV, float CompareValue)
 {
-#define SHADOW_DEPTH_CASE(Index) case Index: return ShadowAtlases[Index].Load(int3(Texel, 0))
+#define SHADOW_DEPTH_CASE(Index) case Index: return ShadowAtlases[Index].SampleCmpLevelZero(Sampler, UV, CompareValue)
 
     switch (AtlasPageIndex)
     {
@@ -208,22 +208,23 @@ float SampleShadowMap(FShadowShaderParameters Shadow, float3 LightNDC)
     const uint2 Tile = uint2(Shadow.TileIndex % SHADOW_ATLAS_TILES_PER_ROW, Shadow.TileIndex / SHADOW_ATLAS_TILES_PER_ROW);
     if (all(UV >= 0.0.xx) && all(UV <= 1.0.xx))
     {
-        float texel = 1.0f / max(Shadow.Resolution, 1.0f); // Texture에서 한칸의 크기
-        int r = max(int(Shadow.ShadowPCFRadius), 0); // 평균할 Pixel 반경, radius * radius 개수만큼의 Pixel 평균을 냄
+        float texel = 1.0f / max(Shadow.Resolution, 1.0f); // Texture의 Tile 기준에서 한칸의 크기
+        float halftexel = 0.5f * texel; // Texture의 Tile 기준에서 반칸의 크기
+        int r = max(int(Shadow.ShadowPCFRadius), 1); // 평균할 Pixel 반경, radius * radius 개수만큼의 Pixel 평균을 냄
         float sum = 0.0f;
         int taps = 0;   // 평균 나눌때 분모, 픽셀 연산 횟수
             [loop]
-        for (int dy = -r; dy <= r; ++dy)
+        for (int dy = -r; dy < r; ++dy)
         {
                 [loop]
-            for (int dx = -r; dx <= r;  ++dx) 
+            for (int dx = -r; dx < r;  ++dx) 
             {
-                float2 uvOff = UV + float2(dx, dy) * texel; // 초기 UV + texel 단위로 dx, dy 이동량
-                const int MaxTexel = int(Shadow.Resolution) - 1;    // Texture 끝점
-                const int2 LocalTexel = clamp(int2(uvOff * Shadow.Resolution), int2(0, 0), int2(MaxTexel, MaxTexel));   // 한 Tile(Atlas 4등분 구역) 기준 Texel 좌표값
-                const int2 Texel = int2(Tile * Shadow.Resolution) + LocalTexel; // Tile 위치 반영한 전체 Atlas 기준 Texel 좌표값
-                float d = LoadShadowDepth(Shadow.AtlasPageIndex, Texel); // 카메라 기준으로 계산한 조명 좌표에서의 ShadowMap Depth 값
-                sum += (LightNDC.z - Shadow.Bias<= d) ? 1.0f : 0.0f; // CurrentDepth <= Closest Depth일 경우 그림자가 아니므로 1, 반대일경우 0, Bias는 편차값
+                float2 offset = float2(dx, dy) + 0.5f;    // 짝수 기준 Sampling 지원하도록 중심 기준으로 offset 변경
+                float2 uvOff = UV + offset * texel; // Offset 반영한 LocalUV 좌표 세팅 
+                float2 localUV = clamp(uvOff, float2(halftexel, halftexel), float2(1.0f - halftexel, 1.0f - halftexel)); // Sampling시 옆타일읽지 않도록 LocalUV 좌표를 타일 양끝의 중점까지로 제한
+                float2 atlasUV = (float2(Tile) + localUV) / float(SHADOW_ATLAS_TILES_PER_ROW); // 전체 Atlas 안에서의 UV 좌표
+                float d = LoadShadowDepth(Shadow.AtlasPageIndex, PCFSampler, atlasUV, LightNDC.z - Shadow.Bias); // 카메라 기준으로 계산한 조명 좌표에서의 ShadowMap Depth 값
+                sum += d; // CurrentDepth <= Closest Depth일 경우 그림자가 아니므로 1, 반대일경우 0, Bias는 편차값
                 taps++;
             }
         }
