@@ -22,6 +22,8 @@
     !defined(LIGHTING_MODEL_LAMBERT) && !defined(LIGHTING_MODEL_BLINN_PHONG) && \
     !defined(WORLD_NORMAL)
 #define LIGHTING_MODEL_LAMBERT 1
+
+#define BLOCKER_SEARCH_KERNEL_SIZE 16
 #endif
 
 // 아래 구조체와 cbuffer Lighting은 Renderer.h의 FLightingConstants와 바이트 단위로 같아야 한다.
@@ -234,6 +236,32 @@ float LoadShadowDepth(int AtlasPageIndex, int2 Texel)
 #undef SHADOW_DEPTH_LOAD_CASE
 }
 
+void FindBlocker(FShadowShaderParameters Shadow, float ReceiverDepth, float ShadowMapDepth, float2 LightRadiusUV, float2 UV, out float avgBlockerDepth, out int numBlockers)
+{
+    float searchRadiusUV = LightRadiusUV * (ReceiverDepth - 0.1f) / ReceiverDepth; // 삼각형 비율로 LightRadius / ReceiverDepth = SearchRadius / ReceiverDepth - Znear(Near_Plane), Near_Plane=0.1f
+    float blockerSum = 0;
+    numBlockers = 0;
+
+    [loop]
+    for (int Y = 0; Y < BLOCKER_SEARCH_KERNEL_SIZE; ++Y)
+    {
+        [loop]
+        for (int X = 0; X < BLOCKER_SEARCH_KERNEL_SIZE; ++X)
+        {
+            float halfSpan = (N - 1) * 0.5f;
+            float2 offset = float2(X, Y) - halfSpan;
+            int2 uvOff = UV + (offset / halfSpan) * searchRadiusUV;     // 기본 UV값 + SearchRadius UV 반경 안의 값 
+            float ShadowMapDepth = LoadShadowDepth(Shadow.AtlasPageIndex, uvOff);
+            if (ShadowMapDepth < ReceiverDepth - Shadow.Bias)
+            {
+                blockerSum += ShadowMapDepth;
+                numBlockers++;
+            }
+        }
+    }
+    avgBlockerDepth = blockerSum / numBlockers;
+}
+
 // Atlas 타일 좌표 변환과 하드웨어 PCF 가시성 계산을 담당한다.
 float SampleShadowMap(FShadowShaderParameters Shadow, float3 LightNDC, int Lightindex)
 {
@@ -241,6 +269,13 @@ float SampleShadowMap(FShadowShaderParameters Shadow, float3 LightNDC, int Light
     const float2 UV = LightNDC.xy * float2(0.5f, -0.5f) + 0.5f;
     if (!(all(UV >= 0.0.xx) && all(UV <= 1.0.xx)))
         return 1.0f;
+     
+    const uint2 Tile = uint2(
+        Shadow.TileIndex % SHADOW_ATLAS_TILES_PER_ROW,
+        Shadow.TileIndex / SHADOW_ATLAS_TILES_PER_ROW
+    );
+    const float CompareDepth = LightNDC.z - Shadow.Bias;
+    const int KernelSize = Shadow.ShadowPCFKernelSize;
 
 // Receiver의 광원 기준 선형 깊이(View 행렬까지 적용된 깊이) 준비, Clip.z = d * DepthScale + DepthOffset, Clip.w = d 이므로 NDC.z = (d × DepthScale + DepthOffset) / d, 해당식 정리
     float ReceiverDepth = LocalLights[Lightindex].DepthOffset / (LightNDC.z - LocalLights[Lightindex].DepthScale);
@@ -251,7 +286,11 @@ float SampleShadowMap(FShadowShaderParameters Shadow, float3 LightNDC, int Light
     float avgBlockerDepthView = 0;
     int numBlockers = 0;
     
-    FindBlocker(AverageBlockerDepth, numBlockers, uv, ReceiverDepth, shadowMap, invProj, lightRadiusWorld);
+    const uint2 LocalTexel = min(uint2(UV * Shadow.Resolution), uint2(Shadow.Resolution - 1, Shadow.Resolution - 1));
+    const int2 AtlasTexel = int2(Tile * Shadow.Resolution + LocalTexel);
+    const float Depth = LoadShadowDepth(Shadow.AtlasPageIndex, AtlasTexel);
+    
+    FindBlocker(Shadow, ReceiverDepth, Depth, LightRadiusUV, UV, AverageBlockerDepth, numBlockers);
 // 탐색 범위에서 깊이를 읽고 Receiver보다 앞에 있는 Blocker 선택
 // Atlas의 다른 타일을 읽지 않도록 좌표 처리
 
@@ -266,13 +305,6 @@ float SampleShadowMap(FShadowShaderParameters Shadow, float3 LightNDC, int Light
     float PCFDiameterUV = PenumbraWidth / Frustumwidth;
     float PCFradiusUV = PCFDiameterUV * 0.5f;
 // 계산한 반경으로 샘플 위치를 조절하며 PCF 수행
-    
-    const uint2 Tile = uint2(
-        Shadow.TileIndex % SHADOW_ATLAS_TILES_PER_ROW,
-        Shadow.TileIndex / SHADOW_ATLAS_TILES_PER_ROW
-    );
-    const float CompareDepth = LightNDC.z - Shadow.Bias;
-    const int KernelSize = Shadow.ShadowPCFKernelSize;
 
     if (KernelSize == 0)
     {
@@ -309,26 +341,6 @@ float SampleShadowMap(FShadowShaderParameters Shadow, float3 LightNDC, int Light
 
     // 양수 커널만 이 경로에 도달하므로 분모는 항상 양수다.
     return VisibilitySum / float(KernelSize * KernelSize);
-}
-
-void FindBlocker(FShadowShaderParameters Shadow, float ReceiverDepth, out float avgBlockerDepth, out float numBlockers, float2 LightRadiusUV, float zReceiver)
-{
- //This uses similar triangles to compute what
- //area of the shadow map we should search
-    float searchRadiusUV = LightRadiusUV * (ReceiverDepth - NEAR_PLANE) / ReceiverDepth;
-    float blockerSum = 0;
-    numBlockers = 0;
-
-    for (int i = 0; i < BLOCKER_SEARCH_NUM_SAMPLES; ++i)
-    {
-        float ShadowMapDepth = ShadowAtlases[Shadow.AtlasPageIndex].SampleLevel();
-        if (ShadowMapDepth < ReceiverDepth -Shadow.Bias)
-        {
-            blockerSum += ShadowMapDepth;
-            numBlockers++;
-        }
-    }
-    avgBlockerDepth = blockerSum / numBlockers;
 }
 
 float2 PCSS_BlockerDistance(Texture2D<float2> tex, SamplerState state, float3 projCoord, float searchUV, float2 rotationTrig)
