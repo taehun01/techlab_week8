@@ -1,6 +1,6 @@
 #include "EnginePCH.h"
 #include "Editor/OutputLog/OutputLogPanel.h"
-
+#include "Render/ShadowSettings.h"
 #include "Core/StatOverlay.h"
 
 static int TextEditCallbackStub(ImGuiInputTextCallbackData* data)
@@ -25,6 +25,7 @@ bool FOutputLogPanel::Init()
 	Commands.Add("HISTORY");
 	Commands.Add("CLEAR");
 	Commands.Add("STAT");
+	Commands.Add("SHADOW_CACHE");
 
 	HistoryPos = -1;
 	InputBuf[0] = '\0';
@@ -174,6 +175,14 @@ void FOutputLogPanel::ExecCommand(const FString& CommandLine)
 		ScrollToBottom = true;
 		return;
 	}
+	
+	FString ShadowMessage;
+	if (FShadowSettings::ExecCommand(CommandLine, ShadowMessage))
+	{
+		FLog::Log(ELogVerbosity::Info, "{}", ShadowMessage);
+		ScrollToBottom = true;
+		return;
+	}
 
 	if (EqualsIgnoreCase(CommandLine, "CLEAR"))
 	{
@@ -185,6 +194,7 @@ void FOutputLogPanel::ExecCommand(const FString& CommandLine)
 		for (const FString& Command : Commands)
 			FLog::Log(ELogVerbosity::Info, "- {}", Command);
 		OnLog(ELogVerbosity::Info, "- STAT <fps|memory|profile|shadow|all|none>");
+		OnLog(ELogVerbosity::Info, "- SHADOW_CACHE <0|1>");
 	}
 	else if (EqualsIgnoreCase(CommandLine, "HISTORY"))
 	{

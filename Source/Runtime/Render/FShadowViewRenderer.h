@@ -33,11 +33,25 @@ struct std::hash<FShadowAllocationKey>
 	}
 };
 
+// Shadow Caching 판정에 쓰이는 key
+struct FShadowCacheKey
+{
+	FMatrix LightViewProjection = FMatrix::Identity;
+	uint64 CasterHash = 0u;
+	uint64 CacheGeneration = 0u;
+
+	bool operator==(const FShadowCacheKey& Other) const = default;
+};
+
 // 투영 행렬은 작업 Info가 보관하며, 할당 결과에는 풀 내부 위치만 남긴다.
 struct FShadowData
 {
 	uint32 AtlasIndex = 0;
 	uint32 TileIndex = 0;
+
+	// Shadow Caching
+	bool bIsValid = false;
+	FShadowCacheKey CacheKey;
 };
 
 // 한 페이지가 실제 Depth 자원과 네 타일의 점유 상태를 소유한다.
@@ -70,6 +84,11 @@ public:
 	// 렌더링과 통계는 할당 상태를 변경하지 않고 종류별 자원을 조회한다.
 	const FShadowAtlasPool* FindPool(ELightType Type) const { return AtlasPools.Find(Type); }
 	const TMap<ELightType, FShadowAtlasPool>& GetAtlasPools() const { return AtlasPools; }
+
+	// shadow cache 확인 
+	bool CheckShadowCache(ELightType InType, const FShadowAllocationKey& InAllocKey, const FShadowCacheKey& InCacheKey) const;
+	// shadow cache 갱신
+	void UpdateShadowCache(ELightType InType, const FShadowAllocationKey& InAllocKey, const FShadowCacheKey& InCacheKey);
 
 private:
 	bool AddNewAtlas(FShadowAtlasPool& Pool, uint32 TileResolution);

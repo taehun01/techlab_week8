@@ -32,9 +32,10 @@ bool FShadowViewRenderer::AddNewAtlas(FShadowAtlasPool& Pool, uint32 TileResolut
 const FShadowData* FShadowViewRenderer::AddShadowInfo(FShadowAtlasPool& Pool, const FShadowAllocationKey& Key, uint32 AtlasIndex, uint32 TileIndex)
 {
 	Pool.ShadowAtlasArray[AtlasIndex].UsedTiles[TileIndex] = true;
-	FShadowData& Data = Pool.ShadowInfoMap[Key];
+	FShadowData Data = FShadowData{};
 	Data.AtlasIndex = AtlasIndex;
 	Data.TileIndex = TileIndex;
+	Pool.ShadowInfoMap[Key] = Data;
 	return &Data;
 }
 
@@ -116,4 +117,32 @@ void FShadowViewRenderer::ReleaseUnusedShadowInfos(const TMap<ELightType, TSet<F
 			ReleaseShadowInfo(Type, Key);
 	}
 	// TODO(ShadowAtlas): 빈 페이지를 회수할 때 남은 할당의 AtlasIndex 갱신도 함께 처리한다.
+}
+
+// shadow cache 확인 
+bool FShadowViewRenderer::CheckShadowCache(ELightType InType, const FShadowAllocationKey& InAllocKey, const FShadowCacheKey& InCacheKey) const
+{
+	const FShadowAtlasPool* Pool = AtlasPools.Find(InType);
+	if (!Pool)
+		return;
+
+	if (const FShadowData* Data = Pool->ShadowInfoMap.Find(InAllocKey))
+	{
+		return Data->bIsValid && Data->CacheKey == InCacheKey;
+	}
+	return false;
+}
+
+// shadow cache 갱신
+void FShadowViewRenderer::UpdateShadowCache(ELightType InType, const FShadowAllocationKey& InAllocKey, const FShadowCacheKey& InCacheKey)
+{
+	FShadowAtlasPool* Pool = AtlasPools.Find(InType);
+	if (!Pool)
+		return;
+
+	if (FShadowData* Data = Pool->ShadowInfoMap.Find(InAllocKey))
+	{
+		Data->CacheKey = InCacheKey;
+		Data->bIsValid = true;
+	}
 }

@@ -41,12 +41,18 @@ void FPrimitiveSceneProxy::OnMeshRenderDataChanged()
 
 void FPrimitiveSceneProxy::OnMeshDestroyed()
 {
+    // Shadow Cache 재생성
+    ShadowVersion = ++GlobalShadowVersion;
+
     Mesh = nullptr;
     RenderState.reset();
 }
 
 void FPrimitiveSceneProxy::UpdateTransform()
 {
+    // Shadow Cache 재생성
+    ShadowVersion = ++GlobalShadowVersion;
+
     LocalToWorld = Component->GetWorldMatrix();
     WorldToLocal = LocalToWorld.Inverse();
     const FBox LocalBounds = Mesh ? Mesh->GetRenderBounds() : Component->CalcLocalBounds();
@@ -56,6 +62,9 @@ void FPrimitiveSceneProxy::UpdateTransform()
 
 void FPrimitiveSceneProxy::UpdateRenderState()
 {
+    // Shadow Cache 재생성
+    ShadowVersion = ++GlobalShadowVersion;
+
     UStaticMesh* PreviousMesh = Mesh;
     Mesh = nullptr;
     RenderState.reset();

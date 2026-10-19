@@ -1,6 +1,7 @@
 #include "EnginePCH.h"
 #include "Renderer.h"
 #include "FShadowViewRenderer.h"
+#include "ShadowSettings.h"
 #include "Shader.h"
 #include "Mesh.h"
 
@@ -558,6 +559,9 @@ void FRenderer::PrepareShadowDepthTargets(TArray<FProjectedShadowInfo>& ShadowIn
 void FRenderer::RenderShadowMaps(TArray<FProjectedShadowInfo>&& InShadows, FShadowViewRenderer& InShadowViewRenderer)
 {
 	SCOPE_CYCLE_COUNTER(ShadowStats::STAT_RenderCPU);
+
+	const bool bUseCache = FShadowSettings::IsWholeSceneCacheEnabled();
+
 	// 이전 화면의 SRV를 자원 교체·Depth 기록 전에 해제한다.
 	RenderCommand::UnbindShaderResource(ShadowParameterSlot, EShaderBindFlagBits::Pixel);
 
@@ -582,6 +586,16 @@ void FRenderer::RenderShadowMaps(TArray<FProjectedShadowInfo>&& InShadows, FShad
 		{
 			RenderShadowDepth(ShadowInfo);
 			FStatRegistry::AddCounter(ShadowStats::STAT_MapUpdates);
+
+			ELightType Type = ShadowInfo.LightProxy->GetLightComponent()->GetLightType();
+			const FShadowAllocationKey AllocKey{
+				ShadowInfo.LightProxy->GetLightComponent()->GetUUID(), ShadowInfo.ProjectionIndex, ShadowInfo.ViewId
+			};
+			const FShadowCacheKey CacheKey{
+				ShadowInfo.LightViewProjection, 0, FShadowSettings::GetCacheGeneration()
+			};
+
+			ShadowViewRenderer->UpdateShadowCache(Type, AllocKey, CacheKey);
 		}
 	}
 	PrepareShadowParameters();
