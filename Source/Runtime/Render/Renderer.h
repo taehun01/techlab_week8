@@ -35,12 +35,34 @@ inline void WritePerObjectConstants(uint8* Dest, const FMatrix& World, const FMa
 // b0(ViewConstants)와 바이트 단위로 같아야 한다. View마다 RenderQueueSorting에서 한 번 올린다.
 struct alignas(16) FViewConstants
 {
-	FMatrix ViewProjection;
-	FVector CameraWorldPos;
+	FMatrix ViewProjection = FMatrix::Identity;
+	FVector CameraWorldPos = FVector::ZeroVector;
+
 	// Directional Depth 패스에서만 Near 밖의 정점을 깊이 0으로 제한한다.
 	uint32 ClampShadowNear = 0;
+
+	// 논리 카메라의 정규화된 전방 축이다.
+	FVector CameraForward = FVector::ZeroVector;
+
+	uint32 DirectionalCascadeCount = 0;
+
+	// ProjectionIndex와 별개인 StructuredBuffer의 실제 인덱스다.
+	int32 DirectionalShadowIndices[4] =
+	{
+		INDEX_NONE, INDEX_NONE, INDEX_NONE, INDEX_NONE
+	};
+
+	// 카메라 전방 선형 깊이로 표현한 각 구간의 끝 거리다.
+	float DirectionalCascadeFarDistances[4]{};
+
+	// 원근은 NearClip, 직교는 -ShadowDistance를 사용한다.
+	float DirectionalShadowNearDistance = 0.0f;
+	float ViewPadding[3]{};
 };
-static_assert(sizeof(FViewConstants) == 80, "UberLit.hlsl cbuffer ViewConstants 크기와 맞아야 한다");
+
+static_assert(sizeof(FViewConstants) == 144, "UberLit.hlsl cbuffer ViewConstants 크기와 맞아야 한다");
+static_assert(offsetof(FViewConstants, DirectionalShadowIndices) == 96);
+static_assert(offsetof(FViewConstants, DirectionalShadowNearDistance) == 128);
 
 constexpr uint32 MaxLocalLights = 1024;
 
@@ -76,10 +98,10 @@ struct FAmbientLightInfo
 
 struct FDirectionalLightInfo
 {
-	FVector Direction;	// 빛이 향하는 방향
+	FVector Direction;
 	float Intensity;
 	FVector Color;
-	int32 ShadowIndex = INDEX_NONE;	// 지역광과 달리 Directional은 LightInfo에서 넘겨줌
+	uint32 Padding = 0;
 };
 
 struct FPointLightInfo
@@ -229,6 +251,9 @@ public:
 	// CameraWorldPos는 ViewProjection과 함께 b0에 올라가 Specular 계산(V 벡터)에 쓰인다.
 	void RenderQueueSorting(FRenderQueue& InQueue, const FMatrix& ViewProjection,
 		const FVector& CameraWorldPos, bool bClampShadowNear = false);
+	
+	// 호출자가 준비한 View별 GPU 상수를 업로드하고 같은 정렬 경로를 사용한다.
+	void RenderQueueSorting(FRenderQueue& InQueue, const FViewConstants& ViewConstants);
 
 	// Depth Prepass: 불투명만 PS 없이 그려 깊이 버퍼를 채운다. RenderQueueSorting 뒤, RenderOpaque 전에 부른다.
 	// 같은 VS·행렬이라 깊이가 비트 단위로 같으므로 본 패스는 LESS_EQUAL로 통과한다.

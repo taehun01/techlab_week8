@@ -36,7 +36,7 @@ struct FDirectionalLightInfo
     float3 Direction; // 빛이 향하는 방향
     float Intensity;
     float3 Color;
-    int ShadowIndex; // 음수이면 그림자를 적용하지 않는다.
+    uint DirectionalPadding;
 };
 
 // SceneManagement.h의 FLightRenderParameters와 바이트 단위로 같아야 한다.
@@ -68,6 +68,16 @@ cbuffer ViewConstants : register(b0)
     matrix ViewProjection;
     float3 CameraWorldPos; // Specular의 V = normalize(CameraWorldPos - WorldPos)
     uint ClampShadowNear; // Directional Depth 패스에서만 Near Clamp를 적용한다.
+    
+    float3 CameraForward;
+    uint DirectionalCascadeCount;
+
+    // CPU의 연속된 4원소 배열과 일치하도록 벡터로 선언한다.
+    int4 DirectionalShadowIndices;
+    float4 DirectionalCascadeFarDistances;
+
+    float DirectionalShadowNearDistance;
+    float3 ViewPadding;
 };
 
 cbuffer MaterialParams : register(b1)
@@ -257,6 +267,31 @@ float GetShadowVisibility(int ShadowIndex, float3 WorldPos)
     return SampleShadowMap(Shadow, LightNDC);
 }
 
+// 카메라 선형 깊이로 해당 View의 Directional Cascade 하나를 선택한다.
+// CPU는 CascadeCount 4 이하와 GPU 인덱스의 유효 범위를 보장한다.
+float GetDirectionalShadowVisibility(float3 WorldPos)
+{
+    if (DirectionalCascadeCount == 0)
+        return 1.0f;
+
+    const float ViewDepth = dot(WorldPos - CameraWorldPos, CameraForward);
+    if (ViewDepth < DirectionalShadowNearDistance)
+        return 1.0f;
+
+    [loop]
+    for (uint CascadeIndex = 0; CascadeIndex < DirectionalCascadeCount; ++CascadeIndex)
+    {
+        if (ViewDepth <= DirectionalCascadeFarDistances[CascadeIndex])
+        {
+            // 누락된 인덱스 -1도 기존 함수가 그림자 없음으로 처리한다.
+            return GetShadowVisibility(DirectionalShadowIndices[CascadeIndex], WorldPos);
+        }
+    }
+
+    // 마지막 구간 밖에는 동적 Directional 그림자를 제공하지 않는다.
+    return 1.0f;
+}
+
 #endif
 
 // 원뿔 감쇠량. 0(Outer 밖) ~ 1(Inner 안)
@@ -429,7 +464,7 @@ bool bUseLightGrid, bool bReceiveShadow)
     if (bReceiveShadow)
     {
         // 로컬 라이트를 누적하기 전에 Directional의 직접광에만 그림자를 적용한다.
-        const float Visibility = GetShadowVisibility(Directional.ShadowIndex, WorldPos);
+        const float Visibility = GetDirectionalShadowVisibility(WorldPos);
         Total.Diffuse *= Visibility;
         Total.Specular *= Visibility;
     }

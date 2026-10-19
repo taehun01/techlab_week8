@@ -424,12 +424,19 @@ void FRenderer::DrawStaticGroups()
 void FRenderer::RenderQueueSorting(FRenderQueue& InQueue, const FMatrix& ViewProjection,
 	const FVector& CameraWorldPos, bool bClampShadowNear)
 {
-	FViewConstants ViewConstants;
+	FViewConstants ViewConstants{};
 	ViewConstants.ViewProjection = ViewProjection;
 	ViewConstants.CameraWorldPos = CameraWorldPos;
-	// 카메라·Spot 큐에서는 기본값 false를 업로드해 이전 Directional 상태를 남기지 않는다.
 	ViewConstants.ClampShadowNear = bClampShadowNear ? 1u : 0u;
+
+	RenderQueueSorting(InQueue, ViewConstants);
+}
+
+void FRenderer::RenderQueueSorting(FRenderQueue& InQueue, const FViewConstants& ViewConstants)
+{
+
 	RenderCommand::UpdateBufferData(ViewCB.get(), &ViewConstants);
+
 	{
 		SCOPE_CYCLE_COUNTER(STAT_RenderQueueSorting);
 

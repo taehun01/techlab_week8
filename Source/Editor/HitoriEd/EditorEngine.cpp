@@ -677,8 +677,10 @@ FWorldContext* UEditorEngine::GetPIEWorldContext(int32 WorldPIEInstance)
 }
 
 // 입력 View의 Ray와 피킹으로 Gizmo·공유 선택을 갱신한다.
-void UEditorEngine::RenderOpaquePass(const int32 ViewIndex, const FRenderingInfo& ViewRenderingInfo, const FMatrix& ViewProjection, const FVector& ViewCameraLocation, const FVector& ViewCameraForward, FRenderQueue& RenderQueue)
+void UEditorEngine::RenderOpaquePass(int32 ViewIndex, const FRenderingInfo& ViewRenderingInfo, const FViewConstants& ViewConstants, FRenderQueue& RenderQueue)
 {
+	const FMatrix& ViewProjection = ViewConstants.ViewProjection;
+	const FVector& ViewCameraLocation = ViewConstants.CameraWorldPos;
 	FRenderingInfo HDRInfo = ViewRenderingInfo;
 	HDRInfo.ColorRenderTargets[0].Texture = GetHDRTargetForView(ViewIndex);
 	RenderCommand::BeginRenderPass(HDRInfo);
@@ -700,7 +702,7 @@ void UEditorEngine::RenderOpaquePass(const int32 ViewIndex, const FRenderingInfo
 
 		RenderCommand::SetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 		// 반투명은 Grid 뒤에 합성되어야 하므로 불투명만 먼저 그린다.
-		Renderer->RenderQueueSorting(RenderQueue, ViewProjection, ViewCameraLocation);
+		Renderer->RenderQueueSorting(RenderQueue, ViewConstants);
 
 		// 2.5D는 타일의 실제 깊이가 필요하므로 불투명 깊이를 먼저 채운 뒤 컬링한다.
 		FTexture2D* DepthTexture = ViewRenderingInfo.DepthStencil.Texture;
@@ -1084,7 +1086,61 @@ void UEditorEngine::RenderFrame(const int32 ViewIndex, UWorld& ViewWorld, const 
 {
 	const FEngineShowFlags& ShowFlags = SettingsPanel->GetSettings().ShowFlags;
 
-	RenderOpaquePass(ViewIndex, ViewRenderingInfo, ViewProjection, ViewCameraLocation, ViewCameraForward, RenderQueue);
+	// GPU의 int4·float4와 Component의 분할 상한이 일치해야 한다.
+	static_assert(UDirectionalLightComponent::MaxShadowCascades == 4);
+
+	FViewConstants ViewConstants{};
+	ViewConstants.ViewProjection = ViewProjection;
+	ViewConstants.CameraWorldPos = ViewCameraLocation;
+	ViewConstants.CameraForward = ViewCameraForward;
+
+	// 작업 생성과 동일한 표시 조건으로 Directional 수신 데이터를 준비한다.
+	const EViewMode ViewMode = MultipleViewportsAdapter.GetViewMode(ViewIndex);
+	const bool bUseDirectionalShadows =
+		ShowFlags.IsEnabled(EEngineShowFlag::Primitives)
+		&& ShowFlags.IsEnabled(EEngineShowFlag::DynamicShadows)
+		&& (ViewMode == EViewMode::Lit_Lambert || ViewMode == EViewMode::Lit_BlinnPhong);
+
+	const FDirectionalLightSceneProxy* Directional = bUseDirectionalShadows ? ViewWorld.GetScene().GetPrimaryDirectionalLight() : nullptr;
+
+	if (Directional && Directional->ShouldCastShadow())
+	{
+		TArray<float> SplitDistances;
+
+		if (MultipleViewportsAdapter.IsOrthographic(ViewIndex))
+		{
+			// 직교 작업 생성과 같은 논리 원점 앞뒤의 단일 구간이다.
+			const auto* Light = static_cast<const UDirectionalLightComponent*>(Directional->GetLightComponent());
+			const float ShadowDistance = Light->GetShadowDistance();
+			SplitDistances.Add(-ShadowDistance);
+			SplitDistances.Add(ShadowDistance);
+		}
+		else
+		{
+			// 작업 생성에 사용한 것과 같은 EffectiveCamera·분할 규칙을 사용한다.
+			const FViewCamera& Camera =	MultipleViewportsAdapter.GetEffectiveCamera(ViewIndex);
+			Directional->CalculateCascadeSplitDistances(Camera.Projection.NearClip, Camera.Projection.FarClip, SplitDistances);
+		}
+
+		// 분할 실패 시 배열이 비어 있으므로 기본 CascadeCount 0을 유지한다.
+		if (SplitDistances.Num() >= 2)
+		{
+			const uint32 ViewId = static_cast<uint32>(ViewIndex + 1);
+			const uint32 CascadeCount = static_cast<uint32>(SplitDistances.Num() - 1);
+			ViewConstants.DirectionalCascadeCount = CascadeCount;
+			ViewConstants.DirectionalShadowNearDistance = SplitDistances[0];
+
+			for (uint32 CascadeIndex = 0; CascadeIndex < CascadeCount; ++CascadeIndex)
+			{
+				// GPU 인덱스는 연속 번호라고 가정하지 않고 각각 조회한다.
+				ViewConstants.DirectionalShadowIndices[CascadeIndex] = Renderer->GetShadowIndex(*Directional, CascadeIndex, ViewId);
+				ViewConstants.DirectionalCascadeFarDistances[CascadeIndex] = SplitDistances[CascadeIndex + 1];
+			}
+		}
+	}
+
+	// 준비한 View 상수를 장면 패스에 전달한다.
+	RenderOpaquePass(ViewIndex, ViewRenderingInfo, ViewConstants, RenderQueue);
 
 	if (ShowFlags.IsEnabled(EEngineShowFlag::DepthView))
 	{
