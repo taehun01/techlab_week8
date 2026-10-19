@@ -435,6 +435,10 @@ void FViewportsPanel::DrawStatOverlay(ImDrawList* DrawList, const ImVec2& ViewMi
 			FStatRegistry::GetCounter(ShadowStats::STAT_BoundTextures)), ValueColor });
 		Lines.Add({ std::format("  Local lights outside views: {}",
 			FStatRegistry::GetCounter(ShadowStats::STAT_LocalLightsOutsideViews)), ValueColor });
+		Lines.Add({ std::format("  Local lights without receivers: {}",
+			FStatRegistry::GetCounter(ShadowStats::STAT_LocalLightsWithoutReceivers)), ValueColor });
+		Lines.Add({ std::format("  Empty caster depth skips: {}",
+			FStatRegistry::GetCounter(ShadowStats::STAT_EmptyCasterDepthSkips)), ValueColor });
 		Lines.Add({ std::format("  Maps: {}  Draws: {}  Updates: {}",
 			FStatRegistry::GetCounter(ShadowStats::STAT_Maps),
 			FStatRegistry::GetCounter(ShadowStats::STAT_DrawCalls),
@@ -443,7 +447,7 @@ void FViewportsPanel::DrawStatOverlay(ImDrawList* DrawList, const ImVec2& ViewMi
 		Lines.Add({ std::format("  Directional views: {}  Projections: {}",
 			FStatRegistry::GetCounter(ShadowStats::STAT_DirectionalViews),
 			FStatRegistry::GetCounter(ShadowStats::STAT_DirectionalProjections)), ValueColor });
-
+		
 		// Directional은 View별로 구분하고, Point와 Spot은 World 공유 그룹으로 표시한다.
 		for (uint32 Group = 0; Group < ShadowStats::GroupCount; ++Group)
 		{

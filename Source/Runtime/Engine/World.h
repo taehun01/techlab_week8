@@ -130,6 +130,8 @@ public:
 	using Super::Serialize;
 	virtual void Serialize(FStructuredArchive::FRecord Record) override;
 private:
+	// 활성 Lit View에서 Receiver가 있는지 검사하는 함수
+	bool HasVisibleShadowReceiver(const FLightRenderParameters& LightParameters, const TArray<FFrustumPlanes>& ActiveViewFrustums) const;
 	EWorldType WorldType = EWorldType::None;
 
 	struct alignas(64) FGatherChunk

@@ -24,8 +24,12 @@ namespace ShadowStats
     DECLARE_MEMORY_STAT("Shadow Depth Memory", STAT_DepthMemory);
     DECLARE_MEMORY_STAT("Shadow Parameter Memory", STAT_ParameterMemory);
 
-    DECLARE_COUNTER_STAT("Shadow Local Lights Outside Views", STAT_LocalLightsOutsideViews);
-
+    DECLARE_COUNTER_STAT("Shadow Local Lights Outside Views", STAT_LocalLightsOutsideViews);    // 광원이 뷰 바깥에있음
+    DECLARE_COUNTER_STAT("Shadow Local Lights Without Receivers", STAT_LocalLightsWithoutReceivers);    // 내부에 가시 Receiver가 없음
+    DECLARE_COUNTER_STAT("Shadow Empty Caster Depth Skips", STAT_EmptyCasterDepthSkips);;    // 빈 Caster Queue
+    
+    
+    
     enum EGroup : uint32
     {
         Single,

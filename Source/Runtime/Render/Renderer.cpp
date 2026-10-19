@@ -614,11 +614,16 @@ void FRenderer::RenderShadowMaps(TArray<FProjectedShadowInfo>&& InShadows, FShad
 
 	for (FProjectedShadowInfo& ShadowInfo : ProjectedShadows)
 	{
-		// 기존 Depth 실행 경로를 유지한다.
-		if (ShadowInfo.HasDepthTarget())
+		if (!ShadowInfo.HasDepthTarget())
 		{
-			RenderShadowDepth(ShadowInfo);
+			continue;
 		}
+		if (ShadowInfo.CasterQueue.IsEmpty())
+		{
+			FStatRegistry::AddCounter(ShadowStats::STAT_EmptyCasterDepthSkips);
+			continue;
+		}
+		RenderShadowDepth(ShadowInfo);
 	}
 	PrepareShadowParameters();
 

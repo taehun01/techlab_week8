@@ -467,7 +467,7 @@ void UWorld::GatherLocalProjectedShadows(TArray<FProjectedShadowInfo>& OutShadow
 	for (const FLocalLightSceneProxy* LightProxy : Scene.LocalLightProxies)
 	{
 		const ELightType LightType = LightProxy->GetLightComponent()->GetLightType();
-		if (LightType != ELightType::Point && LightType != ELightType::Spot)
+		if ((LightType != ELightType::Point && LightType != ELightType::Spot)||!LightProxy->ShouldCastShadow())
 		{
 			continue;
 		}
@@ -488,10 +488,12 @@ void UWorld::GatherLocalProjectedShadows(TArray<FProjectedShadowInfo>& OutShadow
 		}
 		if (!bAffetsAnyViews)
 		{
-			if (LightProxy->ShouldCastShadow())
-			{
-				FStatRegistry::AddCounter(ShadowStats::STAT_LocalLightsOutsideViews);
-			}
+			FStatRegistry::AddCounter(ShadowStats::STAT_LocalLightsOutsideViews);
+			continue;
+		}
+		if (!HasVisibleShadowReceiver(LightParameters, ActiveViewFrustums))
+		{
+			FStatRegistry::AddCounter(ShadowStats::STAT_LocalLightsWithoutReceivers);
 			continue;
 		}
 
@@ -948,4 +950,53 @@ void UWorld::Serialize(FStructuredArchive::FRecord Record)
 
 	// (선택) 메인 카메라는 레벨에 속하지 않아 따로 쓴다. PIE 시작 시점이나 에디터 시점을 복원할 때 쓸 수 있다.
 	// MainCamera->GetCameraComponent()->Serialize(Record.EnterRecord("MainCamera"));
+}
+
+bool UWorld::HasVisibleShadowReceiver(const FLightRenderParameters& LightParameters, const TArray<FFrustumPlanes>& ActiveViewFrustums) const
+{
+	bool bHasReceiver = false;
+	const float RadiusSquared = LightParameters.Radius * LightParameters.Radius;
+
+	const auto BoundsTest = [&](const FBox& Box)
+		{
+			if (bHasReceiver) return false;
+			const FVector ClosestPoint((FMath::Clamp(LightParameters.Position.X, Box.Min.X, Box.Max.X)),
+				(FMath::Clamp(LightParameters.Position.Y, Box.Min.Y, Box.Max.Y)),
+				(FMath::Clamp(LightParameters.Position.Z, Box.Min.Z, Box.Max.Z)));
+			if ((ClosestPoint - LightParameters.Position).SizeSquared() > RadiusSquared)
+			{
+				return false;
+			}
+			// 영향 영역과 겹치는 Bounds가 활성 View 중 하나에서도 보일 수 있어야 한다.
+			const FAABB Bounds = MakeWorldBounds(Box);
+			for (const FFrustumPlanes& Frustum : ActiveViewFrustums)
+			{
+				if (IsAABBInFrustum(Bounds, Frustum))
+					return true;
+			}
+
+			// 어떤 활성 View와도 겹치지 않는 가지는 탐색하지 않는다.
+			return false;
+		};
+	Scene.BVH.Query(BoundsTest, [&bHasReceiver](FPrimitiveSceneProxy* Proxy)
+		{
+			if (!Proxy->IsVisible() || !Proxy->IsShadowReceiver())
+			{
+				return;
+			}
+			if (const auto* StaticMeshComponent = Cast<UStaticMeshComponent>(Proxy->GetComponent()))
+			{
+				if (StaticMeshComponent->IsEditorIcon() || !Proxy->GetMesh() || !Proxy->GetRenderState())
+				{
+					return;
+				}
+			}
+			const auto* Billboard = Cast<UBillboardComponent>(Proxy->GetComponent());
+			if (Billboard && Billboard->IsEditorIcon())
+			{
+				return;
+			}
+			bHasReceiver = true;
+		});
+	return bHasReceiver;
 }
