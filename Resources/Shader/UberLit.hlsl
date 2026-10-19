@@ -239,6 +239,24 @@ float SampleShadowMap(FShadowShaderParameters Shadow, float3 LightNDC)
     if (!(all(UV >= 0.0.xx) && all(UV <= 1.0.xx)))
         return 1.0f;
 
+// Receiver의 광원 기준 선형 깊이 준비
+    float ReceiverDepth = LightNDC.z;
+// 광원 크기와 Receiver 거리로 Blocker 탐색 반경 계산
+    int blockers = 0;
+// 탐색 범위에서 깊이를 읽고 Receiver보다 앞에 있는 Blocker 선택
+// Atlas의 다른 타일을 읽지 않도록 좌표 처리
+
+// Blocker가 없으면 가시성 1 반환
+    if (blockers == 0) return 1;
+// 선택된 Blocker 깊이를 각각 선형으로 복원한 뒤 평균 계산
+    float AverageBlockerDepth;
+// Receiver와 평균 Blocker 선형 깊이, 광원 크기로 Penumbra 폭 계산
+    float PenumbraWidth = Lightsize * (ReceiverDepth - AverageBlockerDepth) / AverageBlockerDepth
+// Penumbra 폭을 타일 UV 기준 PCF 반경으로 변환
+
+// 계산한 반경으로 샘플 위치를 조절하며 PCF 수행
+// 실제 깊이 비교에는 기존 투영 깊이와 Bias 사용
+    
     const uint2 Tile = uint2(
         Shadow.TileIndex % SHADOW_ATLAS_TILES_PER_ROW,
         Shadow.TileIndex / SHADOW_ATLAS_TILES_PER_ROW
