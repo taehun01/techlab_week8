@@ -23,7 +23,7 @@
     !defined(WORLD_NORMAL)
 #define LIGHTING_MODEL_LAMBERT 1
 
-#define BLOCKER_SEARCH_KERNEL_SIZE 16
+#define BLOCKER_SEARCH_KERNEL_SIZE 4
 #endif
 
 // 아래 구조체와 cbuffer Lighting은 Renderer.h의 FLightingConstants와 바이트 단위로 같아야 한다.
@@ -291,15 +291,13 @@ float SampleShadowMap(FShadowShaderParameters Shadow, float3 LightNDC, int Light
     const float Depth = LoadShadowDepth(Shadow.AtlasPageIndex, AtlasTexel);
     
     FindBlocker(Shadow, ReceiverDepth, Depth, LightRadiusUV, UV, AverageBlockerDepth, numBlockers);
-// 탐색 범위에서 깊이를 읽고 Receiver보다 앞에 있는 Blocker 선택
-// Atlas의 다른 타일을 읽지 않도록 좌표 처리
 
 // Blocker가 없으면 가시성 1 반환
-    if (blockers == 0) return 1;
+    if (numBlockers < 1) return 1.0f;
 // 선택된 Blocker 깊이를 각각 선형으로 복원한 뒤 평균 계산
     
 // Receiver와 평균 Blocker 선형 깊이, 광원 크기로 Penumbra 폭 계산
-    float PenumbraWidth = Lightsize * (ReceiverDepth - AverageBlockerDepth) / AverageBlockerDepth;
+    float PenumbraWidth = (LightRadiusUV * 2) * (ReceiverDepth - AverageBlockerDepth) / AverageBlockerDepth;
 // Penumbra 폭을 타일 UV 기준 PCF 반경으로 변환
     
     float PCFDiameterUV = PenumbraWidth / Frustumwidth;
@@ -341,33 +339,6 @@ float SampleShadowMap(FShadowShaderParameters Shadow, float3 LightNDC, int Light
 
     // 양수 커널만 이 경로에 도달하므로 분모는 항상 양수다.
     return VisibilitySum / float(KernelSize * KernelSize);
-}
-
-float2 PCSS_BlockerDistance(Texture2D<float2> tex, SamplerState state, float3 projCoord, float searchUV, float2 rotationTrig)
-{
-    // Perform N samples with pre-defined offset and random rotation, scale by input search size
-    int blockers = 0;
-    float avgBlocker = 0.0f;
-    for (int i = 0; i < (int) PCSS_SampleCount; i++)
-    {
-        // Calculate sample offset (technically anything can be used here - standard NxN kernel, random samples with scale, etc.)
-        float2 offset = PCSS_Samples[i] * searchUV;
-        offset = PCSS_Rotate(offset, rotationTrig);
-
-        // Compare given sample depth with receiver depth, if it puts receiver into shadow, this sample is a blocker
-        float z = tex.SampleLevel(state, projCoord.xy + offset, 0.0f).x;
-        if (z < projCoord.z)
-        {
-            blockers++;
-            avgBlockerDistance += z;
-        }
-    }
-
-    // Calculate average blocker depth
-    avgBlocker /= blockers;
-
-    // To solve cases where there are no blockers - we output 2 values - average blocker depth and no. of blockers
-    return float2(avgBlocker, (float) blockers);
 }
 
 // 양수 인덱스의 범위는 CPU가 보장하고, 실제 타깃 존재 여부만 확인한다.
