@@ -58,6 +58,9 @@ struct FLightRenderParameters
     float BarnDoorSin;
     float BarnDoorLength;
     int ShadowIndex;
+    float DepthScale;
+    float DepthOffset;
+    float2 pad;
 };
 
 
@@ -239,25 +242,30 @@ float SampleShadowMap(FShadowShaderParameters Shadow, float3 LightNDC, int Light
     if (!(all(UV >= 0.0.xx) && all(UV <= 1.0.xx)))
         return 1.0f;
 
-// Receiver의 광원 기준 선형 깊이 준비
-    float ReceiverDepth = LightNDC.z;
+// Receiver의 광원 기준 선형 깊이(View 행렬까지 적용된 깊이) 준비, Clip.z = d * DepthScale + DepthOffset, Clip.w = d 이므로 NDC.z = (d × DepthScale + DepthOffset) / d, 해당식 정리
+    float ReceiverDepth = LocalLights[Lightindex].DepthOffset / (LightNDC.z - LocalLights[Lightindex].DepthScale);
+    float Frustumwidth = 2.0f * ReceiverDepth * tan(acos(LocalLights[Lightindex].OuterConeCos));
+    float LightRadiusUV = LocalLights[Lightindex].Position / Frustumwidth;
+    float AverageBlockerDepth;
 // 광원 크기와 Receiver 거리로 Blocker 탐색 반경 계산
-    int blockers = 0;
+    float avgBlockerDepthView = 0;
+    int numBlockers = 0;
+    
+    FindBlocker(AverageBlockerDepth, numBlockers, uv, ReceiverDepth, shadowMap, invProj, lightRadiusWorld);
 // 탐색 범위에서 깊이를 읽고 Receiver보다 앞에 있는 Blocker 선택
 // Atlas의 다른 타일을 읽지 않도록 좌표 처리
 
 // Blocker가 없으면 가시성 1 반환
     if (blockers == 0) return 1;
 // 선택된 Blocker 깊이를 각각 선형으로 복원한 뒤 평균 계산
-    float AverageBlockerDepth;
+    
 // Receiver와 평균 Blocker 선형 깊이, 광원 크기로 Penumbra 폭 계산
     float PenumbraWidth = Lightsize * (ReceiverDepth - AverageBlockerDepth) / AverageBlockerDepth;
 // Penumbra 폭을 타일 UV 기준 PCF 반경으로 변환
-    float Frustumwidth = 2.0f * ReceiverDepth * tan(acos(LocalLights[Lightindex].OuterConeCos));
+    
     float PCFDiameterUV = PenumbraWidth / Frustumwidth;
     float PCFradiusUV = PCFDiameterUV * 0.5f;
 // 계산한 반경으로 샘플 위치를 조절하며 PCF 수행
-// 실제 깊이 비교에는 기존 투영 깊이와 Bias 사용
     
     const uint2 Tile = uint2(
         Shadow.TileIndex % SHADOW_ATLAS_TILES_PER_ROW,
@@ -301,6 +309,26 @@ float SampleShadowMap(FShadowShaderParameters Shadow, float3 LightNDC, int Light
 
     // 양수 커널만 이 경로에 도달하므로 분모는 항상 양수다.
     return VisibilitySum / float(KernelSize * KernelSize);
+}
+
+void FindBlocker(FShadowShaderParameters Shadow, float ReceiverDepth, out float avgBlockerDepth, out float numBlockers, float2 LightRadiusUV, float zReceiver)
+{
+ //This uses similar triangles to compute what
+ //area of the shadow map we should search
+    float searchRadiusUV = LightRadiusUV * (ReceiverDepth - NEAR_PLANE) / ReceiverDepth;
+    float blockerSum = 0;
+    numBlockers = 0;
+
+    for (int i = 0; i < BLOCKER_SEARCH_NUM_SAMPLES; ++i)
+    {
+        float ShadowMapDepth = ShadowAtlases[Shadow.AtlasPageIndex].SampleLevel();
+        if (ShadowMapDepth < ReceiverDepth -Shadow.Bias)
+        {
+            blockerSum += ShadowMapDepth;
+            numBlockers++;
+        }
+    }
+    avgBlockerDepth = blockerSum / numBlockers;
 }
 
 float2 PCSS_BlockerDistance(Texture2D<float2> tex, SamplerState state, float3 projCoord, float searchUV, float2 rotationTrig)
