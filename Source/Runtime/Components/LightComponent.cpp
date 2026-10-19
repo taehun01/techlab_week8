@@ -17,6 +17,11 @@ void ULightComponent::PostEditChangeProperty(const FProperty& Property)
 	{
 		ShadowMapResolution = GetShadowMapResolution();
 	}
+	else if (Property.Name == "ShadowPCFKernelSize")
+	{
+		// 음수를 편집하면 표시값도 실제 사용값인 0으로 맞춘다.
+		ShadowPCFKernelSize = GetShadowPCFKernelSize();
+	}
 }
 
 void ULightComponent::CreateRenderState()

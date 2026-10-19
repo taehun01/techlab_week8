@@ -204,7 +204,7 @@ void FRenderer::PrepareShadowParameters()
 		FTexture2D* DepthTexture = ShadowInfo.RenderingInfo.DepthStencil.Texture;
 		Parameter.Bias = ShadowInfo.LightProxy->GetLightComponent()->GetShadowBias();
 		const FViewportSettings& Viewport = ShadowInfo.RenderingInfo.ViewportSetting;
-		Parameter.ShadowPCFRadius = ShadowInfo.LightProxy->GetLightComponent()->GetShadowPCFRadius();
+		Parameter.ShadowPCFKernelSize = ShadowInfo.LightProxy->GetLightComponent()->GetShadowPCFKernelSize();
 		Parameter.Resolution = Viewport.Width;
 		Parameter.TileIndex = (Viewport.StartY / Viewport.Height) * ShadowAtlasTilesPerRow
 			+ Viewport.StartX / Viewport.Width;

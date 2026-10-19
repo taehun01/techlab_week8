@@ -78,7 +78,7 @@ struct alignas(16) FShadowShaderParameters
 	// 같은 해상도의 그림자 네 개가 Atlas 페이지 한 장을 공유한다.
 	int32 AtlasPageIndex = -1;
 	uint32 TileIndex = 0;
-	float ShadowPCFRadius;
+	int32 ShadowPCFKernelSize = 0;
 	float pad[3];
 };
 static_assert(sizeof(FShadowShaderParameters) == 96);

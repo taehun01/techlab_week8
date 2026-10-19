@@ -10,7 +10,7 @@ class ULightComponent : public ULightComponentBase
 		PROPERTY(bCastShadows)
 		PROPERTY(ShadowMapResolution)
 		PROPERTY(ShadowBias)
-		PROPERTY(ShadowPCFRadius)
+		PROPERTY(ShadowPCFKernelSize)
 	REFLECT_END()
 public:
 	ULightComponent();
@@ -22,12 +22,12 @@ public:
 	bool CastsShadows() const { return bCastShadows; }
 	int32 GetShadowMapResolution() const { return FMath::Clamp(ShadowMapResolution, 128, 4096); }
 	float GetShadowBias() const { return FMath::Max(ShadowBias, 0.0f); }
-	float GetShadowPCFRadius() const { return FMath::Max(ShadowPCFRadius, 0.0f); }
+	int32 GetShadowPCFKernelSize() const { return FMath::Max(ShadowPCFKernelSize, 0); }
 
 	void SetCastShadows(bool bInCastShadows) { bCastShadows = bInCastShadows; }
 	void SetShadowMapResolution(int32 InResolution) { ShadowMapResolution = InResolution; }
 	void SetShadowBias(float InBias) { ShadowBias = InBias; }
-	void SetShadowPCFRadius(float InPCFRadius) { ShadowPCFRadius = InPCFRadius; }
+	void SetShadowPCFKernelSize(int32 InKernelSize) { ShadowPCFKernelSize = InKernelSize; }
 
 	virtual class FLightSceneProxy* CreateSceneProxy() const
 	{
@@ -46,7 +46,8 @@ private:
 	int32 ShadowMapResolution = 1024;
 	// Receiver의 깊이 비교에 사용할 Bias
 	float ShadowBias = 0.001f;
-	// PCF에 사용되는 Radius 값
-	float ShadowPCFRadius = 1.0f;
+
+	// 기존 기본 Radius 1과 같은 2×2 호출 격자로 시작한다.
+	int32 ShadowPCFKernelSize = 2;
 
 };

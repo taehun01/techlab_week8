@@ -148,7 +148,7 @@ struct FShadowShaderParameters
     uint Resolution;
     int AtlasPageIndex;
     uint TileIndex;
-    float ShadowPCFRadius;
+    int ShadowPCFKernelSize;
     float3 pad;
 };
 
@@ -196,8 +196,8 @@ struct FLightContribution
 
 #if defined(LIGHTING_MODEL_LAMBERT) || defined(LIGHTING_MODEL_BLINN_PHONG)
 
-// 현재 SM5.0 경로에서 정적 텍스처 인덱스로 비교 샘플링한 가시성을 반환한다.
-float LoadShadowDepth(int AtlasPageIndex, SamplerComparisonState Sampler, float2 UV, float CompareValue)
+// 하드웨어 비교 필터로 계산한 그림자 가시성을 반환한다.
+float SampleShadowAtlas(int AtlasPageIndex, SamplerComparisonState Sampler, float2 UV, float CompareValue)
 {
 #define SHADOW_DEPTH_CASE(Index) case Index: return ShadowAtlases[Index].SampleCmpLevelZero(Sampler, UV, CompareValue)
 
@@ -212,37 +212,75 @@ float LoadShadowDepth(int AtlasPageIndex, SamplerComparisonState Sampler, float2
 #undef SHADOW_DEPTH_CASE
 }
 
+// Hard Shadow에 사용할 깊이 한 개를 필터 없이 읽는다.
+float LoadShadowDepth(int AtlasPageIndex, int2 Texel)
+{
+#define SHADOW_DEPTH_LOAD_CASE(Index) case Index: return ShadowAtlases[Index].Load(int3(Texel, 0))
+
+    // 기존 SM5 경로처럼 텍스처 인덱스를 정적 분기로 선택한다.
+    switch (AtlasPageIndex)
+    {
+        SHADOW_DEPTH_LOAD_CASE(0);SHADOW_DEPTH_LOAD_CASE(1);
+        SHADOW_DEPTH_LOAD_CASE(2);SHADOW_DEPTH_LOAD_CASE(3);
+        SHADOW_DEPTH_LOAD_CASE(4);SHADOW_DEPTH_LOAD_CASE(5);
+        SHADOW_DEPTH_LOAD_CASE(6);SHADOW_DEPTH_LOAD_CASE(7);
+        default:
+            return 1.0f;
+    }
+
+#undef SHADOW_DEPTH_LOAD_CASE
+}
+
 // Atlas 타일 좌표 변환과 하드웨어 PCF 가시성 계산을 담당한다.
 float SampleShadowMap(FShadowShaderParameters Shadow, float3 LightNDC)
 {
     // D3D 텍스처의 좌상단 원점에 맞춰 Y를 뒤집는다.
-    const float2 UV = LightNDC.xy * float2(0.5f, -0.5f) + 0.5f; // 카메라기준 LightSpace 변환한 NDC 좌표 UV 좌표 범위로 변환
-    const uint2 Tile = uint2(Shadow.TileIndex % SHADOW_ATLAS_TILES_PER_ROW, Shadow.TileIndex / SHADOW_ATLAS_TILES_PER_ROW);
-    // 투영 영역 밖은 먼저 반환해 PCF 반복문의 계산 경로를 명확히 한다.
+    const float2 UV = LightNDC.xy * float2(0.5f, -0.5f) + 0.5f;
     if (!(all(UV >= 0.0.xx) && all(UV <= 1.0.xx)))
         return 1.0f;
 
-    float texel = 1.0f / max(Shadow.Resolution, 1.0f); // 타일 기준 한 텍셀의 UV 크기다.
-    float halftexel = 0.5f * texel; // 비교 필터가 인접 타일을 읽지 않도록 텍셀 중심까지 제한한다.
-    int r = max(int(Shadow.ShadowPCFRadius), 1); // (2r) x (2r)회 호출하며, 각 호출은 하드웨어의 2 x 2 비교 필터를 사용한다.
-    float sum = 0.0f;
-    int taps = 0;   // 평균 나눌때 분모, 픽셀 연산 횟수
+    const uint2 Tile = uint2(
+        Shadow.TileIndex % SHADOW_ATLAS_TILES_PER_ROW,
+        Shadow.TileIndex / SHADOW_ATLAS_TILES_PER_ROW
+    );
+    const float CompareDepth = LightNDC.z - Shadow.Bias;
+    const int KernelSize = Shadow.ShadowPCFKernelSize;
+
+    if (KernelSize == 0)
+    {
+        // UV 1에서도 현재 타일의 마지막 텍셀만 읽도록 제한한다.
+        const uint2 LocalTexel = min(uint2(UV * Shadow.Resolution), uint2(Shadow.Resolution - 1, Shadow.Resolution - 1));
+        const int2 AtlasTexel = int2(Tile * Shadow.Resolution + LocalTexel);
+        const float Depth = LoadShadowDepth(Shadow.AtlasPageIndex, AtlasTexel);
+
+        // 기존 LESS_EQUAL 비교 Sampler와 같은 비교식을 사용한다.
+        return CompareDepth <= Depth ? 1.0f : 0.0f;
+    }
+
+    // Resolution은 기존 HasShadowMap에서 양수임을 확인한다.
+    const float TexelSize = 1.0f / float(Shadow.Resolution);
+    const float HalfTexel = 0.5f * TexelSize;
+    const float HalfKernel = float(KernelSize - 1) * 0.5f;
+    float VisibilitySum = 0.0f;
+
     [loop]
-    for (int dy = -r; dy < r; ++dy)
+    for (int Y = 0; Y < KernelSize; ++Y)
     {
         [loop]
-        for (int dx = -r; dx < r; ++dx)
+        for (int X = 0; X < KernelSize; ++X)
         {
-            float2 offset = float2(dx, dy) + 0.5f; // 짝수 격자의 샘플 위치를 중심 양쪽에 대칭으로 배치한다.
-            float2 uvOff = UV + offset * texel;
-            float2 localUV = clamp(uvOff, float2(halftexel, halftexel), float2(1.0f - halftexel, 1.0f - halftexel));
-            float2 atlasUV = (float2(Tile) + localUV) / float(SHADOW_ATLAS_TILES_PER_ROW);
-            float d = LoadShadowDepth(Shadow.AtlasPageIndex, PCFSampler, atlasUV, LightNDC.z - Shadow.Bias);
-            sum += d; // 깊이 비교와 선형 필터링을 마친 가시성을 누적한다.
-            taps++;
+            // 홀수는 정수 오프셋, 짝수는 반 텍셀 오프셋으로 중심을 맞춘다.
+            const float2 Offset = float2(X, Y) - HalfKernel;
+            const float2 LocalUV = clamp(UV + Offset * TexelSize, float2(HalfTexel, HalfTexel), float2(1.0f - HalfTexel, 1.0f - HalfTexel));
+            const float2 AtlasUV =(float2(Tile) + LocalUV) / float(SHADOW_ATLAS_TILES_PER_ROW);
+
+            // 각 호출에서 기존 하드웨어 2×2 비교 필터를 사용한다.
+            VisibilitySum += SampleShadowAtlas(Shadow.AtlasPageIndex, PCFSampler, AtlasUV, CompareDepth);
         }
     }
-    return sum / max(taps, 1); // 전체 깊이 비교 결과를 평균해 그림자 가시성을 구한다.
+
+    // 양수 커널만 이 경로에 도달하므로 분모는 항상 양수다.
+    return VisibilitySum / float(KernelSize * KernelSize);
 }
 
 // 양수 인덱스의 범위는 CPU가 보장하고, 실제 타깃 존재 여부만 확인한다.
