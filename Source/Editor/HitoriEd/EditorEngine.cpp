@@ -590,8 +590,11 @@ void UEditorEngine::RenderMultipleViewports()
 		if (!ViewIndices)
 			continue;
 		SCOPE_CYCLE_COUNTER(ShadowStats::STAT_SetupCPU);
-		// 여러 View에서 같은 Spot을 중복 생성하지 않는다.
-		World->GatherLocalProjectedShadows(ShadowInfos);
+		{
+			// 같은 World의 여러 View가 공유하는 지역광 준비 비용을 모은다.
+			SCOPE_CYCLE_COUNTER(ShadowStats::SetupCPUStats[ShadowStats::Local]);
+			World->GatherLocalProjectedShadows(ShadowInfos);
+		}
 
 		const FDirectionalLightSceneProxy* Directional =
 			World->GetScene().GetPrimaryDirectionalLight();
@@ -610,9 +613,15 @@ void UEditorEngine::RenderMultipleViewports()
 		{
 			// 0은 World 공유 작업에 남겨두고 View 슬롯으로 안정적인 ID를 만든다.
 			const uint32 ViewId = static_cast<uint32>(ViewIndex + 1);
+			// 직교 View와 논리 분할 하나는 단일 맵 준비 비용으로 분류한다.
+			const bool bOrthographic = MultipleViewportsAdapter.IsOrthographic(ViewIndex);
+			const uint32 ExpectedCascadeCount = !bOrthographic && Light->IsCSMEnabled()
+				? static_cast<uint32>(Light->GetCascadeCount()) : 1u;
+			const auto Group = ShadowStats::GetGroup(true, ExpectedCascadeCount);
+			FScopeCycleCounter SetupCounter(ShadowStats::SetupCPUStats[Group]);
 			ReceiverCorners.Reset();
 
-			if (MultipleViewportsAdapter.IsOrthographic(ViewIndex))
+			if (bOrthographic)
 			{
 				// 직교 View는 논리 원점 앞뒤의 기존 단일 범위를 사용한다.
 				if (MultipleViewportsAdapter.AppendShadowFrustumCorners(
@@ -629,6 +638,8 @@ void UEditorEngine::RenderMultipleViewports()
 			if (!Directional->CalculateCascadeSplitDistances(Camera.Projection.NearClip, Camera.Projection.FarClip, SplitDistances))
 				continue;
 
+			// 남는 작업 수와 무관하게 실제 분할 계산 결과를 각 작업에 전달한다.
+			const uint32 LogicalCascadeCount = static_cast<uint32>(SplitDistances.Num() - 1);
 			for (int32 CascadeIndex = 0; CascadeIndex + 1 < SplitDistances.Num(); ++CascadeIndex)
 			{
 				// 이전 구간의 CascadeTransitionFraction 비율만큼 생성 Near 확장
@@ -644,7 +655,7 @@ void UEditorEngine::RenderMultipleViewports()
 					continue;
 
 				World->GatherDirectionalShadow(ShadowInfos, ReceiverCorners,
-					static_cast<uint32>(CascadeIndex), ViewId);
+					static_cast<uint32>(CascadeIndex), ViewId, LogicalCascadeCount);
 			}
 		}
 	}

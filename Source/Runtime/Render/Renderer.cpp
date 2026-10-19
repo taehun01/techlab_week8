@@ -279,6 +279,12 @@ void FRenderer::UpdateShadowStats()
 	uint64 DirectionalProjections = 0;
 	TSet<uint32> DirectionalViewIds;
 
+	// 매 프레임 새로 집계하므로 사용하지 않는 그룹도 0으로 기록된다.
+	uint64 GroupMapCounts[ShadowStats::GroupCount]{};
+	uint64 GroupTileBytes[ShadowStats::GroupCount]{};
+	TSet<uint32> SingleViewIds;
+	TSet<uint32> CSMViewIds;
+
 	// Point의 여러 면이나 CSM Cascade에서 같은 라이트를 중복 계산하지 않는다.
 	TSet<const FLightSceneProxy*> CountedLights;
 	CountedLights.Reserve(ProjectedShadows.Num());
@@ -292,6 +298,26 @@ void FRenderer::UpdateShadowStats()
 
 		++MapCount;
 		const ELightType LightType = ShadowInfo.LightProxy->GetLightComponent()->GetLightType();
+		// 라이트 중복 제거 전에 개별 투영의 Map과 타일 사용량을 집계한다.
+		const auto Group = ShadowStats::GetGroup(
+			LightType == ELightType::Directional, ShadowInfo.GetLogicalCascadeCount());
+		++GroupMapCounts[Group];
+
+		const FViewportSettings& Viewport = ShadowInfo.RenderingInfo.ViewportSetting;
+		const FTexture2D* Target = ShadowInfo.RenderingInfo.DepthStencil.Texture;
+		// 전체 Atlas 페이지가 아니라 실제 배정된 타일의 내용량이다.
+		GroupTileBytes[Group] += static_cast<uint64>(Viewport.Width)
+			* Viewport.Height * FormatToBytes(Target->GetFormat());
+
+		// 같은 View의 여러 Cascade를 View 수에는 한 번만 포함한다.
+		if (LightType == ELightType::Directional && ShadowInfo.ViewId != 0)
+		{
+			if (Group == ShadowStats::CSM)
+				CSMViewIds.Add(ShadowInfo.ViewId);
+			else
+				SingleViewIds.Add(ShadowInfo.ViewId);
+		}
+
 		// 같은 라이트의 여러 Cascade도 각각 하나의 투영 작업으로 센다.
 		if (LightType == ELightType::Directional)
 		{
@@ -348,6 +374,17 @@ void FRenderer::UpdateShadowStats()
 
 	FStatRegistry::SetMemory(ShadowStats::STAT_DepthMemory, DepthBytes);
 	FStatRegistry::SetMemory(ShadowStats::STAT_ParameterMemory, ParameterBytes);
+
+	// 메모리는 EndFrame에서 초기화되지 않으므로 작업이 없는 그룹도 갱신한다.
+	for (uint32 Group = 0; Group < ShadowStats::GroupCount; ++Group)
+	{
+		FStatRegistry::SetCounter(ShadowStats::MapStats[Group], GroupMapCounts[Group]);
+		FStatRegistry::SetMemory(ShadowStats::TileMemoryStats[Group], GroupTileBytes[Group]);
+	}
+
+	// Local은 World 공유 작업이므로 Directional 그룹의 View 수만 기록한다.
+	FStatRegistry::SetCounter(ShadowStats::STAT_SingleViews, SingleViewIds.Num());
+	FStatRegistry::SetCounter(ShadowStats::STAT_CSMViews, CSMViewIds.Num());
 }
 
 // 카메라의 ViewProjection을 공통 렌더 경로로 전달한다.
@@ -581,7 +618,6 @@ void FRenderer::RenderShadowMaps(TArray<FProjectedShadowInfo>&& InShadows, FShad
 		if (ShadowInfo.HasDepthTarget())
 		{
 			RenderShadowDepth(ShadowInfo);
-			FStatRegistry::AddCounter(ShadowStats::STAT_MapUpdates);
 		}
 	}
 	PrepareShadowParameters();
@@ -642,13 +678,19 @@ bool FRenderer::GetShadowDepthViewport(const FLightSceneProxy& LightProxy, FView
 
 void FRenderer::RenderShadowDepth(FProjectedShadowInfo& ShadowInfo)
 {
+	// 큐 준비부터 상태 복원까지 해당 그룹의 Depth 제출 CPU 시간을 측정한다.
+	const ELightType LightType = ShadowInfo.LightProxy->GetLightComponent()->GetLightType();
+	const auto Group = ShadowStats::GetGroup(
+		LightType == ELightType::Directional, ShadowInfo.GetLogicalCascadeCount());
+	FScopeCycleCounter DepthCounter(ShadowStats::DepthCPUStats[Group]);
+
 	// 타깃이 배정된 작업만 실행한다.
 	// 이전 카메라의 묶음과 상수 준비 상태를 그림자 작업에 재사용하지 않는다.
 	ResetStaticDrawGroups();
 	bObjectConstantsPrepared = false;
 
 	// Caster 큐를 소비하고 라이트 기준 View·Object 상수를 준비한다.
-	const bool bClampShadowNear = ShadowInfo.LightProxy->GetLightComponent()->GetLightType() == ELightType::Directional;
+	const bool bClampShadowNear = LightType == ELightType::Directional;
 	RenderQueueSorting(ShadowInfo.CasterQueue, ShadowInfo.LightViewProjection,
 		ShadowInfo.ShadowViewOrigin, bClampShadowNear);
 
@@ -664,11 +706,17 @@ void FRenderer::RenderShadowDepth(FProjectedShadowInfo& ShadowInfo)
 	RenderCommand::SetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 	RenderCommand::SetRasterizerState(ERasterizerState::SolidBack);
 
-	// 뎁스를 그린다
+	// 실제 제출된 Draw 수를 전체 합계와 해당 그룹에 함께 기록한다.
 	const uint64 DrawStart = RenderCommand::GetDrawIndexedCount();
 	RenderDepth(ShadowInfo.LightViewProjection);
-	FStatRegistry::AddCounter(ShadowStats::STAT_DrawCalls,	RenderCommand::GetDrawIndexedCount() - DrawStart);
+	const uint64 DrawCount = RenderCommand::GetDrawIndexedCount() - DrawStart;
+	FStatRegistry::AddCounter(ShadowStats::STAT_DrawCalls, DrawCount);
+	FStatRegistry::AddCounter(ShadowStats::DrawStats[Group], DrawCount);
 	RenderCommand::EndRenderPass(ShadowInfo.RenderingInfo);
+
+	// 실제 Depth 실행을 마친 작업만 갱신 횟수에 포함한다.
+	FStatRegistry::AddCounter(ShadowStats::STAT_MapUpdates);
+	FStatRegistry::AddCounter(ShadowStats::UpdateStats[Group]);
 
 	// 화면 렌더링에 사용할 모드를 복원하고 소비한 렌더 목록을 정리한다.
 	SetViewMode(SavedViewMode);

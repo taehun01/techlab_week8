@@ -73,9 +73,10 @@ public:
 	// BeginRenderViews 이후 World 공유 지역광 작업을 한 번 추가한다.
 	void GatherLocalProjectedShadows(TArray<FProjectedShadowInfo>& OutShadows);
 
-	// 지정한 View·Cascade의 Directional 투영을 만들고 Caster를 수집한다.
+	// 지정한 View·Cascade의 투영과 원래 논리 분할 개수를 보관하고 Caster를 수집한다.
 	void GatherDirectionalShadow(TArray<FProjectedShadowInfo>& OutShadows,
-		const TArray<FVector>& ReceiverCorners, uint32 ProjectionIndex, uint32 ViewId);
+		const TArray<FVector>& ReceiverCorners, uint32 ProjectionIndex, uint32 ViewId,
+		uint32 LogicalCascadeCount = 1);
 
 	// BeginRenderViews와 SetupProjection 이후, 해당 작업에 한 번 호출한다.
 	// Light Frustum과 CastShadow 조건으로 정적 메시 Caster를 수집한다.

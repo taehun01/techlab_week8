@@ -36,6 +36,11 @@ public:
     // 패킷이 참조하는 Proxy·Mesh·Material은 Depth 렌더 종료까지 유효해야 한다.
     void AddCasterPacket(const FRenderPacket& Packet);
 
+    // 일부 작업이 생략되어도 원래 View의 논리 분할 개수를 유지한다.
+    uint32 GetLogicalCascadeCount() const { return LogicalCascadeCount; }
+    // 유효한 분할 개수는 투영 구간을 계산한 호출자가 보장한다.
+    void SetLogicalCascadeCount(uint32 InCount) { LogicalCascadeCount = InCount; }
+
     // CPU 작업과 타깃 참조를 초기화한다. GPU 텍스처는 해제하지 않는다.
     void Reset();
 
@@ -48,6 +53,9 @@ private:
 
     // CSM의 Cascade 번호다. 단일 투영은 0을 사용한다.
     uint32 ProjectionIndex = 0;
+
+    // 단일 투영과 지역광은 1이며, Point의 면 개수와는 독립적이다.
+    uint32 LogicalCascadeCount = 1;
 
     // 0은 월드 공유 작업이며, View별 작업은 안정적인 비영 ID를 사용한다.
     uint32 ViewId = 0;

@@ -515,7 +515,8 @@ void UWorld::GatherLocalProjectedShadows(TArray<FProjectedShadowInfo>& OutShadow
 
 // 하나의 Receiver 구간마다 독립적인 Directional 작업을 추가한다.
 void UWorld::GatherDirectionalShadow(TArray<FProjectedShadowInfo>& OutShadows,
-	const TArray<FVector>& ReceiverCorners, uint32 ProjectionIndex, uint32 ViewId)
+	const TArray<FVector>& ReceiverCorners, uint32 ProjectionIndex, uint32 ViewId,
+	uint32 LogicalCascadeCount)
 {
 	// 화면 조명과 동일한 Directional 하나를 사용한다.
 	const FDirectionalLightSceneProxy* Directional = Scene.GetPrimaryDirectionalLight();
@@ -526,6 +527,9 @@ void UWorld::GatherDirectionalShadow(TArray<FProjectedShadowInfo>& OutShadows,
 	if (!Directional->SetupShadowProjection(
 		ReceiverCorners, ShadowInfo, ProjectionIndex, ViewId))
 		return;
+
+	// 투영 초기화가 끝난 뒤 실제 View의 논리 분할 개수를 기록한다.
+	ShadowInfo.SetLogicalCascadeCount(LogicalCascadeCount);
 
 	// 해당 투영의 열린 Caster Frustum과 CastShadow 조건을 재사용한다.
 	GatherShadowCasters(ShadowInfo);

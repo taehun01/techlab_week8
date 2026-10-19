@@ -423,36 +423,58 @@ void FViewportsPanel::DrawStatOverlay(ImDrawList* DrawList, const ImVec2& ViewMi
 	// 현재 프레임 전체 World의 그림자 통계를 기존 줄 목록에 추가한다.
 	if (FStatOverlay::IsEnabled(EStatFlags::Shadow))
 	{
-		Lines.Add({ "Shadow / CPU time", TitleColor });
-		// 준비와 Renderer 처리 시간을 기존 Shadow Stat 안에서 구분한다.
-		Lines.Add({ std::format("  Setup: {:.3f} ms",
-			FStatRegistry::GetCurrentFrameMs(ShadowStats::STAT_SetupCPU)), ValueColor });
-		Lines.Add({ std::format("  Renderer: {:.3f} ms", FStatRegistry::GetCurrentFrameMs(ShadowStats::STAT_RenderCPU)), ValueColor });
-
-		Lines.Add({ "Shadow / Frame counters", TitleColor });
-		Lines.Add({ std::format("  Prepared lights Directional / Point / Spot: {} / {} / {}",
+		Lines.Add({ "Shadow / Total", TitleColor });
+		// 전체 CPU 시간에는 그룹별 작업 외의 Atlas 준비와 정보 업로드 비용도 포함된다.
+		Lines.Add({ std::format("  CPU Setup: {:.3f} ms  Renderer: {:.3f} ms",
+			FStatRegistry::GetCurrentFrameMs(ShadowStats::STAT_SetupCPU),
+			FStatRegistry::GetCurrentFrameMs(ShadowStats::STAT_RenderCPU)), ValueColor });
+		Lines.Add({ std::format("  Prepared lights D/P/S: {}/{}/{}  Bound SRVs: {}",
 			FStatRegistry::GetCounter(ShadowStats::STAT_DirectionalLights),
 			FStatRegistry::GetCounter(ShadowStats::STAT_PointLights),
-			FStatRegistry::GetCounter(ShadowStats::STAT_SpotLights)), ValueColor });
-
-		Lines.Add({ std::format("  Maps: {}  Bound SRVs: {}",
-			FStatRegistry::GetCounter(ShadowStats::STAT_Maps),
+			FStatRegistry::GetCounter(ShadowStats::STAT_SpotLights),
 			FStatRegistry::GetCounter(ShadowStats::STAT_BoundTextures)), ValueColor });
+		Lines.Add({ std::format("  Maps: {}  Draws: {}  Updates: {}",
+			FStatRegistry::GetCounter(ShadowStats::STAT_Maps),
+			FStatRegistry::GetCounter(ShadowStats::STAT_DrawCalls),
+			FStatRegistry::GetCounter(ShadowStats::STAT_MapUpdates)), ValueColor });
 		// CSM OFF와 직교 View의 단일 맵도 실제 Directional 투영에 포함한다.
 		Lines.Add({ std::format("  Directional views: {}  Projections: {}",
 			FStatRegistry::GetCounter(ShadowStats::STAT_DirectionalViews),
 			FStatRegistry::GetCounter(ShadowStats::STAT_DirectionalProjections)), ValueColor });
 
-		Lines.Add({ std::format("  Draws: {}  Map updates: {}",
-			FStatRegistry::GetCounter(ShadowStats::STAT_DrawCalls),
-			FStatRegistry::GetCounter(ShadowStats::STAT_MapUpdates)), ValueColor });
+		// Directional은 View별로 구분하고, Point와 Spot은 World 공유 그룹으로 표시한다.
+		for (uint32 Group = 0; Group < ShadowStats::GroupCount; ++Group)
+		{
+			if (Group == ShadowStats::Local)
+				Lines.Add({ "Local / World shared", TitleColor });
+			else
+			{
+				const TStatId ViewStat = Group == ShadowStats::Single
+					? ShadowStats::STAT_SingleViews : ShadowStats::STAT_CSMViews;
+				Lines.Add({ std::format("{} / Views: {}", ShadowStats::GroupNames[Group],
+					FStatRegistry::GetCounter(ViewStat)), TitleColor });
+			}
+
+			Lines.Add({ std::format("  CPU Setup: {:.3f} ms  Depth submit: {:.3f} ms",
+				FStatRegistry::GetCurrentFrameMs(ShadowStats::SetupCPUStats[Group]),
+				FStatRegistry::GetCurrentFrameMs(ShadowStats::DepthCPUStats[Group])), ValueColor });
+			// 활성 타일 내용량은 아래의 전체 Atlas 페이지 할당량과 별개다.
+			const double TileMiB = static_cast<double>(
+				FStatRegistry::GetMemory(ShadowStats::TileMemoryStats[Group])) / BytesPerMegabyte;
+			Lines.Add({ std::format("  Maps: {}  Draws: {}  Updates: {}  Tiles: {:.2f} MiB",
+				FStatRegistry::GetCounter(ShadowStats::MapStats[Group]),
+				FStatRegistry::GetCounter(ShadowStats::DrawStats[Group]),
+				FStatRegistry::GetCounter(ShadowStats::UpdateStats[Group]),
+				TileMiB), ValueColor });
+		}
 
 		const uint64 DepthBytes = FStatRegistry::GetMemory(ShadowStats::STAT_DepthMemory);
 		const uint64 ParameterBytes = FStatRegistry::GetMemory(ShadowStats::STAT_ParameterMemory);
-
-		Lines.Add({ "Shadow / GPU resource memory", TitleColor });
-		Lines.Add({ std::format("  Total: {:.2f} MiB", static_cast<double>(DepthBytes + ParameterBytes) / BytesPerMegabyte), ValueColor });
-		Lines.Add({ std::format("  Depth: {:.2f} MiB  Info: {} B", static_cast<double>(DepthBytes) / BytesPerMegabyte, ParameterBytes), ValueColor });
+		// 빈 타일과 재사용 대기 페이지를 포함해 실제 확보한 자원 크기를 표시한다.
+		Lines.Add({ "Shadow / Allocated resources", TitleColor });
+		Lines.Add({ std::format("  Depth: {:.2f} MiB  Info: {} B  Total: {:.2f} MiB",
+			static_cast<double>(DepthBytes) / BytesPerMegabyte, ParameterBytes,
+			static_cast<double>(DepthBytes + ParameterBytes) / BytesPerMegabyte), ValueColor });
 	}
 
 	struct FProfileStatLine

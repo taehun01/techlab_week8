@@ -153,7 +153,7 @@ bool FEngineLoop::Tick()
 		Swapchain->SwapBuffers(Config.SyncInterval);
 	}
 
-	// EngineTimer는 DeltaTime을 0.1초로 자르므로 표시용 시간은 사이클로 따로 잰다.
+	// Present까지 포함한 완료 프레임의 실제 경과 시간을 기록한다.
 	const uint64 CurrentCycles = FPlatformTime::GetCycles64();
 	UpdateFrameStats(CurrentCycles - PrevFrameCycles);
 	PrevFrameCycles = CurrentCycles;

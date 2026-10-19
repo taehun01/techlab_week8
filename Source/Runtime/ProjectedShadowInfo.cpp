@@ -40,6 +40,7 @@ void FProjectedShadowInfo::Reset()
 {
     LightProxy = nullptr;
     ProjectionIndex = 0;
+    LogicalCascadeCount = 1;
     ViewId = 0;
     ShadowViewOrigin = FVector::ZeroVector;
     LightViewProjection = FMatrix::Identity;
