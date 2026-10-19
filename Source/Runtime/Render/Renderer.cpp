@@ -194,7 +194,7 @@ void FRenderer::PrepareShadowParameters()
 		const FProjectedShadowInfo& ShadowInfo = ProjectedShadows[Index];
 		FShadowShaderParameters& Parameter = Parameters[Index];
 		Parameter.LightViewProjection = ShadowInfo.LightViewProjection;
-
+		Parameter.IsKnownEmpty = ShadowInfo.HasCasters() ? 0u : 1u;
 		// 실패한 작업은 기본 AtlasPageIndex=-1을 유지한다.
 		if (!ShadowInfo.HasDepthTarget())
 		{
@@ -291,59 +291,52 @@ void FRenderer::UpdateShadowStats()
 
 	for (const FProjectedShadowInfo& ShadowInfo : ProjectedShadows)
 	{
-		if (!ShadowInfo.HasDepthTarget())
-		{
-			continue;
-		}
-
-		++MapCount;
 		const ELightType LightType = ShadowInfo.LightProxy->GetLightComponent()->GetLightType();
-		// 라이트 중복 제거 전에 개별 투영의 Map과 타일 사용량을 집계한다.
-		const auto Group = ShadowStats::GetGroup(
-			LightType == ELightType::Directional, ShadowInfo.GetLogicalCascadeCount());
-		++GroupMapCounts[Group];
+		const auto Group = ShadowStats::GetGroup(LightType == ELightType::Directional, ShadowInfo.GetLogicalCascadeCount());
 
-		const FViewportSettings& Viewport = ShadowInfo.RenderingInfo.ViewportSetting;
-		const FTexture2D* Target = ShadowInfo.RenderingInfo.DepthStencil.Texture;
-		// 전체 Atlas 페이지가 아니라 실제 배정된 타일의 내용량이다.
-		GroupTileBytes[Group] += static_cast<uint64>(Viewport.Width)
-			* Viewport.Height * FormatToBytes(Target->GetFormat());
-
-		// 같은 View의 여러 Cascade를 View 수에는 한 번만 포함한다.
-		if (LightType == ELightType::Directional && ShadowInfo.ViewId != 0)
-		{
-			if (Group == ShadowStats::CSM)
-				CSMViewIds.Add(ShadowInfo.ViewId);
-			else
-				SingleViewIds.Add(ShadowInfo.ViewId);
-		}
-
-		// 같은 라이트의 여러 Cascade도 각각 하나의 투영 작업으로 센다.
+		// 논리 투영과 View는 빈 작업을 포함해 집계한다.
 		if (LightType == ELightType::Directional)
 		{
 			++DirectionalProjections;
 			if (ShadowInfo.ViewId != 0)
+			{
 				DirectionalViewIds.Add(ShadowInfo.ViewId);
-		}
-		if (!CountedLights.Add(ShadowInfo.LightProxy))
-		{
-			continue;
+				if (Group == ShadowStats::CSM)
+					CSMViewIds.Add(ShadowInfo.ViewId);
+				else
+					SingleViewIds.Add(ShadowInfo.ViewId);
+			}
 		}
 
-		switch (LightType)
+		// Prepared Light는 실제 Map 개수와 독립적으로 중복 제거한다.
+		if (CountedLights.Add(ShadowInfo.LightProxy))
 		{
-		case ELightType::Directional:
-			++DirectionalLights;
-			break;
-		case ELightType::Point:
-			++PointLights;
-			break;
-		case ELightType::Spot:
-			++SpotLights;
-			break;
-		default:
-			break;
+			switch (LightType)
+			{
+			case ELightType::Directional:
+				++DirectionalLights;
+				break;
+			case ELightType::Point:
+				++PointLights;
+				break;
+			case ELightType::Spot:
+				++SpotLights;
+				break;
+			default:
+				break;
+			}
 		}
+
+		// Map과 활성 타일 메모리는 실제 타깃이 있는 작업만 집계한다.
+		if (!ShadowInfo.HasDepthTarget())
+			continue;
+
+		++MapCount;
+		++GroupMapCounts[Group];
+
+		const FViewportSettings& Viewport = ShadowInfo.RenderingInfo.ViewportSetting;
+		const FTexture2D* Target = ShadowInfo.RenderingInfo.DepthStencil.Texture;
+		GroupTileBytes[Group] += static_cast<uint64>(Viewport.Width) * Viewport.Height * FormatToBytes(Target->GetFormat());
 	}
 
 	uint64 DepthBytes = 0;
@@ -547,6 +540,10 @@ void FRenderer::PrepareShadowDepthTargets(TArray<FProjectedShadowInfo>& ShadowIn
 	{
 		// 타깃 재배정 전에 이전 비소유 참조를 비우고 전체 활성 키를 모은다.
 		ShadowInfo.SetRenderingInfo(FRenderingInfo{});
+		if(!ShadowInfo.HasCasters())
+		{
+			continue;
+		}
 		const ULightComponent* Light = ShadowInfo.LightProxy->GetLightComponent();
 		const FShadowAllocationKey Key{
 			Light->GetUUID(), ShadowInfo.ProjectionIndex, ShadowInfo.ViewId
@@ -559,6 +556,10 @@ void FRenderer::PrepareShadowDepthTargets(TArray<FProjectedShadowInfo>& ShadowIn
 
 	for (FProjectedShadowInfo& ShadowInfo : ShadowInfos)
 	{
+		if (!ShadowInfo.HasCasters())
+		{
+			continue;
+		}
 		const ULightComponent* Light = ShadowInfo.LightProxy->GetLightComponent();
 		const ELightType LightType = Light->GetLightType();
 		const uint32 Resolution = static_cast<uint32>(Light->GetShadowMapResolution());
@@ -614,16 +615,15 @@ void FRenderer::RenderShadowMaps(TArray<FProjectedShadowInfo>&& InShadows, FShad
 
 	for (FProjectedShadowInfo& ShadowInfo : ProjectedShadows)
 	{
-		if (!ShadowInfo.HasDepthTarget())
-		{
-			continue;
-		}
-		if (ShadowInfo.CasterQueue.IsEmpty())
+		if (!ShadowInfo.HasCasters())
 		{
 			FStatRegistry::AddCounter(ShadowStats::STAT_EmptyCasterDepthSkips);
 			continue;
 		}
-		RenderShadowDepth(ShadowInfo);
+		if (ShadowInfo.HasDepthTarget())
+		{
+			RenderShadowDepth(ShadowInfo);
+		}
 	}
 	PrepareShadowParameters();
 
@@ -643,6 +643,13 @@ int32 FRenderer::GetShadowIndex(
 	}
 
 	return INDEX_NONE;
+}
+
+bool FRenderer::IsShadowKnownEmpty(const FLightSceneProxy& LightProxy, uint32 ProjectionIndex, uint32 ViewId) const
+{
+	// 기존 조회를 재사용하고 소비된 큐 대신 수집 결과를 확인한다.
+	const int32 Index = GetShadowIndex(LightProxy, ProjectionIndex, ViewId);
+	return Index != INDEX_NONE && !ProjectedShadows[Index].HasCasters();
 }
 
 const FTexture2D* FRenderer::GetShadowDepthTexture(
@@ -934,7 +941,7 @@ void FRenderer::GetShadowViewIds(const FLightSceneProxy& LightProxy, TArray<uint
 	OutViewIds.Reset();
 	for (const FProjectedShadowInfo& ShadowInfo : ProjectedShadows)
 	{
-		if (ShadowInfo.LightProxy == &LightProxy && ShadowInfo.HasDepthTarget()	&& OutViewIds.Find(ShadowInfo.ViewId) == INDEX_NONE)
+		if (ShadowInfo.LightProxy == &LightProxy && OutViewIds.Find(ShadowInfo.ViewId) == INDEX_NONE)
 		{
 			OutViewIds.Add(ShadowInfo.ViewId);
 		}

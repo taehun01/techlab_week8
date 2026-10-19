@@ -32,7 +32,9 @@ void FProjectedShadowInfo::SetupProjection(const FLightSceneProxy& InLightProxy,
 // CastShadow·Frustum·메시 적합성 판정은 World가 수행한 상태로 전달한다.
 void FProjectedShadowInfo::AddCasterPacket(const FRenderPacket& Packet)
 {
+    // World가 선별한 패킷을 보관하고 수집 결과를 기록한다.
     CasterQueue.Add(Packet);
+    bHasCasters = true;
 }
 
 // GPU 자원은 유지하고 이번 작업의 CPU 상태와 비소유 참조만 비운다.
@@ -48,4 +50,5 @@ void FProjectedShadowInfo::Reset()
     CasterPlaneMask = FrustumAllPlanesMask;
     RenderingInfo = FRenderingInfo{};
     CasterQueue.Reset();
+    bHasCasters = false;
 }

@@ -27,6 +27,8 @@ public:
 
     // 타깃이 있는지 체크
     bool HasDepthTarget() const { return RenderingInfo.DepthStencil.Texture != nullptr; }
+    // Caster가 있는지 체크
+    bool HasCasters() const { return bHasCasters; }
 
     // World는 범위와 평면 마스크를 함께 사용해 Caster를 탐색한다.
     const FFrustumPlanes& GetCasterFrustum() const { return CasterFrustum; }
@@ -77,4 +79,7 @@ private:
 
     // Caster 패킷과 큐 내부에서 사용하는 임시 행렬 저장소를 소유한다.
     FRenderQueue CasterQueue;
+
+    // 패킷 등록 여부이며, Depth 실행 후 큐가 비어도 변경하지 않는다.
+    bool bHasCasters = false;
 };

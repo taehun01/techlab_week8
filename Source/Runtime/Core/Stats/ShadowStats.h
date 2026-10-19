@@ -18,6 +18,7 @@ namespace ShadowStats
     DECLARE_COUNTER_STAT("Shadow Draw Calls", STAT_DrawCalls);
     DECLARE_COUNTER_STAT("Shadow Map Updates", STAT_MapUpdates);
     // 단일 맵과 CSM을 함께 비교할 수 있도록 실제 Directional 작업을 집계한다.
+    // Directional View·Projection은 타깃을 생략한 빈 논리 작업도 포함한다.
     DECLARE_COUNTER_STAT("Shadow Directional Views", STAT_DirectionalViews);
     DECLARE_COUNTER_STAT("Shadow Directional Projections", STAT_DirectionalProjections);
     // 실제 확보한 GPU 자원의 내용 크기를 바이트로 기록한다.

@@ -79,7 +79,8 @@ struct alignas(16) FShadowShaderParameters
 	int32 AtlasPageIndex = -1;
 	uint32 TileIndex = 0;
 	int32 ShadowPCFKernelSize = 0;
-	float pad[3];
+	uint32 IsKnownEmpty = 0;
+	float pad[2]{};
 };
 static_assert(sizeof(FShadowShaderParameters) == 96);
 
@@ -266,9 +267,9 @@ public:
 	void RenderShadowMaps(TArray<FProjectedShadowInfo>&& InShadows, FShadowViewRenderer& InShadowViewRenderer);
 
 	// 지정한 투영의 GPU 그림자 정보 번호를 반환한다. 없으면 INDEX_NONE이다.
-	int32 GetShadowIndex(const FLightSceneProxy& LightProxy,
-		uint32 ProjectionIndex = 0, uint32 ViewId = 0) const;
-
+	int32 GetShadowIndex(const FLightSceneProxy& LightProxy, uint32 ProjectionIndex = 0, uint32 ViewId = 0) const;
+	//  GPU 작업 항목이 유지된 투영에서 타깃 생략 사유를 조회한다.
+	bool IsShadowKnownEmpty(const FLightSceneProxy& LightProxy,	uint32 ProjectionIndex = 0, uint32 ViewId = 0) const;
 	// 현재 프레임에 지정한 투영의 Shadow Atlas를 읽기 전용으로 제공한다.
 	// 텍스처는 Engine의 ShadowViewRenderer 소유이며 다음 프레임까지 보관하지 않는다.
 	const FTexture2D* GetShadowDepthTexture(const FLightSceneProxy& LightProxy,

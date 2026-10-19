@@ -149,7 +149,8 @@ struct FShadowShaderParameters
     int AtlasPageIndex;
     uint TileIndex;
     int ShadowPCFKernelSize;
-    float3 pad;
+    uint IsKnownEmpty;
+    float2 pad;
 };
 
 // 전체 그림자 정보는 가변 개수로 전달한다.
@@ -293,6 +294,17 @@ bool HasShadowMap(int ShadowIndex)
     return Shadow.AtlasPageIndex >= 0 && Shadow.Resolution > 0;
 }
 
+// 맵/캐스터가 없다고 확인된 프로젝션은 평가 가능.
+// 바인딩 실패/자원 없음 등은 평가 불가.
+bool CanEvaluateShadow(int ShadowIndex)
+{
+    if (ShadowIndex < 0)
+        return false;
+
+    const FShadowShaderParameters Shadow = ShadowParameters[ShadowIndex];
+    return Shadow.IsKnownEmpty != 0 || (Shadow.AtlasPageIndex >= 0 && Shadow.Resolution > 0);
+}
+
 // 월드 위치를 해당 그림자의 투영 공간으로 옮겨 가시성을 구한다.
 float GetShadowVisibility(int ShadowIndex, float3 WorldPos)
 {
@@ -340,7 +352,7 @@ float GetDirectionalCascadeBlend(uint CascadeIndex, float ViewDepth)
     const float Width = (FarDistance - NearDistance) * DirectionalCascadeTransitionFraction;
     const float Start = FarDistance - Width;
 
-    if (ViewDepth <= Start || !HasShadowMap(DirectionalShadowIndices[CascadeIndex + 1]))
+    if (ViewDepth <= Start || !CanEvaluateShadow(DirectionalShadowIndices[CascadeIndex + 1]))
         return 0.0f;
 
     return saturate((ViewDepth - Start) / Width);
@@ -356,7 +368,7 @@ float GetDirectionalShadowVisibility(float3 WorldPos)
 
     const uint CascadeIndex = uint(Selected);
     const int ShadowIndex = DirectionalShadowIndices[CascadeIndex];
-    if (!HasShadowMap(ShadowIndex))
+    if (!CanEvaluateShadow(ShadowIndex))
         return 1.0f;
 
     const float Visibility = GetShadowVisibility(ShadowIndex, WorldPos);
@@ -377,7 +389,7 @@ float3 GetDirectionalCascadeDebugColor(float3 WorldPos)
         return float3(0.25f, 0.25f, 0.25f);
 
     const uint CascadeIndex = uint(Selected);
-    if (!HasShadowMap(DirectionalShadowIndices[CascadeIndex]))
+    if (!CanEvaluateShadow(DirectionalShadowIndices[CascadeIndex]))
         return float3(0.25f, 0.25f, 0.25f); 
 
     static const float3 Colors[4] =

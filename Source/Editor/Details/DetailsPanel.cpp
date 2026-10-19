@@ -926,7 +926,7 @@ void FDetailsPanel::DrawShadowMapPreview(const ULightComponent& Light)
 		TArray<uint32> Projections;
 		for (uint32 Index = 0; Index < UDirectionalLightComponent::MaxShadowCascades; ++Index)
 		{
-			if (Renderer->GetShadowDepthTexture(*Light.SceneProxy, Index, ShadowPreviewViewId))
+			if (Renderer->GetShadowIndex(*Light.SceneProxy, Index, ShadowPreviewViewId) != INDEX_NONE)
 				Projections.Add(Index);
 		}
 		if (Projections.IsEmpty())
@@ -963,7 +963,7 @@ void FDetailsPanel::DrawShadowMapPreview(const ULightComponent& Light)
 		TArray<uint32> Faces;
 		for (uint32 FaceIndex = 0; FaceIndex < FaceCount; ++FaceIndex)
 		{
-			if (Renderer->GetShadowDepthTexture(*Light.SceneProxy, FaceIndex, 0))
+			if (Renderer->GetShadowIndex(*Light.SceneProxy, FaceIndex, 0) != INDEX_NONE)
 				Faces.Add(FaceIndex);
 		}
 
@@ -994,6 +994,11 @@ void FDetailsPanel::DrawShadowMapPreview(const ULightComponent& Light)
 
 		// 아래 공통 조회·Viewport·UV 계산에 선택한 면을 전달한다.
 		ProjectionIndex = ShadowPreviewProjectionIndex;
+	}
+	if (Renderer->IsShadowKnownEmpty(*Light.SceneProxy, ProjectionIndex, ViewId))
+	{
+		ImGui::TextDisabled("No casters: depth target allocation skipped.");
+		return;
 	}
 	// Spot은 기존 공유 키 (0, 0)를 사용한다.
 	const FTexture2D* DepthTexture = Renderer->GetShadowDepthTexture(*Light.SceneProxy, ProjectionIndex, ViewId);
