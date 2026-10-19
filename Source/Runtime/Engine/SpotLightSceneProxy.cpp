@@ -20,7 +20,7 @@ void FSpotLightSceneProxy::GetLightShaderParameters(FLightRenderParameters& Out)
 }
 
 
-bool FSpotLightSceneProxy::GetShadowProjection(FVector& OutViewOrigin, FMatrix& OutViewProjection) const
+bool FSpotLightSceneProxy::GetShadowProjection(FShadowProjection& OutShadowProjection) const
 {
     if (!ShouldCastShadow())
         return false;
@@ -55,7 +55,11 @@ bool FSpotLightSceneProxy::GetShadowProjection(FVector& OutViewOrigin, FMatrix& 
         0.0f, 0.0f, DepthOffset, 0.0f
     );
 
-    OutViewOrigin = ViewOrigin;
-    OutViewProjection = View * Projection;
+    /*OutViewOrigin = ViewOrigin;
+    OutViewProjection = View * Projection;*/
+
+    OutShadowProjection.ViewOrigin = ViewOrigin;
+    OutShadowProjection.ViewProjections.Add(View * Projection);
+
     return true;
 }

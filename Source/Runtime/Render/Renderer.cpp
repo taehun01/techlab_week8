@@ -498,10 +498,13 @@ void FRenderer::PrepareShadowDepthTargets(TArray<FProjectedShadowInfo>& ShadowIn
 
 	for (FProjectedShadowInfo& ShadowInfo : ShadowInfos)
 	{
+		const uint32 ProjectionID = ShadowInfo.GetProjectionID();
+
+		// Light가 포인트이면 같은 uuid에 projectionid만 다른 키를 사용
 		const ULightComponent* Light = ShadowInfo.LightProxy->GetLightComponent();
 		const uint32 UUID = Light->GetUUID();
 		const uint32 Resolution = static_cast<uint32>(Light->GetShadowMapResolution());
-		if (!ShadowViewRenderer->AllocateShadowInfo(UUID, ShadowInfo.LightViewProjection, Resolution))
+		if (!ShadowViewRenderer->AllocateShadowInfo(UUID, ProjectionID, ShadowInfo.LightViewProjection, Resolution))
 			continue;
 
 		// UUID가 있으면 기존 AtlasIndex·TileIndex를 사용하고 행렬만 갱신한 상태다.

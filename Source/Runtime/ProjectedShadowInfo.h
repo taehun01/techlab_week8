@@ -11,7 +11,7 @@ class FProjectedShadowInfo
 public:
     // 이전 작업을 초기화하고 투영 결과와 Caster Frustum을 함께 설정한다.
     // 입력 VP의 유효성은 라이트별 투영 계산을 수행한 호출자가 보장한다.
-    void SetupProjection(const FLightSceneProxy& InLightProxy, const FVector& InViewOrigin, const FMatrix& InLightViewProjection);
+    void SetupProjection(const FLightSceneProxy& InLightProxy, const FVector& InViewOrigin, const FMatrix& InLightViewProjection, uint32 InProjectionID);
 
     // Renderer가 준비한 타깃·Viewport·Clear/Load 설정을 연결한다.
     void SetRenderingInfo(const FRenderingInfo& InRenderingInfo)
@@ -32,12 +32,17 @@ public:
     // CPU 작업과 타깃 참조를 초기화한다. GPU 텍스처는 해제하지 않는다.
     void Reset();
 
+    uint32 GetProjectionID() { return ProjectionID; }
+
 private:
     // Renderer는 준비된 상태를 읽고 Caster 큐를 소비한다.
     friend class FRenderer;
 
     // 그림자를 생성할 라이트 객체. 라이트의 수명을 소유하지 않는다.
     const FLightSceneProxy* LightProxy = nullptr;
+
+    // 포인트 라이트의 경우 6개의 VP가 있으므로 Map의 키로 구분하기 위해서 넣음(0 ~ 5)
+    uint32 ProjectionID = 0;
 
     // 그림자 View의 원점. SpotLight, PointLight에서는 광원 위치를 사용한다.
     FVector ShadowViewOrigin = FVector::ZeroVector;

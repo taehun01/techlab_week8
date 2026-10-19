@@ -430,10 +430,55 @@ bool bUseLightGrid, bool bReceiveShadow)
 #if defined(LIGHTING_MODEL_LAMBERT) || defined(LIGHTING_MODEL_BLINN_PHONG)
         if (bReceiveShadow)
         {
+        // TODO: if 분기로 포인트와 스폿라이트를 구분한다. 
+        // 포인트의 경우에는 faceIndex를구해서 해당하는 ShadowIndex들을 결정함 
         // 해당 라이트의 직접광만 가린다. Ambient와 다른 라이트는 유지한다.
-            const float Visibility = GetShadowVisibility(Light.ShadowIndex, WorldPos);
-            LightContribution.Diffuse *= Visibility;
-            LightContribution.Specular *= Visibility;
+            if(Light.Type == 2)
+            {
+                const float Visibility = GetShadowVisibility(Light.ShadowIndex, WorldPos);
+                LightContribution.Diffuse *= Visibility;
+                LightContribution.Specular *= Visibility;
+            }
+            
+            if(Light.Type == 1)
+            {
+                int FaceIndex = 0;
+                
+                float3 Direction = WorldPos - Light.Position;
+                float3 AbsDir = abs(Direction);
+                //float Largest = max(AbsDirection.x, max(AbsDirection.y, AbsDirection.z));
+                
+                // Direction의 절대값이 가장 큰 요소(|x| |y| |z|) 따라 FaceIndex 결정
+                // |X|가 가장 클때 X >= 0 -> FaceIndex 0    X < 0 -> FaceIndex 1
+                // |Y|가 가장 클때 Y >= 0 -> FaceIndex 2    Y < 0 -> FaceIndex 3
+                // |Z|가 가장 클때 Z >= 0 -> FaceIndex 4    Z < 0 -> FaceIndex 5
+                
+                if (AbsDir.x >= AbsDir.y && AbsDir.x >= AbsDir.z)
+                {
+                    if (Direction.x >= 0)
+                        FaceIndex = 0;
+                    else
+                        FaceIndex = 1;
+                }
+                else if (AbsDir.y >= AbsDir.x && AbsDir.y >= AbsDir.z)
+                {
+                    if (Direction.y >= 0)
+                        FaceIndex = 2;
+                    else
+                        FaceIndex = 3;
+                }
+                else if (AbsDir.z >= AbsDir.x && AbsDir.z >= AbsDir.y)
+                {
+                    if (Direction.z >= 0)
+                        FaceIndex = 4;
+                    else
+                        FaceIndex = 5;
+                }
+                const float Visibility = GetShadowVisibility(Light.ShadowIndex + FaceIndex, WorldPos);
+                LightContribution.Diffuse *= Visibility;
+                LightContribution.Specular *= Visibility;
+            }
+            
         }
 #endif
         Total.Diffuse += LightContribution.Diffuse;

@@ -3,13 +3,14 @@
 
 
 // 새 투영을 설정하면 이전 Caster와 타깃 연결은 더 이상 사용하지 않는다.
-void FProjectedShadowInfo::SetupProjection(const FLightSceneProxy& InLightProxy, const FVector& InViewOrigin, const FMatrix& InLightViewProjection)
+void FProjectedShadowInfo::SetupProjection(const FLightSceneProxy& InLightProxy, const FVector& InViewOrigin, const FMatrix& InLightViewProjection, uint32 InProjectionID)
 {
     Reset();
 
     LightProxy = &InLightProxy;
     ShadowViewOrigin = InViewOrigin;
     LightViewProjection = InLightViewProjection;
+    ProjectionID = InProjectionID;
 
     // 저장한 VP에서 즉시 추출해 렌더링과 컬링의 투영이 일치하게 한다.
     CasterFrustum = ExtractFrustumPlanes(LightViewProjection);

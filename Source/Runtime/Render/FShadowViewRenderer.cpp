@@ -33,18 +33,27 @@ bool FShadowViewRenderer::AddNewAtlas(uint32 TileResolution)
 	return true;
 }
 
-void FShadowViewRenderer::AddShadowInfo(uint32 UUID, uint32 AtlasIndex, uint32 TileIndex, const FMatrix& LightSpaceMatrix)
+void FShadowViewRenderer::AddShadowInfo(uint32 UUID, uint32 ProjectionID, uint32 AtlasIndex, uint32 TileIndex, const FMatrix& LightSpaceMatrix)
 {
+	FShadowKey Key;
+	Key.UUID = UUID;
+	Key.ProjectionIndex = ProjectionID;
+
 	FShadowData Data;
 	Data.LightSpaceMatrix = LightSpaceMatrix;
 	Data.AtlasIndex = AtlasIndex;
 	Data.TileIndex = TileIndex;
-	ShadowInfoMap[UUID] = Data;
+	//ShadowInfoMap[UUID] = Data;
+	ShadowInfoMap[Key] = Data;
 }
 
-bool FShadowViewRenderer::AllocateShadowInfo(uint32 UUID, const FMatrix& LightSpaceMatrix, uint32 TileResolution)
+bool FShadowViewRenderer::AllocateShadowInfo(uint32 UUID, uint32 ProjectionID, const FMatrix& LightSpaceMatrix, uint32 TileResolution)
 {
-	if (FShadowData* Data = ShadowInfoMap.Find(UUID))
+	FShadowKey Key;
+	Key.UUID = UUID;
+	Key.ProjectionIndex = ProjectionID;
+
+	if (FShadowData* Data = ShadowInfoMap.Find(Key))	//Find(UUID)
 	{
 		if (ShadowAtlasArray[Data->AtlasIndex].TileResolution == TileResolution)
 		{
@@ -53,7 +62,7 @@ bool FShadowViewRenderer::AllocateShadowInfo(uint32 UUID, const FMatrix& LightSp
 			return true;
 		}
 		// 에디터에서 해상도를 변경한 조명만 이전 타일을 반환하고 다시 배정한다.
-		ReleaseShadowInfo(UUID);
+		ReleaseShadowInfo(UUID, ProjectionID);
 	}
 
 	for (int32 AtlasIndex = 0; AtlasIndex < ShadowAtlasArray.Num(); ++AtlasIndex)
@@ -67,7 +76,7 @@ bool FShadowViewRenderer::AllocateShadowInfo(uint32 UUID, const FMatrix& LightSp
 			if (!Atlas.UsedTiles[TileIndex])
 			{
 				Atlas.UsedTiles[TileIndex] = true;
-				AddShadowInfo(UUID, AtlasIndex, TileIndex, LightSpaceMatrix);
+				AddShadowInfo(UUID, ProjectionID, AtlasIndex, TileIndex, LightSpaceMatrix);
 				return true;
 			}
 		}
@@ -78,16 +87,21 @@ bool FShadowViewRenderer::AllocateShadowInfo(uint32 UUID, const FMatrix& LightSp
 
 	const uint32 AtlasIndex = ShadowAtlasArray.Num() - 1;
 	ShadowAtlasArray[AtlasIndex].UsedTiles[0] = true;
-	AddShadowInfo(UUID, AtlasIndex, 0, LightSpaceMatrix);
+	AddShadowInfo(UUID, ProjectionID, AtlasIndex, 0, LightSpaceMatrix);
 	return true;
 }
 
-void FShadowViewRenderer::ReleaseShadowInfo(uint32 UUID)
+// UUID가 아니라 Key로 해제하도록 변경 필요
+void FShadowViewRenderer::ReleaseShadowInfo(uint32 UUID, uint32 ProjectionID)
 {
-	if (const FShadowData* Data = ShadowInfoMap.Find(UUID))
+	FShadowKey Key;
+	Key.UUID = UUID;
+	Key.ProjectionIndex = ProjectionID;
+
+	if (const FShadowData* Data = ShadowInfoMap.Find(Key))
 	{
 		ShadowAtlasArray[Data->AtlasIndex].UsedTiles[Data->TileIndex] = false;
-		ShadowInfoMap.Remove(UUID);
+		ShadowInfoMap.Remove(Key);
 	}
 }
 

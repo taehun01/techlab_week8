@@ -463,23 +463,59 @@ void UWorld::GatherProjectedShadows(TArray<FProjectedShadowInfo>& OutShadows)
 	for (const FLocalLightSceneProxy* LightProxy : Scene.LocalLightProxies)
 	{
 		// TODO : SpotLight 이외의 다른 광원들도 지원해야함.
-		if (LightProxy->GetLightComponent()->GetLightType() != ELightType::Spot)
+		// if문 여러개로 spot이랑 포인트 구분할것임
+		// 포인트의 경우에는 오리진하나에 VP행렬 여러개? 
+		if (LightProxy->GetLightComponent()->GetLightType() == ELightType::Spot)
 		{
-			continue;
+			// Light 설정과 투영 유효성은 기존 계산 함수가 판단한다.
+			FShadowProjection ShadowProjection;
+			ShadowProjection.ViewOrigin = FVector::ZeroVector;
+			///ShadowProjection.ViewProjections[0] = FMatrix::Identity;
+
+			if (!LightProxy->GetShadowProjection(ShadowProjection))
+			{
+				continue;
+			}
+
+			// Info 하나는 투영 작업 하나이며, Caster 수집은 기존 경로를 사용한다.
+			FProjectedShadowInfo& ShadowInfo = OutShadows.AddDefaulted_GetRef();
+			//ShadowInfo.SetupProjection(*LightProxy, ShadowViewOrigin, LightViewProjection);
+			ShadowInfo.SetupProjection(*LightProxy, ShadowProjection.ViewOrigin, ShadowProjection.ViewProjections[0], 0);
+			GatherShadowCasters(ShadowInfo);
 		}
 
 		// Light 설정과 투영 유효성은 기존 계산 함수가 판단한다.
-		FVector ShadowViewOrigin = FVector::ZeroVector;
+		/*FVector ShadowViewOrigin = FVector::ZeroVector;
 		FMatrix LightViewProjection = FMatrix::Identity;
+
 		if (!LightProxy->GetShadowProjection(ShadowViewOrigin, LightViewProjection))
 		{
 			continue;
-		}
+		}*/
 
-		// Info 하나는 투영 작업 하나이며, Caster 수집은 기존 경로를 사용한다.
-		FProjectedShadowInfo& ShadowInfo = OutShadows.AddDefaulted_GetRef();
-		ShadowInfo.SetupProjection(*LightProxy, ShadowViewOrigin, LightViewProjection);
-		GatherShadowCasters(ShadowInfo);
+		// 포인트 라이트면 셰도우 인포 6개 : 어떻게 6개를 모음?
+		if (LightProxy->GetLightComponent()->GetLightType() == ELightType::Point)
+		{
+			// Light 설정과 투영 유효성은 기존 계산 함수가 판단한다.
+			FShadowProjection ShadowProjection;
+			ShadowProjection.ViewOrigin = FVector::ZeroVector;
+
+			if (!LightProxy->GetShadowProjection(ShadowProjection))
+			{
+				continue;
+			}
+
+			uint32 ID = 0;
+
+			// Info 하나는 투영 작업 하나이며, Caster 수집은 기존 경로를 사용한다.
+			for (const FMatrix& IT : ShadowProjection.ViewProjections)
+			{
+				FProjectedShadowInfo& ShadowInfo = OutShadows.AddDefaulted_GetRef();
+				ShadowInfo.SetupProjection(*LightProxy, ShadowProjection.ViewOrigin, IT, ID);
+				GatherShadowCasters(ShadowInfo);
+				++ID;
+			}
+		}
 	}
 
 }
