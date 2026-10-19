@@ -41,6 +41,8 @@
 #include "Components/DirectionalLightComponent.h"
 #include "Engine/DirectionalLightSceneProxy.h"
 #include "Core/Stats/ShadowStats.h"
+#include "Math/Frustum.h"
+
 namespace
 {
 	DECLARE_CYCLE_STAT("Viewport Update", STAT_ViewportUpdate);
@@ -593,7 +595,15 @@ void UEditorEngine::RenderMultipleViewports()
 		{
 			// 같은 World의 여러 View가 공유하는 지역광 준비 비용을 모은다.
 			SCOPE_CYCLE_COUNTER(ShadowStats::SetupCPUStats[ShadowStats::Local]);
-			World->GatherLocalProjectedShadows(ShadowInfos);
+			TArray<FFrustumPlanes> ActiveViewFrustums;
+			ActiveViewFrustums.Reserve(ViewIndices->Num());
+			
+			for (int32 ViewIndex : *ViewIndices)
+			{
+				ActiveViewFrustums.Add(ExtractFrustumPlanes(MultipleViewportsAdapter.GetEngineViewProjection(ViewIndex)));
+			}
+
+			World->GatherLocalProjectedShadows(ShadowInfos, ActiveViewFrustums);
 		}
 
 		const FDirectionalLightSceneProxy* Directional =

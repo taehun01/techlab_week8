@@ -71,7 +71,7 @@ public:
 
 
 	// BeginRenderViews 이후 World 공유 지역광 작업을 한 번 추가한다.
-	void GatherLocalProjectedShadows(TArray<FProjectedShadowInfo>& OutShadows);
+	void GatherLocalProjectedShadows(TArray<FProjectedShadowInfo>& OutShadows,const TArray<FFrustumPlanes>& ActiveViewFrustums);
 
 	// 지정한 View·Cascade의 투영과 원래 논리 분할 개수를 보관하고 Caster를 수집한다.
 	void GatherDirectionalShadow(TArray<FProjectedShadowInfo>& OutShadows,

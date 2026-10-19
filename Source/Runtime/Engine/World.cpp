@@ -28,6 +28,7 @@
 #include "Core/Async/TaskPool.h"
 
 #include "UObject/UObjectGlobals.h"
+#include "Core/Stats/ShadowStats.h"
 
 DECLARE_CYCLE_STAT("Actor Tick", STAT_ActorTick); // Actor 틱 측정
 DECLARE_CYCLE_STAT("Update All Transforms", STAT_UpdateAllTransforms); // 각 Transform의 Update 시간 측정
@@ -461,14 +462,42 @@ void UWorld::GatherRenderPackets(FRenderQueue& RenderQueue, const FLODViewContex
 }
 
 // 지역광 그림자는 같은 World의 여러 View가 공유한다.
-void UWorld::GatherLocalProjectedShadows(TArray<FProjectedShadowInfo>& OutShadows)
+void UWorld::GatherLocalProjectedShadows(TArray<FProjectedShadowInfo>& OutShadows, const TArray<FFrustumPlanes>& ActiveViewFrustums)
 {
 	for (const FLocalLightSceneProxy* LightProxy : Scene.LocalLightProxies)
 	{
-		// TODO : SpotLight 이외의 다른 광원들도 지원해야함.
+		const ELightType LightType = LightProxy->GetLightComponent()->GetLightType();
+		if (LightType != ELightType::Point && LightType != ELightType::Spot)
+		{
+			continue;
+		}
+		FLightRenderParameters LightParameters{};
+		LightProxy->GetLightShaderParameters(LightParameters);
+
+		const float Radius = LightParameters.Radius;
+		const FAABB InfluenceBounds{ LightParameters.Position, FVector(Radius,Radius,Radius) };
+		
+		bool bAffetsAnyViews = false;
+		for (const FFrustumPlanes& ViewFrustum : ActiveViewFrustums)
+		{
+			if (IsAABBInFrustum(InfluenceBounds, ViewFrustum)) 
+			{
+				bAffetsAnyViews = true;
+				break;
+			}
+		}
+		if (!bAffetsAnyViews)
+		{
+			if (LightProxy->ShouldCastShadow())
+			{
+				FStatRegistry::AddCounter(ShadowStats::STAT_LocalLightsOutsideViews);
+			}
+			continue;
+		}
+
 		// if문 여러개로 spot이랑 포인트 구분할것임
 		// Point는 공통 원점 하나와 여섯 개의 VP 행렬을 사용한다.
-		if (LightProxy->GetLightComponent()->GetLightType() == ELightType::Spot)
+		if (LightType == ELightType::Spot)
 		{
 			// Light 설정과 투영 유효성은 기존 계산 함수가 판단한다.
 			FShadowProjection ShadowProjection;
@@ -487,8 +516,8 @@ void UWorld::GatherLocalProjectedShadows(TArray<FProjectedShadowInfo>& OutShadow
 			GatherShadowCasters(ShadowInfo);
 		}
 
-		// 포인트 라이트면 셰도우 인포 6개
-		if (LightProxy->GetLightComponent()->GetLightType() == ELightType::Point)
+		// 포인트 라이트면 섀도우 인포 6개
+		if (LightType == ELightType::Point)
 		{
 			// Light 설정과 투영 유효성은 기존 계산 함수가 판단한다.
 			FShadowProjection ShadowProjection;

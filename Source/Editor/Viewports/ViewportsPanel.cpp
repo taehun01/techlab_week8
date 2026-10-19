@@ -433,6 +433,8 @@ void FViewportsPanel::DrawStatOverlay(ImDrawList* DrawList, const ImVec2& ViewMi
 			FStatRegistry::GetCounter(ShadowStats::STAT_PointLights),
 			FStatRegistry::GetCounter(ShadowStats::STAT_SpotLights),
 			FStatRegistry::GetCounter(ShadowStats::STAT_BoundTextures)), ValueColor });
+		Lines.Add({ std::format("  Local lights outside views: {}",
+			FStatRegistry::GetCounter(ShadowStats::STAT_LocalLightsOutsideViews)), ValueColor });
 		Lines.Add({ std::format("  Maps: {}  Draws: {}  Updates: {}",
 			FStatRegistry::GetCounter(ShadowStats::STAT_Maps),
 			FStatRegistry::GetCounter(ShadowStats::STAT_DrawCalls),

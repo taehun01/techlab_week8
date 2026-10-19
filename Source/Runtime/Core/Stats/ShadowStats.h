@@ -24,6 +24,8 @@ namespace ShadowStats
     DECLARE_MEMORY_STAT("Shadow Depth Memory", STAT_DepthMemory);
     DECLARE_MEMORY_STAT("Shadow Parameter Memory", STAT_ParameterMemory);
 
+    DECLARE_COUNTER_STAT("Shadow Local Lights Outside Views", STAT_LocalLightsOutsideViews);
+
     enum EGroup : uint32
     {
         Single,
