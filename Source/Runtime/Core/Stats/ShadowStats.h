@@ -23,4 +23,83 @@ namespace ShadowStats
     // 실제 확보한 GPU 자원의 내용 크기를 바이트로 기록한다.
     DECLARE_MEMORY_STAT("Shadow Depth Memory", STAT_DepthMemory);
     DECLARE_MEMORY_STAT("Shadow Parameter Memory", STAT_ParameterMemory);
+
+    enum EGroup : uint32
+    {
+        Single,
+        CSM,
+        Local,
+        GroupCount
+    };
+    inline constexpr const char* GroupNames[GroupCount] =
+    {
+        "Directional Single", "Directional CSM", "Local"
+    };
+
+    // 작업이 일부 생략되어도 남은 Map 수가 아니라 논리 분할 개수로 구분한다.
+    inline EGroup GetGroup(bool bDirectional, uint32 LogicalCascadeCount)
+    {
+        if (!bDirectional)
+            return Local;
+
+        return LogicalCascadeCount > 1 ? CSM : Single;
+    }
+
+    // 투영 계산·Receiver 범위 계산·Caster 수집에 사용한 CPU 시간이다.
+    DECLARE_CYCLE_STAT("Single Setup CPU", STAT_SingleSetupCPU);
+    DECLARE_CYCLE_STAT("CSM Setup CPU", STAT_CSMSetupCPU);
+    DECLARE_CYCLE_STAT("Local Setup CPU", STAT_LocalSetupCPU);
+
+    // 큐 준비·GPU 상태 설정·Depth Draw 제출에 사용한 CPU 시간이다.
+    DECLARE_CYCLE_STAT("Single Depth Submit CPU", STAT_SingleDepthCPU);
+    DECLARE_CYCLE_STAT("CSM Depth Submit CPU", STAT_CSMDepthCPU);
+    DECLARE_CYCLE_STAT("Local Depth Submit CPU", STAT_LocalDepthCPU);
+
+    // Directional은 View별 작업이며, Local은 World 공유 작업이다.
+    DECLARE_COUNTER_STAT("Single Views", STAT_SingleViews);
+    DECLARE_COUNTER_STAT("CSM Views", STAT_CSMViews);
+
+    // 유효한 Depth 타깃을 가진 투영 작업 수다.
+    DECLARE_COUNTER_STAT("Single Maps", STAT_SingleMaps);
+    DECLARE_COUNTER_STAT("CSM Maps", STAT_CSMMaps);
+    DECLARE_COUNTER_STAT("Local Maps", STAT_LocalMaps);
+
+    // 실제 Depth Draw와 갱신 실행 횟수다.
+    DECLARE_COUNTER_STAT("Single Draw Calls", STAT_SingleDrawCalls);
+    DECLARE_COUNTER_STAT("CSM Draw Calls", STAT_CSMDrawCalls);
+    DECLARE_COUNTER_STAT("Local Draw Calls", STAT_LocalDrawCalls);
+    DECLARE_COUNTER_STAT("Single Updates", STAT_SingleUpdates);
+    DECLARE_COUNTER_STAT("CSM Updates", STAT_CSMUpdates);
+    DECLARE_COUNTER_STAT("Local Updates", STAT_LocalUpdates);
+
+    // 활성 타일의 Depth 내용량이며, Atlas 페이지 전체 할당량과 구분한다.
+    DECLARE_MEMORY_STAT("Single Active Tile Memory", STAT_SingleTileMemory);
+    DECLARE_MEMORY_STAT("CSM Active Tile Memory", STAT_CSMTileMemory);
+    DECLARE_MEMORY_STAT("Local Active Tile Memory", STAT_LocalTileMemory);
+
+    // 기존 Stat ID를 배열로 연결해 집계·표시 코드를 공유한다.
+    inline constexpr TStatId SetupCPUStats[GroupCount] =
+    {
+        STAT_SingleSetupCPU, STAT_CSMSetupCPU, STAT_LocalSetupCPU
+    };
+    inline constexpr TStatId DepthCPUStats[GroupCount] =
+    {
+        STAT_SingleDepthCPU, STAT_CSMDepthCPU, STAT_LocalDepthCPU
+    };
+    inline constexpr TStatId MapStats[GroupCount] =
+    {
+        STAT_SingleMaps, STAT_CSMMaps, STAT_LocalMaps
+    };
+    inline constexpr TStatId DrawStats[GroupCount] =
+    {
+        STAT_SingleDrawCalls, STAT_CSMDrawCalls, STAT_LocalDrawCalls
+    };
+    inline constexpr TStatId UpdateStats[GroupCount] =
+    {
+        STAT_SingleUpdates, STAT_CSMUpdates, STAT_LocalUpdates
+    };
+    inline constexpr TStatId TileMemoryStats[GroupCount] =
+    {
+        STAT_SingleTileMemory, STAT_CSMTileMemory, STAT_LocalTileMemory
+    };
 }
