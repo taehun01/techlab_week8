@@ -47,4 +47,14 @@ void FProjectedShadowInfo::Reset()
     CasterPlaneMask = FrustumAllPlanesMask;
     RenderingInfo = FRenderingInfo{};
     CasterQueue.Reset();
+    CasterHash = 0u;
+    CasterCount = 0u;
+}
+
+// Shadow Caching 할 때 필요한 헤시값을 저장한다.
+void FProjectedShadowInfo::AddCasterKey(uint32 UUID, uint64 Version)
+{
+    uint64 HashKey = (Version << 32) + static_cast<uint64>(UUID);
+    CasterHash += MixHash64(HashKey);
+    CasterCount++;
 }

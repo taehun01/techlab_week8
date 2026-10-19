@@ -4,6 +4,17 @@
 #include "Render/RenderingInfo.h"
 #include "Math/Frustum.h"
 
+namespace
+{
+    static uint64 MixHash64(uint64 X)
+    {
+        X += 0x9E3779B97F4A7C15ull;
+        X = (X ^ (X >> 30)) * 0xBF58476D1CE4E5B9ull;
+        X = (X ^ (X >> 27)) * 0x94D049BB133111EBull;
+        return X ^ (X >> 31);
+    }
+}
+
 class FLightSceneProxy;
 
 class FProjectedShadowInfo
@@ -39,6 +50,9 @@ public:
     // CPU 작업과 타깃 참조를 초기화한다. GPU 텍스처는 해제하지 않는다.
     void Reset();
 
+    // Shadow Caching 할 때 필요한 헤시값을 저장한다.
+    void AddCasterKey(uint32 UUID, uint64 Version);
+
 private:
     // Renderer는 준비된 상태를 읽고 Caster 큐를 소비한다.
     friend class FRenderer;
@@ -69,4 +83,10 @@ private:
 
     // Caster 패킷과 큐 내부에서 사용하는 임시 행렬 저장소를 소유한다.
     FRenderQueue CasterQueue;
+
+    // UUID + ShadowVersion으로 만든 헤시값
+    uint64 CasterHash = 0u;
+
+    // Caster가 총 몇개인지. 
+    uint32 CasterCount = 0u;
 };

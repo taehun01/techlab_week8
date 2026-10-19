@@ -564,6 +564,7 @@ void UWorld::GatherShadowCasters(FProjectedShadowInfo& ShadowInfo)
 			MeshPackets.Reset();
 			StaticComponent->SubmitToRenderQueue(MeshPackets, 0);
 
+			bool bPacketAdded = false;
 			for (const FRenderPacket& Packet : MeshPackets)
 			{
 				// 불투명 섹션만 그림자 작업에 등록한다.
@@ -572,8 +573,18 @@ void UWorld::GatherShadowCasters(FProjectedShadowInfo& ShadowInfo)
 					continue;
 
 				ShadowInfo.AddCasterPacket(Packet);
+				bPacketAdded = true;
+			}
+
+			// 헤싱으로 Shadow Caching 키를 만든다
+			if (bPacketAdded)
+			{
+				uint32 UUID = StaticComponent->GetUUID();
+				uint64 Version = Proxy->GetShadowVersion();
+				ShadowInfo.AddCasterKey(UUID, Version);
 			}
 		};
+
 
 	// 전체 Scene BVH를 Light Frustum으로 탐색한다.
 	const FFrustumPlanes& Frustum = ShadowInfo.GetCasterFrustum();

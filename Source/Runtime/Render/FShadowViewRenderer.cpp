@@ -32,7 +32,8 @@ bool FShadowViewRenderer::AddNewAtlas(FShadowAtlasPool& Pool, uint32 TileResolut
 const FShadowData* FShadowViewRenderer::AddShadowInfo(FShadowAtlasPool& Pool, const FShadowAllocationKey& Key, uint32 AtlasIndex, uint32 TileIndex)
 {
 	Pool.ShadowAtlasArray[AtlasIndex].UsedTiles[TileIndex] = true;
-	FShadowData Data = FShadowData{};
+	FShadowData& Data = Pool.ShadowInfoMap[Key];
+	Data = FShadowData{};
 	Data.AtlasIndex = AtlasIndex;
 	Data.TileIndex = TileIndex;
 	Pool.ShadowInfoMap[Key] = Data;
@@ -124,7 +125,7 @@ bool FShadowViewRenderer::CheckShadowCache(ELightType InType, const FShadowAlloc
 {
 	const FShadowAtlasPool* Pool = AtlasPools.Find(InType);
 	if (!Pool)
-		return;
+		return false;
 
 	if (const FShadowData* Data = Pool->ShadowInfoMap.Find(InAllocKey))
 	{

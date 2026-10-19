@@ -40,7 +40,11 @@ struct FShadowCacheKey
 	uint64 CasterHash = 0u;
 	uint64 CacheGeneration = 0u;
 
-	bool operator==(const FShadowCacheKey& Other) const = default;
+	bool operator==(const FShadowCacheKey& Other) const
+	{
+		return memcmp(LightViewProjection.M, Other.LightViewProjection.M, sizeof(LightViewProjection.M)) == 0 &&
+			CasterHash == Other.CasterHash && CacheGeneration == Other.CacheGeneration;
+	}
 };
 
 // 투영 행렬은 작업 Info가 보관하며, 할당 결과에는 풀 내부 위치만 남긴다.
@@ -51,7 +55,7 @@ struct FShadowData
 
 	// Shadow Caching
 	bool bIsValid = false;
-	FShadowCacheKey CacheKey;
+	FShadowCacheKey CacheKey = FShadowCacheKey{};
 };
 
 // 한 페이지가 실제 Depth 자원과 네 타일의 점유 상태를 소유한다.

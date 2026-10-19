@@ -592,7 +592,7 @@ void FRenderer::RenderShadowMaps(TArray<FProjectedShadowInfo>&& InShadows, FShad
 				ShadowInfo.LightProxy->GetLightComponent()->GetUUID(), ShadowInfo.ProjectionIndex, ShadowInfo.ViewId
 			};
 			const FShadowCacheKey CacheKey{
-				ShadowInfo.LightViewProjection, 0, FShadowSettings::GetCacheGeneration()
+				ShadowInfo.LightViewProjection, ShadowInfo.CasterHash, FShadowSettings::GetCacheGeneration()
 			};
 
 			ShadowViewRenderer->UpdateShadowCache(Type, AllocKey, CacheKey);
