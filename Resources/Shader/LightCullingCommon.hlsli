@@ -23,10 +23,14 @@ struct FLightRenderParameters
     float HalfWidth;
     float HalfHeight;
     uint Type;
-    float BarnDoorCos;     // Rect 전용. 컬링에는 안 쓰지만 stride를 맞추기 위해 둔다
+    float BarnDoorCos; // Rect 전용
     float BarnDoorSin;
     float BarnDoorLength;
     int ShadowIndex;
+    float DepthScale;
+    float DepthOffset;
+    float SourceRadius;
+    float pad;
 };
 
 cbuffer FLightCullingConstants : register(b0)

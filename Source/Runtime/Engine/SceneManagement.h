@@ -26,7 +26,8 @@ struct FLightRenderParameters
 	int32 ShadowIndex = INDEX_NONE;
 	float DepthScale;
 	float DepthOffset;
-	float pad[2];
+	float SourceRadius;
+	float pad;
 };
 
 static_assert(sizeof(FLightRenderParameters) == 112,"sizeof(UberLit / TileBasedLightCulling) == sizeof(FLightRenderParameters)");

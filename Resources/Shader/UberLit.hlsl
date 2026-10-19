@@ -62,7 +62,8 @@ struct FLightRenderParameters
     int ShadowIndex;
     float DepthScale;
     float DepthOffset;
-    float2 pad;
+    float SourceRadius;
+    float pad;
 };
 
 
@@ -337,7 +338,7 @@ float SampleSpotShadowMap(FShadowShaderParameters Shadow, float3 LightNDC, FLigh
     float ReceiverDepth = Light.DepthOffset / (LightNDC.z - Light.DepthScale);
     float OuterHalfAngle = acos(clamp(Light.OuterConeCos, 0.0f, 1.0f));
     float NearWidth =  2.0f * 0.1f * tan(OuterHalfAngle);   // 2.0f * Near_Plane * tan(OuterHalfAngle), Near 기준으로 계산
-    float LightRadiusUV = Light.Position / NearWidth;
+    float LightRadiusUV = Light.SourceRadius / NearWidth;   // To Do = Light.Position -> SourceRadius로 교체 및 SpotLightProxy에 추가
     float AverageBlockerDepth;
 // 광원 크기와 Receiver 거리로 Blocker 탐색 반경 계산
     float avgBlockerDepthView = 0;
