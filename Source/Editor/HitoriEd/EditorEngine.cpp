@@ -101,7 +101,13 @@ bool UEditorEngine::Init()
 	OutputLogPanel->SetCommandHandler(
 		[this](const FString& CommandLine, FString& OutMessage)
 		{
-			return ExecShadowCommand(CommandLine, OutMessage);
+			if (ExecShadowCommand(CommandLine, OutMessage))
+				return true;
+
+			if (ExecShadowResolutionCommand(CommandLine, OutMessage))
+				return true;
+
+			return false;
 		}
 	);
 	HTR_LOG(Info, "Editor Initialize...");
@@ -437,6 +443,26 @@ bool UEditorEngine::ExecShadowCommand(const FString& CommandLine, FString& OutMe
 		Light->GetCascadeCount(),
 		World->IsPlayInEditor() ? "PIE" : "Editor"
 	);
+	return true;
+}
+
+bool UEditorEngine::ExecShadowResolutionCommand(const FString& CommandLine, FString& OutMessage)
+{
+	std::istringstream Input(CommandLine);
+	FString Command, Extra;
+	Input >> Command;
+
+	// 다른 명령은 기존 콘솔 처리 경로에서 계속 판정한다.
+	if (_stricmp(Command.c_str(), "ShadowResolution") != 0)
+		return false;
+
+	// 잘못된 입력은 아래 검증에서 설정 변경 없이 이 메시지를 반환한다.
+	OutMessage = "Usage: ShadowResolution <128 | 256 | 512 | 1024 | 2048 | 4096>";
+	int32 Resolution = 0;
+	if (!(Input >> Resolution) || (Input >> Extra) || !Renderer->SetShadowMapResolution(Resolution))
+		return true;
+	OutMessage = std::format("ShadowMap global maximum: {}", Resolution);
+
 	return true;
 }
 

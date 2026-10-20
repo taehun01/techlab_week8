@@ -3,6 +3,15 @@
 #include <cctype>
 #include <format>
 
+// 지원하는 128~4096의 거듭제곱 단계만 허용하며, 실패하면 기존 설정을 유지한다.
+bool FShadowSettings::SetMaxResolution(int32 Resolution)
+{
+	if (Resolution < 128 || Resolution > 4096 || (Resolution & (Resolution - 1)) != 0)
+		return false;
+	MaxResolution = Resolution;
+	return true;
+}
+
 namespace ShadowConsole
 {
 	// 콘솔 입력은 대소문자를 구분하지 않는다. UE도 "STAT FPS"와 "stat fps"를 같게 다룬다.

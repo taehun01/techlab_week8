@@ -315,6 +315,11 @@ public:
 	void SetLightDebugMode(uint32 Mode);
 	void SetLightCullingMode(ELightCullingMode Mode) { LightCullingMode = Mode; }
 	ELightCullingMode GetLightCullingMode() const { return LightCullingMode; }
+
+	// Runtime 품질 설정을 공유해 투영 계산과 실제 타깃 해상도를 일치시킨다.
+	bool SetShadowMapResolution(int32 Resolution);
+	int32 GetShadowMapResolution() const;
+
 private:
 	void DrawPackets(uint32 Begin, uint32 End, const FMatrix& ViewProjection);
 	void DrawStaticGroups();
@@ -417,4 +422,5 @@ private:
 
 	// 타깃이 배정된 투영 작업 하나의 Depth 패스를 실행한다.
 	void RenderShadowDepth(FProjectedShadowInfo& ShadowInfo);
+
 };

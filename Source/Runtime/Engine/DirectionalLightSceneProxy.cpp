@@ -3,6 +3,7 @@
 
 #include "Components/DirectionalLightComponent.h"
 #include "ProjectedShadowInfo.h"
+#include "Render/ShadowSettings.h"
 
 void FDirectionalLightSceneProxy::GetLightShaderParameters(FLightRenderParameters& Out) const
 {
@@ -56,7 +57,7 @@ bool FDirectionalLightSceneProxy::SetupShadowProjection(
 	const float Radius = FMath::Max(std::ceil(std::sqrt(RadiusSquared) * 16.0f) / 16.0f, 0.1f);
 
 	// Atlas 전체 크기가 아닌, 실제로 배정하는 개별 타일 해상도다.
-	const float Resolution = static_cast<float>(LightComponent->GetShadowMapResolution());
+	const float Resolution = static_cast<float>(FShadowSettings::GetEffectiveResolution(LightComponent->GetShadowMapResolution()));
 
 	// 한 텍셀의 여유로 중심 반올림 때문에 Receiver가 잘리는 것을 방지한다.
 	// TODO: PCF 필터 범위가 정리되면 필터 샘플 여유도 함께 반영한다.

@@ -26,6 +26,7 @@ bool FOutputLogPanel::Init()
 	Commands.Add("CLEAR");
 	Commands.Add("STAT");
 	Commands.Add("CSM");
+	Commands.Add("ShadowResolution");
 	Commands.Add("SHADOW_CACHE");
 	// 두 이름 모두 자동완성과 같은 캐싱 설정을 사용한다.
 	Commands.Add("r.shadow.CacheWholeSceneShadows");
@@ -208,6 +209,7 @@ void FOutputLogPanel::ExecCommand(const FString& CommandLine)
 		OnLog(ELogVerbosity::Info, "- STAT <fps|memory|profile|shadow|all|none>");
 		OnLog(ELogVerbosity::Info, "- CSM [ON|OFF|SET <0-4>]");
 		OnLog(ELogVerbosity::Info, "- SHADOW_CACHE [0|1] (no argument: toggle)");
+		OnLog(ELogVerbosity::Info, "- ShadowResolution <128|256|512|1024|2048|4096> (global maximum)");
 		OnLog(ELogVerbosity::Info, "- r.shadow.CacheWholeSceneShadows [0|1] (alias: SHADOW_CACHE)");
 	}
 	else if (EqualsIgnoreCase(CommandLine, "HISTORY"))

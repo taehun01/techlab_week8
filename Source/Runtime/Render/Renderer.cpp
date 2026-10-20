@@ -33,6 +33,17 @@ DECLARE_CYCLE_STAT("Upload Per-Object CB", STAT_UploadPerObjectCB);
 
 float GMinScreenRadiusForShadowCaster = 0.01f;
 
+// 실제 해상도는 투영 계산과 공유하는 Runtime 설정에서 조회한다.
+bool FRenderer::SetShadowMapResolution(int32 Resolution)
+{
+	return FShadowSettings::SetMaxResolution(Resolution);
+}
+
+int32 FRenderer::GetShadowMapResolution() const
+{
+	return FShadowSettings::GetMaxResolution();
+}
+
 namespace
 {
 	// VSSetConstantBuffers1의 오프셋은 16개 상수(256바이트) 단위여야 하므로 오브젝트마다 256바이트 칸을 쓴다.
@@ -607,7 +618,7 @@ void FRenderer::PrepareShadowDepthTargets(TArray<FProjectedShadowInfo>& ShadowIn
 		}
 		const ULightComponent* Light = ShadowInfo.LightProxy->GetLightComponent();
 		const ELightType LightType = Light->GetLightType();
-		const uint32 Resolution = static_cast<uint32>(Light->GetShadowMapResolution());
+		const uint32 Resolution = static_cast<uint32>(FShadowSettings::GetEffectiveResolution(Light->GetShadowMapResolution()));
 		const FShadowAllocationKey AllocKey{
 			Light->GetUUID(), ShadowInfo.ProjectionIndex, ShadowInfo.ViewId
 		};

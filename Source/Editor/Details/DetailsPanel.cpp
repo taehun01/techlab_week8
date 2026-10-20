@@ -21,6 +21,7 @@
 #include "Render/Material.h"
 #include "Render/Texture2D.h"
 #include "Render/Renderer.h"
+#include "Render/ShadowSettings.h"
 #include "Text/Font.h"
 #include "UObject/UObjectIterator.h"
 #include "GameFramework/Actor.h"
@@ -1029,7 +1030,10 @@ void FDetailsPanel::DrawShadowMapPreview(const ULightComponent& Light)
 		ImGui::TextDisabled("Casters: %u", CacheInfo.CasterCount);
 	}
 	ImGui::TextDisabled("Atlas: %u x %u", DepthTexture->GetWidth(), DepthTexture->GetHeight());
-	if (ShadowViewport.Width != static_cast<uint32>(Light.GetShadowMapResolution()))
+	// 요청값과 품질 상한을 구분하고, 실제 다음 프레임 변경만 대기 상태로 표시한다.
+	const uint32 EffectiveResolution = static_cast<uint32>(FShadowSettings::GetEffectiveResolution(Light.GetShadowMapResolution()));
+	ImGui::TextDisabled("Requested: %d  Global max: %d", Light.GetShadowMapResolution(), FShadowSettings::GetMaxResolution());
+	if (ShadowViewport.Width != EffectiveResolution)
 		ImGui::TextDisabled("Resolution applies next frame.");
 
 	// 현재 Spot Shadow Map은 정사각형이며, 패널 폭 안에서 표시한다.
