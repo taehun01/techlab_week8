@@ -16,6 +16,9 @@
 #define LIGHT_DEBUG_MODE_BRUTE_FORCE  2   // 컬링 결과를 무시하고 모든 로컬 라이트를 순회
 #define LIGHT_DEBUG_MODE_SLICES       3
 
+// Normal Bias와 Slope Bias에 쓰일 상수 값이다.
+#define SHADOW_NORMAL_BIAS_SCALE 0.01f
+
 // 조명 모델은 C++(FRenderResourceManager::LoadUberLit)이 매크로로 하나만 넘긴다.
 // 아무 매크로 없이 컴파일될 때(기존 머티리얼이 쓰는 기본 키)만 Lambert를 켠다.
 #if !defined(LIGHTING_MODEL_UNLIT) && !defined(LIGHTING_MODEL_GOURAUD) && \
@@ -306,7 +309,7 @@ bool CanEvaluateShadow(int ShadowIndex)
 }
 
 // 월드 위치를 해당 그림자의 투영 공간으로 옮겨 가시성을 구한다.
-float GetShadowVisibility(int ShadowIndex, float3 WorldPos)
+float GetShadowVisibility(int ShadowIndex, float3 WorldPos, float3 N, float3 L)
 {
     // 타깃 실패·바인딩 상한 초과를 공통 경로에서 처리한다.
     if (!HasShadowMap(ShadowIndex))
@@ -314,7 +317,11 @@ float GetShadowVisibility(int ShadowIndex, float3 WorldPos)
 
     const FShadowShaderParameters Shadow = ShadowParameters[ShadowIndex];
 
-    const float4 LightClip = mul(float4(WorldPos, 1.0f), Shadow.LightViewProjection);
+    // World Position을 Normal Bias만큼 Normal 방향으로 이동한다.
+    const float NormalBias = SHADOW_NORMAL_BIAS_SCALE * (1 - max(dot(N, L), 0));
+    const float3 BiasedPos = WorldPos + N * NormalBias;
+
+    const float4 LightClip = mul(float4(BiasedPos, 1.0f), Shadow.LightViewProjection);
     if (LightClip.w <= 0.0f)
         return 1.0f;
 
@@ -359,7 +366,7 @@ float GetDirectionalCascadeBlend(uint CascadeIndex, float ViewDepth)
 }
 
 // 깊이 비교와 PCF를 마친 가시성을 전환 구간에서 보간한다.
-float GetDirectionalShadowVisibility(float3 WorldPos)
+float GetDirectionalShadowVisibility(float3 WorldPos, float3 N, float3 L)
 {
     const float ViewDepth = dot(WorldPos - CameraWorldPos, CameraForward);
     const int Selected = SelectDirectionalCascade(ViewDepth);
@@ -371,12 +378,12 @@ float GetDirectionalShadowVisibility(float3 WorldPos)
     if (!CanEvaluateShadow(ShadowIndex))
         return 1.0f;
 
-    const float Visibility = GetShadowVisibility(ShadowIndex, WorldPos);
+    const float Visibility = GetShadowVisibility(ShadowIndex, WorldPos, N, L);
     const float Blend = GetDirectionalCascadeBlend(CascadeIndex, ViewDepth);
     if (Blend <= 0.0f)
         return Visibility;
 
-    const float NextVisibility = GetShadowVisibility(DirectionalShadowIndices[CascadeIndex + 1], WorldPos);
+    const float NextVisibility = GetShadowVisibility(DirectionalShadowIndices[CascadeIndex + 1], WorldPos, N, L);
     return lerp(Visibility, NextVisibility, Blend);
 }
 
@@ -568,7 +575,7 @@ float3 GetHeatmapColor(uint LightCount)
 // Directional + 로컬 라이트의 Diffuse/Specular를 모두 더한다. Ambient는 포함하지 않는다.
 // bUseLightGrid = true면 SvPosition이 속한 셀의 라이트만, false면 전체 로컬 라이트를 순회한다.
 // VS(Gouraud)는 픽셀 위치가 없어 셀을 쓸 수 없으므로 false로 호출한다.
-FLightContribution AccumulateDirectLighting(float3 N, float3 V, float3 WorldPos, float InShininess, float4 SvPosition,
+FLightContribution AccumulateDirectLighting(float3 N, float3 V, float3 VertexN, float3 WorldPos, float InShininess, float4 SvPosition,
 bool bUseLightGrid, bool bReceiveShadow)
 {
     // Directional Light는 처음에 한 번만 계산
@@ -577,8 +584,10 @@ bool bUseLightGrid, bool bReceiveShadow)
 #if defined(LIGHTING_MODEL_LAMBERT) || defined(LIGHTING_MODEL_BLINN_PHONG)
     if (bReceiveShadow)
     {
+        const float3 L = -normalize(Directional.Direction);
+
         // 로컬 라이트를 누적하기 전에 Directional의 직접광에만 그림자를 적용한다.
-        const float Visibility = GetDirectionalShadowVisibility(WorldPos);
+        const float Visibility = GetDirectionalShadowVisibility(WorldPos, VertexN, L);
         Total.Diffuse *= Visibility;
         Total.Specular *= Visibility;
     }
@@ -604,6 +613,7 @@ bool bUseLightGrid, bool bReceiveShadow)
         const uint LightIndex = bUseCellList ? CellLightIndices[CellOffset + 1 + Index] : Index;
         const FLightRenderParameters Light = LocalLights[LightIndex];
         FLightContribution LightContribution = CalcLocalLight(Light, N, V, WorldPos, InShininess);
+        const float3 L = normalize(Light.Position - WorldPos);
 
 #if defined(LIGHTING_MODEL_LAMBERT) || defined(LIGHTING_MODEL_BLINN_PHONG)
         if (bReceiveShadow)
@@ -611,7 +621,7 @@ bool bUseLightGrid, bool bReceiveShadow)
             // 해당 라이트의 직접광만 가린다. Ambient와 다른 라이트는 유지한다.
             if (Light.Type == LIGHT_TYPE_SPOT)
             {
-                const float Visibility = GetShadowVisibility(Light.ShadowIndex, WorldPos);
+                const float Visibility = GetShadowVisibility(Light.ShadowIndex, WorldPos, VertexN, L);
                 LightContribution.Diffuse *= Visibility;
                 LightContribution.Specular *= Visibility;
             }
@@ -654,7 +664,7 @@ bool bUseLightGrid, bool bReceiveShadow)
                 }
                 // 현재 World가 같은 Point의 6면을 순서대로 연속 등록한다.
                 // TODO(Shadow): 빈 면 생략·작업 정렬 도입 시 면별 GPU 인덱스 연결을 갱신한다.
-                const float Visibility = GetShadowVisibility(Light.ShadowIndex + FaceIndex, WorldPos);
+                const float Visibility = GetShadowVisibility(Light.ShadowIndex + FaceIndex, WorldPos, VertexN, L);
                 LightContribution.Diffuse *= Visibility;
                 LightContribution.Specular *= Visibility;
             }
@@ -695,7 +705,9 @@ VS_OUTPUT mainVS(VS_INPUT Input)
 #endif
 #if LIGHTING_MODEL_GOURAUD
     const float3 V = normalize(CameraWorldPos - Output.WorldPos);
-    const FLightContribution Contribution = AccumulateDirectLighting(normalize(Output.Normal), V, Output.WorldPos, 1, Output.SvPosition, false, false);
+    // Gouraud도 공통 조명 함수의 정점 노멀 인자 규약을 맞춘다.
+    const float3 VertexNormal = normalize(Output.Normal);
+    const FLightContribution Contribution = AccumulateDirectLighting(VertexNormal, V, VertexNormal, Output.WorldPos, 1, Output.SvPosition, false, false);
     Output.VertexDiffuse = Contribution.Diffuse;
 #endif
     return Output;
@@ -747,7 +759,7 @@ float4 mainPS(VS_OUTPUT Input) : SV_TARGET
 
 #if defined(LIGHTING_MODEL_LAMBERT) || defined(LIGHTING_MODEL_BLINN_PHONG)
     const float3 V = { normalize(CameraWorldPos - Input.WorldPos) };
-    const FLightContribution Contribution = { AccumulateDirectLighting(N, V, Input.WorldPos, Shininess, Input.SvPosition, true, Input.ReceivesShadow != 0) };
+    const FLightContribution Contribution = { AccumulateDirectLighting(N, V, VertexNormal, Input.WorldPos, Shininess, Input.SvPosition, true, Input.ReceivesShadow != 0) };
     DiffuseLighting += Contribution.Diffuse;
     SpecularLighting = Contribution.Specular;
 #elif LIGHTING_MODEL_GOURAUD
@@ -760,8 +772,10 @@ float4 mainPS(VS_OUTPUT Input) : SV_TARGET
 #if defined(LIGHTING_MODEL_LAMBERT) || defined(LIGHTING_MODEL_BLINN_PHONG)
     if (VisualizeShadowCascades != 0 && Input.ReceivesShadow != 0)
     {
+        const float3 L = -normalize(Directional.Direction);
+
         // Directional의 깊이 비교 결과로만 마스크를 만든다.
-        const float ShadowMask = saturate(1.0f - GetDirectionalShadowVisibility(Input.WorldPos));
+        const float ShadowMask = saturate(1.0f - GetDirectionalShadowVisibility(Input.WorldPos, VertexNormal, L));
         const float3 CascadeColor = GetDirectionalCascadeDebugColor(Input.WorldPos);
 
         // 그림자로 가려진 부분에만 색상을 섞고 기존 Alpha는 유지한다.
