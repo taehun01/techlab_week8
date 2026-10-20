@@ -13,6 +13,9 @@
 
 constexpr uint32 ObjectSlotBytes = 256;
 
+// World, View가 공유하는 Runtime 그림자 품질 임계값.
+extern float GMinScreenRadiusForShadowCaster;
+
 enum class ELightCullingMode : uint32 { Tiled, Clustered, Tiled25D };
 
 struct FPerObjectConstants

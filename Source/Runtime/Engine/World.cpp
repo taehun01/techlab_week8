@@ -462,7 +462,9 @@ void UWorld::GatherRenderPackets(FRenderQueue& RenderQueue, const FLODViewContex
 }
 
 // 지역광 그림자는 같은 World의 여러 View가 공유한다.
-void UWorld::GatherLocalProjectedShadows(TArray<FProjectedShadowInfo>& OutShadows, const TArray<FFrustumPlanes>& ActiveViewFrustums)
+void UWorld::GatherLocalProjectedShadows(TArray<FProjectedShadowInfo>& OutShadows,
+	const TArray<FFrustumPlanes>& ActiveViewFrustums,
+	const TArray<FLODViewContext>& ActiveViews, float MinScreenRadiusSquared)
 {
 	for (const FLocalLightSceneProxy* LightProxy : Scene.LocalLightProxies)
 	{
@@ -515,7 +517,7 @@ void UWorld::GatherLocalProjectedShadows(TArray<FProjectedShadowInfo>& OutShadow
 			FProjectedShadowInfo& ShadowInfo = OutShadows.AddDefaulted_GetRef();
 			//ShadowInfo.SetupProjection(*LightProxy, ShadowViewOrigin, LightViewProjection);
 			ShadowInfo.SetupProjection(*LightProxy, ShadowProjection.ViewOrigin, ShadowProjection.ViewProjections[0], 0);
-			GatherShadowCasters(ShadowInfo);
+			GatherShadowCasters(ShadowInfo,	ActiveViews.GetData(), ActiveViews.Num(), MinScreenRadiusSquared);
 		}
 
 		// 포인트 라이트면 섀도우 인포 6개
@@ -537,7 +539,7 @@ void UWorld::GatherLocalProjectedShadows(TArray<FProjectedShadowInfo>& OutShadow
 			{
 				FProjectedShadowInfo& ShadowInfo = OutShadows.AddDefaulted_GetRef();
 				ShadowInfo.SetupProjection(*LightProxy, ShadowProjection.ViewOrigin, IT, ID);
-				GatherShadowCasters(ShadowInfo);
+				GatherShadowCasters(ShadowInfo, ActiveViews.GetData(), ActiveViews.Num(), MinScreenRadiusSquared);
 				++ID;
 			}
 		}
@@ -546,7 +548,8 @@ void UWorld::GatherLocalProjectedShadows(TArray<FProjectedShadowInfo>& OutShadow
 
 // 하나의 Receiver 구간마다 독립적인 Directional 작업을 추가한다.
 void UWorld::GatherDirectionalShadow(TArray<FProjectedShadowInfo>& OutShadows,
-	const TArray<FVector>& ReceiverCorners, uint32 ProjectionIndex, uint32 ViewId,
+	const TArray<FVector>& ReceiverCorners, const FLODViewContext& View,
+	float MinScreenRadiusSquared, uint32 ProjectionIndex, uint32 ViewId,
 	uint32 LogicalCascadeCount)
 {
 	// 화면 조명과 동일한 Directional 하나를 사용한다.
@@ -563,7 +566,7 @@ void UWorld::GatherDirectionalShadow(TArray<FProjectedShadowInfo>& OutShadows,
 	ShadowInfo.SetLogicalCascadeCount(LogicalCascadeCount);
 
 	// 해당 투영의 열린 Caster Frustum과 CastShadow 조건을 재사용한다.
-	GatherShadowCasters(ShadowInfo);
+	GatherShadowCasters(ShadowInfo, &View, 1, MinScreenRadiusSquared);
 	OutShadows.Add(std::move(ShadowInfo));
 }
 
@@ -607,15 +610,53 @@ void UWorld::GatherDirectionalShadow(TArray<FProjectedShadowInfo>& OutShadows,
 //	}
 //}
 
+
+// Bounds의 투영 반경을 근사하며 카메라 Frustum 가시성과는 별도로 판단한다.
+bool UWorld::IsSmallShadowCaster(const FLODSphere& Sphere, const FLODViewContext* Views, int32 ViewCount, float MinScreenRadiusSquared)
+{
+	// 비활성 설정이나 사용할 수 없는 구 Bounds는 기존 제출 경로로 보낸다.
+	if (MinScreenRadiusSquared <= 0.0f || Sphere.RadiusSquared <= 0.0f)
+		return false;
+
+	for (int32 ViewIndex = 0; ViewIndex < ViewCount; ++ViewIndex)
+	{
+		const FLODViewContext& View = Views[ViewIndex];
+
+		// 기존 NDC 배율을 정규화된 화면 반경 제곱으로 변환한다.
+		const float ProjectedRadiusSquared =
+			0.25f * Sphere.RadiusSquared * View.ProjectionScaleSquared;
+
+		float DistanceFactor = 1.0f;
+		if (!View.bOrthographic)
+		{
+			DistanceFactor = (Sphere.Center - View.CameraPosition).SizeSquared();
+
+			// 카메라가 Bounds 내부에 있으면 작은 물체로 생략하지 않는다.
+			if (DistanceFactor <= Sphere.RadiusSquared)
+				return false;
+		}
+
+		// 어느 View 하나라도 충분히 크면 공유 그림자에 남긴다.
+		if (ProjectedRadiusSquared >= MinScreenRadiusSquared * DistanceFactor)
+			return false;
+	}
+
+	// View가 없는 호출에서도 보수적으로 기존 제출을 유지한다.
+	return ViewCount > 0;
+}
+
+
 // Light Frustum으로 후보를 찾고 기존 정적 메시 제출 경로를 재사용한다.
 // 투영·타깃 상태는 유지하며 Caster 큐에 패킷만 추가한다.
-void UWorld::GatherShadowCasters(FProjectedShadowInfo& ShadowInfo)
+void UWorld::GatherShadowCasters(FProjectedShadowInfo& ShadowInfo, const FLODViewContext* Views, int32 ViewCount, float MinScreenRadiusSquared)
 {
 	// 한 Gather 안에서 여러 물체의 제출에 같은 임시 큐를 재사용한다.
 	FRenderQueue MeshPackets;
+	uint64 SmallCasterSkips = 0;
 
 	// QueryCull에서 처리할 함수
-	const auto Visit = [&ShadowInfo, &MeshPackets](FPrimitiveSceneProxy* Proxy)
+	const auto Visit = [&ShadowInfo, &MeshPackets, Views, ViewCount,
+		MinScreenRadiusSquared, &SmallCasterSkips](FPrimitiveSceneProxy* Proxy)
 		{
 			// 그림자 생성 여부만 확인한다. ReceiveShadow는 Caster 선별과 무관하다.
 			if (!Proxy->IsVisible() || !Proxy->IsShadowCaster())
@@ -625,6 +666,13 @@ void UWorld::GatherShadowCasters(FProjectedShadowInfo& ShadowInfo)
 			auto* StaticComponent = Cast<UStaticMeshComponent>(Proxy->GetComponent());
 			if (!StaticComponent || StaticComponent->IsEditorIcon())
 				return;
+
+			// 월드 Sphere를 이용, 섹션마다 반복검사하지 않는다.
+			if (IsSmallShadowCaster(Proxy->GetLODSphere(), Views, ViewCount, MinScreenRadiusSquared))
+			{
+				++SmallCasterSkips;
+				return;
+			}
 
 			// 메시·Proxy·RenderState 검사는 기존 Submit 함수가 담당한다.
 			// 기초 그림자는 카메라와 독립적으로 LOD0를 사용한다.
@@ -651,6 +699,8 @@ void UWorld::GatherShadowCasters(FProjectedShadowInfo& ShadowInfo)
 			return static_cast<EBVHCullResult>(ClassifyBoxInFrustum(Bounds, Frustum, Mask));
 		},
 		Visit);
+	if (SmallCasterSkips > 0)
+		FStatRegistry::AddCounter(ShadowStats::STAT_SmallCasterSkips, SmallCasterSkips);
 }
 
 // 메인 카메라 생성

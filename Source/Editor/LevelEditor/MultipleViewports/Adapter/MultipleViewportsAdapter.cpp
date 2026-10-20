@@ -198,6 +198,13 @@ FMatrix FMultipleViewportsAdapter::GetEngineViewProjection(const int32 ViewIndex
 		GetEffectiveCamera(ViewIndex), GetViewRect(ViewIndex));
 }
 
+FLODViewContext FMultipleViewportsAdapter::GetLODViewContext(int32 ViewIndex) const
+{
+	assert(IsViewActive(ViewIndex));
+	return FEditorViewportClient::CalcLODViewContext(GetEffectiveCamera(ViewIndex), GetViewRect(ViewIndex));
+
+}
+
 // 활성 View의 Override·외부 PIE 크기를 반영하고 절두체 계산은 Client에 맡긴다.
 bool FMultipleViewportsAdapter::AppendShadowFrustumCorners(
     int32 ViewIndex, float ShadowDistance, TArray<FVector>& OutCorners) const
@@ -267,7 +274,7 @@ void FMultipleViewportsAdapter::BuildRenderQueue(UWorld& World, const int32 View
     OutIconQueue.Reset();
     OutArrowQueue.Reset();
     if (!IsViewActive(ViewIndex)) return;
-    const FRect& Rect = GetViewRect(ViewIndex);
+
     const FViewCamera& ViewCamera = GetEffectiveCamera(ViewIndex);
     // Runtime은 이 동기 호출 동안만 논리 카메라 Context를 사용한다.
     const auto ResolveBillboard = [](const FVector& Position, float Width, float Height,
@@ -276,31 +283,12 @@ void FMultipleViewportsAdapter::BuildRenderQueue(UWorld& World, const int32 View
         const auto& Camera = *static_cast<const FViewCamera*>(Context);
         return FEditorViewportClient::BuildBillboardMatrix(Camera, Position, Width, Height);
     };
-    // 컬링과 LOD가 이번 호출에서 계산한 동일한 VP를 사용한다.
-    FFrustumPlanes Frustum{};
-    const FMatrix ViewProjection = FEditorViewportClient::CalcViewProjection(
-        ViewCamera, Rect, &Frustum);
-
-    // 직교 깊이 보정은 Projection의 화면 X/Y 배율을 바꾸지 않는다.
-    const FMatrix Projection = GetEngineProjection(ViewIndex);
-    const float ScaleX = Projection.M[1][0];
-    const float ScaleY = Projection.M[2][1];
-
-	FLODViewContext LODContext{
-		static_cast<uint32>(Rect.Width),
-		static_cast<uint32>(Rect.Height)
-	};
-	// 거리와 NearZ는 기존처럼 논리 카메라를 기준으로 유지한다.
-	LODContext.CameraPosition = ViewCamera.Transform.Location;
-	LODContext.ViewProjection = ViewProjection;
-	LODContext.CameraForward = GetEngineCameraForward(ViewIndex);
-	LODContext.ProjectionScaleSquared = std::max(ScaleX * ScaleX, ScaleY * ScaleY);
-	LODContext.NearZ = ViewCamera.Projection.NearClip;
-	LODContext.bOrthographic = ViewCamera.Projection.Mode == EProjectionMode::Orthographic;
-	LODContext.Prepare();
+  
+	FLODViewContext LODContext = GetLODViewContext(ViewIndex);
+	FFrustumPlanes Frustum = ExtractFrustumPlanes(LODContext.ViewProjection);
 
 	// Renderer를 넘기지 않아 기존 에디터의 GPU 오클루전·상수 업로드 정책을 유지한다.
-	World.GatherRenderPackets(OutQueue, &LODContext, &Frustum, nullptr,
+	World.GatherRenderPackets(OutQueue, &LODContext, &Frustum, nullptr, 
 		ResolveBillboard, &ViewCamera, &OutIconQueue, &OutArrowQueue);
 }
 

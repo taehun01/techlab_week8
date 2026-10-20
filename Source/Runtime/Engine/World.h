@@ -71,16 +71,20 @@ public:
 
 
 	// BeginRenderViews 이후 World 공유 지역광 작업을 한 번 추가한다.
-	void GatherLocalProjectedShadows(TArray<FProjectedShadowInfo>& OutShadows,const TArray<FFrustumPlanes>& ActiveViewFrustums);
+	void GatherLocalProjectedShadows(TArray<FProjectedShadowInfo>& OutShadows,
+		const TArray<FFrustumPlanes>& ActiveViewFrustums,
+		const TArray<FLODViewContext>& ActiveViews, float MinScreenRadiusSquared);
 
 	// 지정한 View·Cascade의 투영과 원래 논리 분할 개수를 보관하고 Caster를 수집한다.
 	void GatherDirectionalShadow(TArray<FProjectedShadowInfo>& OutShadows,
-		const TArray<FVector>& ReceiverCorners, uint32 ProjectionIndex, uint32 ViewId,
+		const TArray<FVector>& ReceiverCorners, const FLODViewContext& View,
+		float MinScreenRadiusSquared, uint32 ProjectionIndex, uint32 ViewId,
 		uint32 LogicalCascadeCount = 1);
 
 	// BeginRenderViews와 SetupProjection 이후, 해당 작업에 한 번 호출한다.
 	// Light Frustum과 CastShadow 조건으로 정적 메시 Caster를 수집한다.
-	void GatherShadowCasters(FProjectedShadowInfo& ShadowInfo);
+	void GatherShadowCasters(FProjectedShadowInfo& ShadowInfo,const FLODViewContext* Views, 
+		int32 ViewCount, float MinScreenRadiusSquared);
 
 	void CreateMainCamera();
 
@@ -132,6 +136,10 @@ public:
 private:
 	// 활성 Lit View에서 Receiver가 있는지 검사하는 함수
 	bool HasVisibleShadowReceiver(const FLightRenderParameters& LightParameters, const TArray<FFrustumPlanes>& ActiveViewFrustums) const;
+	
+	// 모든 전달 View에서 Bounds가 작을 때만 해당 투영의 제출을 생략한다.
+	static bool IsSmallShadowCaster(const FLODSphere& Sphere, const FLODViewContext* Views, int32 ViewCount, float MinScreenRadiusSquared);
+	
 	EWorldType WorldType = EWorldType::None;
 
 	struct alignas(64) FGatherChunk

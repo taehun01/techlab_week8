@@ -3,7 +3,7 @@
 #include "Editor/LevelEditor/MultipleViewports/Adapter/MultipleViewportsAdapter.h"
 #include "Camera/CameraActor.h"
 #include "Camera/CameraComponent.h"
-
+#include "Render/Renderer.h"
 #include "Engine/World.h"
 #include "Editor/EditorUI/ShowFlagUI.h"
 
@@ -42,6 +42,8 @@ void FSettingsPanel::OnRender()
 	ImGui::TextDisabled("Fill mode is configured per viewport.");
 	ShowFlagUI::DrawFlags(Settings.ShowFlags, EShowFlagScope::Global, EShowFlagGroup::Rendering);
 	ImGui::SliderFloat("Exposure", &Settings.Exposure, 0.1f, 5.0f, "%.2f");
+	ImGui::SliderFloat("Min Shadow Caster Radius", &GMinScreenRadiusForShadowCaster, 0.0f, 0.05f, "%.4f", ImGuiSliderFlags_AlwaysClamp);
+	ImGui::TextDisabled("0 disables small caster culling.");
 	ImGui::Combo("Light Debug", &Settings.LightDebugMode, "Off\0Cell Heatmap\0Brute Force\0Slices\0");
 	ImGui::Combo("Light Culling", &Settings.LightCullingMode, "Tiled\0Clustered\0Tiled 2.5D\0");
 	const char* Models[] = { "Gouraud", "Lambert", "Blinn-Phong" };

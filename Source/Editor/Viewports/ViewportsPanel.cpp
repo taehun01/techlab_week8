@@ -439,6 +439,8 @@ void FViewportsPanel::DrawStatOverlay(ImDrawList* DrawList, const ImVec2& ViewMi
 			FStatRegistry::GetCounter(ShadowStats::STAT_LocalLightsWithoutReceivers)), ValueColor });
 		Lines.Add({ std::format("  Empty caster depth skips: {}",
 			FStatRegistry::GetCounter(ShadowStats::STAT_EmptyCasterDepthSkips)), ValueColor });
+		Lines.Add({ std::format("  Small caster submission skips: {}",
+	FStatRegistry::GetCounter(ShadowStats::STAT_SmallCasterSkips)), ValueColor });
 		Lines.Add({ std::format("  Maps: {}  Draws: {}  Updates: {}",
 			FStatRegistry::GetCounter(ShadowStats::STAT_Maps),
 			FStatRegistry::GetCounter(ShadowStats::STAT_DrawCalls),

@@ -12,6 +12,7 @@
 
 class UWorld;
 class FRenderQueue;
+struct FLODViewContext;
 
 // 패널 Layout·Client와 엔진의 입력·렌더 수집 경로를 연결한다.
 class FMultipleViewportsAdapter
@@ -105,6 +106,8 @@ public:
     const FRect& GetViewRect(int32 ViewIndex) const;
     // Native View·Projection을 row-vector 순서로 합성한 엔진 행렬을 반환한다.
     FMatrix GetEngineViewProjection(int32 ViewIndex) const;
+    // 패널·별도 PIE에서 선택된 실제 카메라와 영역을 Client에 전달한다.
+    FLODViewContext GetLODViewContext(int32 ViewIndex) const;
     // 패널·별도 PIE의 실제 카메라와 영역으로 그림자 Receiver 꼭짓점을 추가한다.
     bool AppendShadowFrustumCorners(int32 ViewIndex, float ShadowDistance, TArray<FVector>& OutCorners) const;
     // 지정 View의 실제 카메라·렌더 영역으로 Receiver 구간을 계산한다.

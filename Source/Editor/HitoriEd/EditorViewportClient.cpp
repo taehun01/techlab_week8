@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include "Asset/LOD/StaticMeshLODSelector.h"
 
 // 외부 설정 적용 시 Roll을 제거하고 일반 프리셋으로 갱신한다.
 void FEditorViewportClient::SetCamera(const FViewCamera& InCamera, const FRect& Rect)
@@ -250,6 +251,30 @@ FMatrix FEditorViewportClient::CalcViewProjection(
     if (OutFrustum)
         *OutFrustum = ExtractFrustumPlanes(ViewProjection);
     return ViewProjection;
+}
+
+FLODViewContext FEditorViewportClient::CalcLODViewContext(const FViewCamera& InCamera, const FRect& Rect)
+{
+    FMatrix View;
+    FMatrix Projection;
+    CalcViewMatrices(InCamera, Rect, View, Projection);
+    FLODViewContext Context{
+        static_cast<uint32>(Rect.Width),
+        static_cast<uint32>(Rect.Height)
+    };
+
+    Context.CameraPosition = InCamera.Transform.Location; 
+    Context.CameraForward = NormalizedOrZero(InCamera.Transform.Rotation.GetForwardVector());
+    Context.ViewProjection = View * Projection;
+
+    const float ScaleX = Projection.M[1][0];
+    const float ScaleY = Projection.M[2][1];
+    Context.ProjectionScaleSquared = std::max(ScaleX * ScaleX, ScaleY * ScaleY);
+    Context.NearZ = InCamera.Projection.NearClip;
+    Context.bOrthographic = InCamera.Projection.Mode == EProjectionMode::Orthographic;
+    Context.Prepare();
+
+    return Context;
 }
 
 // 실제 렌더 VP에서 깊이 구간을 정하고 역투영해 View별 Receiver 범위를 구한다.

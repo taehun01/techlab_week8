@@ -6,6 +6,9 @@
 #include "Render/ViewMode.h"
 #include "Render/EngineShowFlags.h"
 
+
+struct FLODViewContext;
+
 // 한 View의 카메라·표시 상태와 프리셋·이동·렌더 계산을 관리한다.
 class FEditorViewportClient
 {
@@ -61,6 +64,9 @@ public:
     // 같은 VP로 Frustum도 필요할 때 함께 계산한다.
     static FMatrix CalcViewProjection(const FViewCamera& InCamera, const FRect& Rect,
         FFrustumPlanes* OutFrustum = nullptr);
+
+    // 실제 카메라와 렌더 영역으로 공통 LOD·컬링 입력을 구성한다.
+    static FLODViewContext CalcLODViewContext(const FViewCamera& InCamera, const FRect& Rect);
 
     // 그림자 거리 안의 Receiver 절두체 꼭짓점 8개를 기존 목록에 추가한다.
     // 직교 View는 논리 원점의 앞뒤를 사용하며, 유효한 깊이 구간이 없으면 목록을 유지한다.

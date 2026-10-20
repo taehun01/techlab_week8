@@ -38,6 +38,7 @@
 // TODO : FSceneRenderer 도입 후 옮겨야함
 #include "ProjectedShadowInfo.h"
 #include <utility>
+#include <algorithm>
 #include "Components/DirectionalLightComponent.h"
 #include "Engine/DirectionalLightSceneProxy.h"
 #include "Core/Stats/ShadowStats.h"
@@ -548,6 +549,8 @@ void UEditorEngine::RenderMultipleViewports()
 	const FEngineShowFlags& ShowFlags = SettingsPanel->GetSettings().ShowFlags;
 	const bool bDrawPrimitives = ShowFlags.IsEnabled(EEngineShowFlag::Primitives);
 	const bool bDynamicShadows = ShowFlags.IsEnabled(EEngineShowFlag::DynamicShadows);
+	const float MinScreenRadius = std::max(0.0f, GMinScreenRadiusForShadowCaster);
+	const float MinScreenRadiusSquared = MinScreenRadius * MinScreenRadius;
 
 	const auto PrepareView = [&](int32 ViewIndex)
 		{
@@ -592,22 +595,26 @@ void UEditorEngine::RenderMultipleViewports()
 		if (!ViewIndices)
 			continue;
 		SCOPE_CYCLE_COUNTER(ShadowStats::STAT_SetupCPU);
+		// Directional에서도 같은 Context를 사용하도록 World 처리 동안 유지한다.
+		TArray<FLODViewContext> ActiveShadowViews;
 		{
 			// 같은 World의 여러 View가 공유하는 지역광 준비 비용을 모은다.
 			SCOPE_CYCLE_COUNTER(ShadowStats::SetupCPUStats[ShadowStats::Local]);
+			ActiveShadowViews.Reserve(ViewIndices->Num());
 			TArray<FFrustumPlanes> ActiveViewFrustums;
 			ActiveViewFrustums.Reserve(ViewIndices->Num());
 			
 			for (int32 ViewIndex : *ViewIndices)
 			{
-				ActiveViewFrustums.Add(ExtractFrustumPlanes(MultipleViewportsAdapter.GetEngineViewProjection(ViewIndex)));
+				const FLODViewContext View = MultipleViewportsAdapter.GetLODViewContext(ViewIndex);
+				ActiveShadowViews.Add(View);
+				ActiveViewFrustums.Add(ExtractFrustumPlanes(View.ViewProjection));
 			}
 
-			World->GatherLocalProjectedShadows(ShadowInfos, ActiveViewFrustums);
+			World->GatherLocalProjectedShadows(ShadowInfos, ActiveViewFrustums, ActiveShadowViews, MinScreenRadiusSquared);
 		}
 
-		const FDirectionalLightSceneProxy* Directional =
-			World->GetScene().GetPrimaryDirectionalLight();
+		const FDirectionalLightSceneProxy* Directional = World->GetScene().GetPrimaryDirectionalLight();
 		if (!Directional || !Directional->ShouldCastShadow())
 			continue;
 
@@ -619,12 +626,14 @@ void UEditorEngine::RenderMultipleViewports()
 		TArray<FVector> ReceiverCorners;
 		ReceiverCorners.Reserve(8);
 
-		for (int32 ViewIndex : *ViewIndices)
+		for (int32 ViewOffset = 0; ViewOffset < ViewIndices->Num(); ++ViewOffset)
 		{
-			// 0은 World 공유 작업에 남겨두고 View 슬롯으로 안정적인 ID를 만든다.
+			const int32 ViewIndex = (*ViewIndices)[ViewOffset];
+			const FLODViewContext& ShadowView = ActiveShadowViews[ViewOffset];
+
+			// 0은 공유 작업에 남겨두고 View 슬롯으로 안정적인 ID를 만든다.
 			const uint32 ViewId = static_cast<uint32>(ViewIndex + 1);
-			// 직교 View와 논리 분할 하나는 단일 맵 준비 비용으로 분류한다.
-			const bool bOrthographic = MultipleViewportsAdapter.IsOrthographic(ViewIndex);
+			const bool bOrthographic = ShadowView.bOrthographic;
 			const uint32 ExpectedCascadeCount = !bOrthographic && Light->IsCSMEnabled()
 				? static_cast<uint32>(Light->GetCascadeCount()) : 1u;
 			const auto Group = ShadowStats::GetGroup(true, ExpectedCascadeCount);
@@ -633,26 +642,23 @@ void UEditorEngine::RenderMultipleViewports()
 
 			if (bOrthographic)
 			{
-				// 직교 View는 논리 원점 앞뒤의 기존 단일 범위를 사용한다.
-				if (MultipleViewportsAdapter.AppendShadowFrustumCorners(
-					ViewIndex, ShadowDistance, ReceiverCorners))
+				// 직교 View는 기존 논리 원점 앞뒤의 단일 범위를 유지한다.
+				if (MultipleViewportsAdapter.AppendShadowFrustumCorners(ViewIndex, ShadowDistance, ReceiverCorners))
 				{
-					World->GatherDirectionalShadow(
-						ShadowInfos, ReceiverCorners, 0, ViewId);
+					World->GatherDirectionalShadow(ShadowInfos, ReceiverCorners, ShadowView, MinScreenRadiusSquared, 0, ViewId);
 				}
 				continue;
 			}
 
-			// 패널 PIE와 별도 PIE도 실제 게임 카메라 Override를 사용한다.
-			const FViewCamera& Camera =	MultipleViewportsAdapter.GetEffectiveCamera(ViewIndex);
+			// 패널 PIE와 별도 PIE 모두 실제 게임 카메라의 클립 범위를 사용한다.
+			const FViewCamera& Camera = MultipleViewportsAdapter.GetEffectiveCamera(ViewIndex);
 			if (!Directional->CalculateCascadeSplitDistances(Camera.Projection.NearClip, Camera.Projection.FarClip, SplitDistances))
 				continue;
 
-			// 남는 작업 수와 무관하게 실제 분할 계산 결과를 각 작업에 전달한다.
+			// 빈 큐가 생겨도 논리 Cascade 개수와 번호는 압축하지 않는다.
 			const uint32 LogicalCascadeCount = static_cast<uint32>(SplitDistances.Num() - 1);
 			for (int32 CascadeIndex = 0; CascadeIndex + 1 < SplitDistances.Num(); ++CascadeIndex)
 			{
-				// 이전 구간의 CascadeTransitionFraction 비율만큼 생성 Near 확장
 				float RenderNear = SplitDistances[CascadeIndex];
 				if (CascadeIndex > 0)
 				{
@@ -664,7 +670,8 @@ void UEditorEngine::RenderMultipleViewports()
 				if (!MultipleViewportsAdapter.AppendShadowFrustumCorners(ViewIndex, RenderNear, SplitDistances[CascadeIndex + 1], ReceiverCorners))
 					continue;
 
-				World->GatherDirectionalShadow(ShadowInfos, ReceiverCorners,
+				// 각 Cascade는 자신이 속한 View의 크기 기준으로만 선별한다.
+				World->GatherDirectionalShadow(ShadowInfos, ReceiverCorners, ShadowView, MinScreenRadiusSquared,
 					static_cast<uint32>(CascadeIndex), ViewId, LogicalCascadeCount);
 			}
 		}
