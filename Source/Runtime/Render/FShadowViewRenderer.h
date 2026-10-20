@@ -48,6 +48,32 @@ struct FShadowCacheKey
 	}
 };
 
+// 캐시 판정 결과. Hit가 아니면 이번 프레임에 깊이를 다시 그린 이유다.
+enum class EShadowCacheResult : uint8
+{
+	Hit,
+	Disabled,        // r.shadow.CacheWholeSceneShadows 0
+	NewTile,         // 새 할당·재할당이라 내용이 없음
+	Generation,      // 전체 무효화(콘솔 토글 등)
+	ViewProjection,  // 라이트 이동·회전·Cone·Cascade 변화
+	Casters,         // Caster 집합 또는 ShadowVersion 변화
+	Count
+};
+
+inline const char* GetShadowCacheResultName(EShadowCacheResult Result)
+{
+	switch (Result)
+	{
+	case EShadowCacheResult::Hit:            return "Hit";
+	case EShadowCacheResult::Disabled:       return "Cache disabled";
+	case EShadowCacheResult::NewTile:        return "New tile";
+	case EShadowCacheResult::Generation:     return "Generation changed";
+	case EShadowCacheResult::ViewProjection: return "View projection changed";
+	case EShadowCacheResult::Casters:        return "Casters changed";
+	default:                                 return "Unknown";
+	}
+}
+
 // 투영 행렬은 작업 Info가 보관하며, 할당 결과에는 풀 내부 위치, 캐시 키를 남긴다.
 struct FShadowData
 {
@@ -57,6 +83,8 @@ struct FShadowData
 	// Shadow Caching
 	bool bIsValid = false;
 	FShadowCacheKey CacheKey = FShadowCacheKey{};
+	// 마지막으로 깊이를 그린 Shadow 프레임 번호 (디버그 표시용)
+	uint64 LastUpdatedFrame = 0;
 };
 
 // 한 페이지가 실제 Depth 자원과 네 타일의 점유 상태를 소유한다.
@@ -95,7 +123,7 @@ public:
 	// shadow cache 확인 
 	bool CheckShadowCache(ELightType InType, const FShadowAllocationKey& InAllocKey, const FShadowCacheKey& InCacheKey) const;
 	// shadow cache 갱신
-	void UpdateShadowCache(ELightType InType, const FShadowAllocationKey& InAllocKey, const FShadowCacheKey& InCacheKey);
+	void UpdateShadowCache(ELightType InType, const FShadowAllocationKey& InAllocKey, const FShadowCacheKey& InCacheKey, uint64 InFrame);
 
 	// BeginRenderPass로 타일 DSV와 뷰포트가 설정된 후 호출해야한다.
 	void ClearBoundTile();

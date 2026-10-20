@@ -83,6 +83,10 @@ private:
     // Shadow Cache Miss 결과 
     bool bShouldRenderShadow = true;
 
+    // 판정 결과(Stat·Preview용)와 마지막 깊이 갱신 프레임
+    EShadowCacheResult CacheResult = EShadowCacheResult::NewTile;
+    uint64 LastUpdatedFrame = 0;
+
     // Shadow Cache Key
     FShadowCacheKey CacheKey{};
 };

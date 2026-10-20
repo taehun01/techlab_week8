@@ -3,6 +3,7 @@
 #include "Components/LightComponentBase.h"
 #include "RenderCommand.h"
 #include "RenderResourceManager.h"
+#include "Core/Stats/ShadowStats.h"
 
 
 // 타일 네 개가 같은 해상도를 사용하는 기존 2x2 Depth 페이지를 만든다.
@@ -138,7 +139,7 @@ void FShadowViewRenderer::ReleaseUnusedShadowInfos(const TMap<ELightType, TSet<F
 }
 
 // shadow cache 갱신
-void FShadowViewRenderer::UpdateShadowCache(ELightType InType, const FShadowAllocationKey& InAllocKey, const FShadowCacheKey& InCacheKey)
+void FShadowViewRenderer::UpdateShadowCache(ELightType InType, const FShadowAllocationKey& InAllocKey, const FShadowCacheKey& InCacheKey, uint64 InFrame)
 {
 	FShadowAtlasPool* Pool = AtlasPools.Find(InType);
 	if (!Pool)
@@ -148,6 +149,7 @@ void FShadowViewRenderer::UpdateShadowCache(ELightType InType, const FShadowAllo
 	{
 		Data->CacheKey = InCacheKey;
 		Data->bIsValid = true;
+		Data->LastUpdatedFrame = InFrame;
 	}
 }
 
@@ -159,4 +161,6 @@ void FShadowViewRenderer::ClearBoundTile()
 	RenderCommand::BindPipelineState(ClearPipelineState);
 	RenderCommand::Draw(3);
 	RenderCommand::SetDepthStencilState(EDepthStencilState::Default);
+	// Draw(3)는 DrawIndexed 카운트에 잡히지 않으므로 따로 센다.
+	FStatRegistry::AddCounter(ShadowStats::STAT_TileClears);
 }

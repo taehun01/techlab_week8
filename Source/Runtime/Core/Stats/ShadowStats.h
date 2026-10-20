@@ -23,4 +23,17 @@ namespace ShadowStats
     // 실제 확보한 GPU 자원의 내용 크기를 바이트로 기록한다.
     DECLARE_MEMORY_STAT("Shadow Depth Memory", STAT_DepthMemory);
     DECLARE_MEMORY_STAT("Shadow Parameter Memory", STAT_ParameterMemory);
+
+    // Shadow Map Caching
+    DECLARE_COUNTER_STAT("Shadow Cache Hits", STAT_CacheHits);
+    DECLARE_COUNTER_STAT("Shadow Cache Hits Directional", STAT_CacheHitsDirectional);
+    DECLARE_COUNTER_STAT("Shadow Cache Hits Spot", STAT_CacheHitsSpot);
+    DECLARE_COUNTER_STAT("Shadow Cache Miss Disabled", STAT_CacheMissDisabled);
+    DECLARE_COUNTER_STAT("Shadow Cache Miss NewTile", STAT_CacheMissNewTile);
+    DECLARE_COUNTER_STAT("Shadow Cache Miss Generation", STAT_CacheMissGeneration);
+    DECLARE_COUNTER_STAT("Shadow Cache Miss ViewProjection", STAT_CacheMissViewProjection);
+    DECLARE_COUNTER_STAT("Shadow Cache Miss Casters", STAT_CacheMissCasters);
+    DECLARE_COUNTER_STAT("Shadow Tile Clears", STAT_TileClears);
+    DECLARE_COUNTER_STAT("Shadow Atlas Used Tiles", STAT_UsedTiles);
+    DECLARE_COUNTER_STAT("Shadow Atlas Total Tiles", STAT_TotalTiles);
 }

@@ -62,6 +62,8 @@ void FProjectedShadowInfo::Reset()
     CasterCount = 0u;
     bShouldRenderShadow = true;
     CacheKey = FShadowCacheKey{};
+    CacheResult = EShadowCacheResult::NewTile;
+    LastUpdatedFrame = 0;
 }
 
 // Shadow Caching 할 때 필요한 헤시값을 저장한다.

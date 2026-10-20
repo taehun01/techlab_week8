@@ -13,7 +13,7 @@ class UMaterial;
 // View의 카메라 형식을 알지 않고 위치와 크기로 Billboard 행렬을 받는다.
 using FBillboardMatrixBuilder = FMatrix(*)(const FVector&, float, float, const void*);
 
-inline uint64 GlobalShadowVersion = 0u;
+inline static uint64 GlobalShadowVersion = 0u;
 
 class FPrimitiveSceneProxy
 {
