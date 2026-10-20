@@ -48,6 +48,7 @@ private:
 	// 해상도
 	int32 ShadowMapResolution = 1024;
 	// Receiver의 깊이 비교에 사용할 Bias
+	// Directional의 경우 광원 깊이 축 방향의 월드거리로 사용
 	float ShadowBias = 0; // 0.0005f;
 
 	// 기존 기본 Radius 1과 같은 2×2 호출 격자로 시작한다.

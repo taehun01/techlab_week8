@@ -216,7 +216,13 @@ void FRenderer::PrepareShadowParameters()
 		}
 
 		FTexture2D* DepthTexture = ShadowInfo.RenderingInfo.DepthStencil.Texture;
-		Parameter.Bias = ShadowInfo.LightProxy->GetLightComponent()->GetShadowBias();
+		const ULightComponent* Light = ShadowInfo.LightProxy->GetLightComponent();
+		Parameter.Bias = Light->GetShadowBias();
+		if (Light->GetLightType() == ELightType::Directional)
+		{
+			// Directional의 Bias는 월드기준이므로, 직교투영으로 보정해줌
+			Parameter.Bias /= ShadowInfo.ShadowViewSize.X;
+		}
 		const FViewportSettings& Viewport = ShadowInfo.RenderingInfo.ViewportSetting;
 		Parameter.ShadowPCFKernelSize = ShadowInfo.LightProxy->GetLightComponent()->GetShadowPCFKernelSize();
 		Parameter.Resolution = Viewport.Width;
@@ -827,7 +833,7 @@ void FRenderer::RenderShadowDepth(FProjectedShadowInfo& ShadowInfo)
 	// 이전 View의 Wireframe·오버레이 상태가 그림자에 영향을 주지 않게 한다.
 	RenderCommand::SetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 	// Slope Bias를 위한 전용 RasterizerState를 설정한다.
-	RenderCommand::SetRasterizerState(ERasterizerState::ShadowDepth);
+	RenderCommand::SetRasterizerState(LightType == ELightType::Directional ? ERasterizerState::SolidBack : ERasterizerState::ShadowDepth);
 	RenderCommand::SetDepthStencilState(EDepthStencilState::Default);
 
 	// 실제 제출된 Draw 수를 전체 합계와 해당 그룹에 함께 기록한다.
