@@ -12,13 +12,12 @@ void FDirectionalLightSceneProxy::GetLightShaderParameters(FLightRenderParameter
 	FTransform Transform;
 	Transform.Rotation = Dir->GetWorldRotation();
 	const FLinearColor Color(Dir->GetLightColor());
-	const float SourceAngle = 0.01f;
 
 	Out.Type = static_cast<uint32>(ELightType::Directional);
 	Out.Direction = Transform.GetForward();
 	Out.Color = FVector(Color.R, Color.G, Color.B);
 	Out.Intensity = Dir->GetIntensity();
-	Out.SourceAngle = SourceAngle;
+	Out.SourceAngle = FMath::DegreesToRadians(Dir->GetSourceAngle() * 0.5f);
 }
 
 // 카메라의 Receiver 범위를 광원 축의 AABB로 감싸 단일 직교 투영을 만든다.

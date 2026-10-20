@@ -8,6 +8,13 @@
 UPointLightComponent::UPointLightComponent() : LightFalloffExponent(1.0f) {}
 UPointLightComponent::~UPointLightComponent() {}
 
+void UPointLightComponent::PostEditChangeProperty(const FProperty& Property)
+{
+    Super::PostEditChangeProperty(Property);
+    if (Property.Name == "SourceRadius")
+        SourceRadius = GetSourceRadius();
+}
+
 FLightSceneProxy* UPointLightComponent::CreateSceneProxy() const
 {
     return new FPointLightSceneProxy(this);

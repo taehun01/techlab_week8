@@ -50,7 +50,7 @@ private:
 	// Receiver의 깊이 비교에 사용할 Bias
 	float ShadowBias = 0; // 0.0005f;
 
-	// 기존 기본 Radius 1과 같은 2×2 호출 격자로 시작한다.
+	// 한 축의 샘플 수. 0은 Hard Shadow, 1은 중심의 하드웨어 PCF 한 번이다.
 	int32 ShadowPCFKernelSize = 2;
 	// 기존 씬의 PCF를 유지하고, 선택한 라이트에서 PCSS를 사용할 수 있다.
 	bool bUsePCSS = false;

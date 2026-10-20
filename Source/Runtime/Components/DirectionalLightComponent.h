@@ -11,6 +11,7 @@ class UDirectionalLightComponent :public ULightComponent
 		PROPERTY(CascadeCount)
 		PROPERTY(CascadeDistributionExponent)
 		PROPERTY(CascadeTransitionFraction)
+		PROPERTY(SourceAngle)
 	REFLECT_END()
 public:
 	UDirectionalLightComponent();
@@ -22,6 +23,9 @@ public:
 
 	// 입력 설정의 유효 범위는 Component에서 보장한다.
 	float GetShadowDistance() const { return FMath::Clamp(ShadowDistance, 1.0f, 100000.0f); }
+	// 전체 각지름(도). 셰이더에는 라디안 단위 각반경으로 변환해 전달한다.
+	float GetSourceAngle() const { return FMath::Clamp(SourceAngle, 0.0f, 178.0f); }
+	void SetSourceAngle(float InAngle) { SourceAngle = FMath::Clamp(InAngle, 0.0f, 178.0f); }
 
 	// 현재 지원하는 View별 Directional Cascade 개수의 상한이다.
 	static constexpr int32 MaxShadowCascades = 4;
@@ -47,6 +51,9 @@ public:
 	// 편집한 값도 실제 계산에 사용하는 범위로 맞춘다.
 	void PostEditChangeProperty(const FProperty& Property) override;
 private:
+	// 기존 각반경 0.01 rad의 외형을 유지하는 전체 각지름(도).
+	float SourceAngle = 1.1459156f;
+
 	// 카메라 전방에서 그림자를 제공할 최대 Recevier 깊이이다.
 	float ShadowDistance = 100.0f;
 

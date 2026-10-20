@@ -31,4 +31,6 @@ void UDirectionalLightComponent::PostEditChangeProperty(const FProperty& Propert
         CascadeDistributionExponent = GetCascadeDistributionExponent();
     else if (Property.Name == "CascadeTransitionFraction")
         CascadeTransitionFraction = GetCascadeTransitionFraction();
+    else if (Property.Name == "SourceAngle")
+        SourceAngle = GetSourceAngle();
 }
