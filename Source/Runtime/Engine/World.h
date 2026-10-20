@@ -135,7 +135,9 @@ public:
 	virtual void Serialize(FStructuredArchive::FRecord Record) override;
 private:
 	// 활성 Lit View에서 Receiver가 있는지 검사하는 함수
-	bool HasVisibleShadowReceiver(const FLightRenderParameters& LightParameters, const TArray<FFrustumPlanes>& ActiveViewFrustums) const;
+	// SpotFrustum을 전달하면 기존 영향 구·View 검사에 Spot 투영 범위를 추가한다
+	bool HasVisibleShadowReceiver(const FLightRenderParameters& LightParameters, const TArray<FFrustumPlanes>& ActiveViewFrustums,
+		const FFrustumPlanes* SpotFrustum = nullptr) const;
 	
 	// 모든 전달 View에서 Bounds가 작을 때만 해당 투영의 제출을 생략한다.
 	static bool IsSmallShadowCaster(const FLODSphere& Sphere, const FLODViewContext* Views, int32 ViewCount, float MinScreenRadiusSquared);

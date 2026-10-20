@@ -493,54 +493,55 @@ void UWorld::GatherLocalProjectedShadows(TArray<FProjectedShadowInfo>& OutShadow
 			FStatRegistry::AddCounter(ShadowStats::STAT_LocalLightsOutsideViews);
 			continue;
 		}
-		if (!HasVisibleShadowReceiver(LightParameters, ActiveViewFrustums))
+		const bool bSpotLight = LightType == ELightType::Spot;
+		FShadowProjection ShadowProjection;
+		FFrustumPlanes SpotFrustum{};
+		const FFrustumPlanes* ReceiverFrustum = nullptr;
+
+		if (bSpotLight)
+		{
+			// 유효성 검증은 기존 라이트별 투영 계산 함수가 담당한다.
+			if (!LightProxy->GetShadowProjection(ShadowProjection))
+				continue;
+
+			// 같은 여섯 평면을 Receiver 검사와 Caster 수집에 재사용한다.
+			SpotFrustum = ExtractFrustumPlanes(ShadowProjection.ViewProjections[0]);
+			ReceiverFrustum = &SpotFrustum;
+		}
+
+		// 기존 S2 통계에 강화된 Spot Receiver 판정도 포함한다.
+		if (!HasVisibleShadowReceiver(LightParameters, ActiveViewFrustums, ReceiverFrustum))
 		{
 			FStatRegistry::AddCounter(ShadowStats::STAT_LocalLightsWithoutReceivers);
 			continue;
 		}
 
-		// if문 여러개로 spot이랑 포인트 구분할것임
-		// Point는 공통 원점 하나와 여섯 개의 VP 행렬을 사용한다.
-		if (LightType == ELightType::Spot)
+		if (bSpotLight)
 		{
-			// Light 설정과 투영 유효성은 기존 계산 함수가 판단한다.
-			FShadowProjection ShadowProjection;
-			ShadowProjection.ViewOrigin = FVector::ZeroVector;
-			///ShadowProjection.ViewProjections[0] = FMatrix::Identity;
-
-			if (!LightProxy->GetShadowProjection(ShadowProjection))
-			{
-				continue;
-			}
-
-			// Info 하나는 투영 작업 하나이며, Caster 수집은 기존 경로를 사용한다.
+			// Receiver 후보가 있을 때만 작업을 등록한다.
+			// Frustum 지정 overload를 사용해 같은 VP의 평면을 다시 추출하지 않는다.
 			FProjectedShadowInfo& ShadowInfo = OutShadows.AddDefaulted_GetRef();
-			//ShadowInfo.SetupProjection(*LightProxy, ShadowViewOrigin, LightViewProjection);
-			ShadowInfo.SetupProjection(*LightProxy, ShadowProjection.ViewOrigin, ShadowProjection.ViewProjections[0], 0);
-			GatherShadowCasters(ShadowInfo,	ActiveViews.GetData(), ActiveViews.Num(), MinScreenRadiusSquared);
+			ShadowInfo.SetupProjection(*LightProxy, ShadowProjection.ViewOrigin, ShadowProjection.ViewProjections[0], SpotFrustum, FrustumAllPlanesMask, 0);
+
+			// Caster는 카메라 가시 목록과 독립적인 기존 수집 경로를 사용한다.
+			GatherShadowCasters(ShadowInfo, ActiveViews.GetData(), ActiveViews.Num(), MinScreenRadiusSquared);
 		}
-
-		// 포인트 라이트면 섀도우 인포 6개
-		if (LightType == ELightType::Point)
+		else
 		{
-			// Light 설정과 투영 유효성은 기존 계산 함수가 판단한다.
-			FShadowProjection ShadowProjection;
-			ShadowProjection.ViewOrigin = FVector::ZeroVector;
-
+			// 여기까지 도달하는 다른 지원 타입은 Point다.
+			// Receiver가 없는 Point의 여섯 VP를 미리 계산하지 않는다.
 			if (!LightProxy->GetShadowProjection(ShadowProjection))
-			{
 				continue;
-			}
 
-			uint32 ID = 0;
-
-			// Info 하나는 투영 작업 하나이며, Caster 수집은 기존 경로를 사용한다.
-			for (const FMatrix& IT : ShadowProjection.ViewProjections)
+			// 면 순서와 ProjectionIndex를 유지해 기존 GPU 인덱스 연결을 보존한다.
+			uint32 ProjectionIndex = 0;
+			for (const FMatrix& ViewProjection : ShadowProjection.ViewProjections)
 			{
 				FProjectedShadowInfo& ShadowInfo = OutShadows.AddDefaulted_GetRef();
-				ShadowInfo.SetupProjection(*LightProxy, ShadowProjection.ViewOrigin, IT, ID);
+				ShadowInfo.SetupProjection(*LightProxy, ShadowProjection.ViewOrigin, ViewProjection, ProjectionIndex);
+
 				GatherShadowCasters(ShadowInfo, ActiveViews.GetData(), ActiveViews.Num(), MinScreenRadiusSquared);
-				++ID;
+				++ProjectionIndex;
 			}
 		}
 	}
@@ -1002,7 +1003,8 @@ void UWorld::Serialize(FStructuredArchive::FRecord Record)
 	// MainCamera->GetCameraComponent()->Serialize(Record.EnterRecord("MainCamera"));
 }
 
-bool UWorld::HasVisibleShadowReceiver(const FLightRenderParameters& LightParameters, const TArray<FFrustumPlanes>& ActiveViewFrustums) const
+bool UWorld::HasVisibleShadowReceiver(const FLightRenderParameters& LightParameters, const TArray<FFrustumPlanes>& ActiveViewFrustums,
+	const FFrustumPlanes* SpotFrustum) const
 {
 	bool bHasReceiver = false;
 	const float RadiusSquared = LightParameters.Radius * LightParameters.Radius;
@@ -1019,6 +1021,13 @@ bool UWorld::HasVisibleShadowReceiver(const FLightRenderParameters& LightParamet
 			}
 			// 영향 영역과 겹치는 Bounds가 활성 View 중 하나에서도 보일 수 있어야 한다.
 			const FAABB Bounds = MakeWorldBounds(Box);
+
+			// spot의 경우 ShadowMap을 사용할수없는 방향의 Bounds를 추가로 제외한다.
+			if (SpotFrustum && !IsAABBInFrustum(Bounds, *SpotFrustum))
+			{
+				return false;
+			}
+
 			for (const FFrustumPlanes& Frustum : ActiveViewFrustums)
 			{
 				if (IsAABBInFrustum(Bounds, Frustum))

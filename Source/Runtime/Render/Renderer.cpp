@@ -1006,6 +1006,7 @@ void FRenderer::BindMaterial(UMaterial* Material) {
 // b1 내용 채우고 꽂기
 void FRenderer::UpdateMaterialParams(const FRenderPacket& RenderPacket)
 {
+	if (bDepthOnly) return;
 	switch (RenderPacket.Material->ParamLayout)
 	{
 	case EMaterialParamLayout::StaticMesh:
