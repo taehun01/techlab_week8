@@ -12,6 +12,14 @@ bool FShadowSettings::SetMaxResolution(int32 Resolution)
 	return true;
 }
 
+void FShadowSettings::SetCullMode(EShadowCullMode Mode)
+{
+	if (Mode == CullMode)
+		return;
+	CullMode = Mode;
+	InvalidateAllCaches();
+}
+
 namespace ShadowConsole
 {
 	// 콘솔 입력은 대소문자를 구분하지 않는다. UE도 "STAT FPS"와 "stat fps"를 같게 다룬다.
@@ -58,6 +66,29 @@ bool FShadowSettings::ExecCommand(const FString& CommandLine, FString& OutMessag
 {
 	TArray<FString> Tokens;
 	ShadowConsole::Tokenize(CommandLine, Tokens);
+
+	// shadow_cull [front|back] : Shadow Depth 패스의 컬링 면을 바꾼다. 인자가 없으면 토글한다.
+	if (Tokens.Num() > 0 && (ShadowConsole::EqualsIgnoreCase(Tokens[0], "shadow_cull")
+		|| ShadowConsole::EqualsIgnoreCase(Tokens[0], "r.shadow.CullMode")))
+	{
+		EShadowCullMode NewMode = CullMode == EShadowCullMode::Back ? EShadowCullMode::Front : EShadowCullMode::Back;
+		bool bValid = Tokens.Num() <= 2;
+		if (bValid && Tokens.Num() == 2)
+		{
+			if (ShadowConsole::EqualsIgnoreCase(Tokens[1], "front"))     NewMode = EShadowCullMode::Front;
+			else if (ShadowConsole::EqualsIgnoreCase(Tokens[1], "back")) NewMode = EShadowCullMode::Back;
+			else bValid = false;
+		}
+		if (!bValid)
+		{
+			OutMessage = std::format("Usage: {} [front|back]", Tokens[0]);
+			return true;
+		}
+
+		SetCullMode(NewMode);
+		OutMessage = std::format("{}: {}", Tokens[0], CullMode == EShadowCullMode::Front ? "front" : "back");
+		return true;
+	}
 	// 기존 명령과 과제의 콘솔 이름이 같은 런타임 설정을 제어한다.
 	if (Tokens.Num() == 0 || (!ShadowConsole::EqualsIgnoreCase(Tokens[0], "shadow_cache")
 		&& !ShadowConsole::EqualsIgnoreCase(Tokens[0], "r.shadow.CacheWholeSceneShadows")))

@@ -827,7 +827,10 @@ void FRenderer::RenderShadowDepth(FProjectedShadowInfo& ShadowInfo)
 	// 이전 View의 Wireframe·오버레이 상태가 그림자에 영향을 주지 않게 한다.
 	RenderCommand::SetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 	// Slope Bias를 위한 전용 RasterizerState를 설정한다.
-	RenderCommand::SetRasterizerState(ERasterizerState::ShadowDepth);
+	// shadow_cull 설정에 따라 Back(기본) 또는 Front Face Culling 상태를 고른다.
+	RenderCommand::SetRasterizerState(FShadowSettings::GetCullMode() == EShadowCullMode::Front
+		? ERasterizerState::ShadowDepthFrontCull
+		: ERasterizerState::ShadowDepth);
 	RenderCommand::SetDepthStencilState(EDepthStencilState::Default);
 
 	// 실제 제출된 Draw 수를 전체 합계와 해당 그룹에 함께 기록한다.

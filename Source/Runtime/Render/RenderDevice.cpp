@@ -431,5 +431,10 @@ void FRenderDevice::CreateStates()
 		Desc.DepthBiasClamp = 0.01f;
 
 		Device->CreateRasterizerState(&Desc, RasterizerStates[(uint8)ERasterizerState::ShadowDepth].GetAddressOf());
+
+		// Front Face Culling: 라이트를 향한 앞면 대신 뒷면 깊이를 기록해 표면 자체의 Acne를 피한다.
+		// Bias 값은 Back Culling과 같게 두어 두 모드를 같은 조건에서 비교할 수 있게 한다.
+		Desc.CullMode = D3D11_CULL_FRONT;
+		Device->CreateRasterizerState(&Desc, RasterizerStates[(uint8)ERasterizerState::ShadowDepthFrontCull].GetAddressOf());
 	}
 }
