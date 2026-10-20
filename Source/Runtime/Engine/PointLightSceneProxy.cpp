@@ -7,6 +7,7 @@ void FPointLightSceneProxy::GetLightShaderParameters(FLightRenderParameters& Out
 {
     const auto* PointLightComponent = static_cast<const UPointLightComponent*>(LightComponent);
     const FLinearColor Color(PointLightComponent->GetLightColor());
+    float SourceRadius = 0.03f;
 
     Out = FLightRenderParameters{};
     Out.Type = static_cast<uint32>(ELightType::Point);
@@ -15,6 +16,7 @@ void FPointLightSceneProxy::GetLightShaderParameters(FLightRenderParameters& Out
     Out.Color = FVector(Color.R, Color.G, Color.B);
     Out.Intensity = PointLightComponent->GetIntensity();
     Out.FalloffExponent = PointLightComponent->GetFalloff();
+    Out.SourceRadius = SourceRadius;
 }
 
 bool FPointLightSceneProxy::GetShadowProjection(FShadowProjection& OutShadowProjection) const
