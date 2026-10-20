@@ -7,6 +7,8 @@ void FPointLightSceneProxy::GetLightShaderParameters(FLightRenderParameters& Out
 {
     const auto* PointLightComponent = static_cast<const UPointLightComponent*>(LightComponent);
     const FLinearColor Color(PointLightComponent->GetLightColor());
+    constexpr float NearClip = 0.1f;
+    const float FarClip = PointLightComponent->GetAttenuationRadius();
 
     Out = FLightRenderParameters{};
     Out.Type = static_cast<uint32>(ELightType::Point);
@@ -15,6 +17,13 @@ void FPointLightSceneProxy::GetLightShaderParameters(FLightRenderParameters& Out
     Out.Color = FVector(Color.R, Color.G, Color.B);
     Out.Intensity = PointLightComponent->GetIntensity();
     Out.FalloffExponent = PointLightComponent->GetFalloff();
+    // 그림자를 만들 수 없는 짧은 영향 거리에서도 조명 파라미터에 NaN을 넣지 않는다.
+    if (FarClip > NearClip)
+    {
+        Out.DepthScale = FarClip / (FarClip - NearClip);
+        Out.DepthOffset = -NearClip * FarClip / (FarClip - NearClip);
+    }
+    Out.SourceRadius = 0.03f;
 }
 
 bool FPointLightSceneProxy::GetShadowProjection(FShadowProjection& OutShadowProjection) const

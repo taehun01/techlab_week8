@@ -11,6 +11,7 @@ class ULightComponent : public ULightComponentBase
 		PROPERTY(ShadowMapResolution)
 		PROPERTY(ShadowBias)
 		PROPERTY(ShadowPCFKernelSize)
+		PROPERTY(bUsePCSS)
 	REFLECT_END()
 public:
 	ULightComponent();
@@ -23,11 +24,13 @@ public:
 	int32 GetShadowMapResolution() const { return FMath::Clamp(ShadowMapResolution, 128, 4096); }
 	float GetShadowBias() const { return FMath::Max(ShadowBias, 0.0f); }
 	int32 GetShadowPCFKernelSize() const { return FMath::Max(ShadowPCFKernelSize, 0); }
+	bool IsPCSSEnabled() const { return bUsePCSS; }
 
 	void SetCastShadows(bool bInCastShadows) { bCastShadows = bInCastShadows; }
 	void SetShadowMapResolution(int32 InResolution) { ShadowMapResolution = InResolution; }
 	void SetShadowBias(float InBias) { ShadowBias = InBias; }
 	void SetShadowPCFKernelSize(int32 InKernelSize) { ShadowPCFKernelSize = InKernelSize; }
+	void SetPCSSEnabled(bool bEnabled) { bUsePCSS = bEnabled; }
 
 	virtual class FLightSceneProxy* CreateSceneProxy() const
 	{
@@ -49,5 +52,7 @@ private:
 
 	// 기존 기본 Radius 1과 같은 2×2 호출 격자로 시작한다.
 	int32 ShadowPCFKernelSize = 2;
+	// 기존 씬의 PCF를 유지하고, 선택한 라이트에서 PCSS를 사용할 수 있다.
+	bool bUsePCSS = false;
 
 };

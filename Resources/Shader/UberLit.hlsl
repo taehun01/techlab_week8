@@ -39,7 +39,7 @@ struct FDirectionalLightInfo
     float3 Direction; // 빛이 향하는 방향
     float Intensity;
     float3 Color;
-    uint DirectionalPadding;
+    float SourceAngle;
 };
 
 // SceneManagement.h의 FLightRenderParameters와 바이트 단위로 같아야 한다.
@@ -61,6 +61,10 @@ struct FLightRenderParameters
     float BarnDoorSin;
     float BarnDoorLength;
     int ShadowIndex;
+    float DepthScale;
+    float DepthOffset;
+    float SourceRadius;
+    float SourceAngle;
 };
 
 
@@ -143,7 +147,7 @@ SamplerComparisonState PCFSampler : register(s1);
 #define MAX_BOUND_SHADOW_ATLASES 8
 #define SHADOW_ATLAS_TILES_PER_ROW 2
 
-// C++ FShadowShaderParameters와 동일한 96바이트 레이아웃이다.
+// C++ FShadowShaderParameters와 동일한 112바이트 레이아웃이다.
 struct FShadowShaderParameters
 {
     matrix LightViewProjection;
@@ -154,6 +158,8 @@ struct FShadowShaderParameters
     int ShadowPCFKernelSize;
     uint IsKnownEmpty;
     float2 pad;
+    float3 ShadowViewSize;
+    uint UsePCSS;
 };
 
 // 전체 그림자 정보는 가변 개수로 전달한다.
@@ -235,33 +241,25 @@ float LoadShadowDepth(int AtlasPageIndex, int2 Texel)
 #undef SHADOW_DEPTH_LOAD_CASE
 }
 
-// Atlas 타일 좌표 변환과 하드웨어 PCF 가시성 계산을 담당한다.
-float SampleShadowMap(FShadowShaderParameters Shadow, float3 LightNDC)
+// 타일 내부에서만 깊이를 읽어 Hard Shadow와 Blocker 검색이 이웃 타일을 참조하지 않게 한다.
+float LoadShadowTileDepth(FShadowShaderParameters Shadow, float2 UV)
 {
-    // D3D 텍스처의 좌상단 원점에 맞춰 Y를 뒤집는다.
-    const float2 UV = LightNDC.xy * float2(0.5f, -0.5f) + 0.5f;
-    if (!(all(UV >= 0.0.xx) && all(UV <= 1.0.xx)))
-        return 1.0f;
-
     const uint2 Tile = uint2(
         Shadow.TileIndex % SHADOW_ATLAS_TILES_PER_ROW,
         Shadow.TileIndex / SHADOW_ATLAS_TILES_PER_ROW
     );
-    const float CompareDepth = LightNDC.z - Shadow.Bias;
+    const int2 LocalTexel = clamp(int2(UV * Shadow.Resolution), int2(0, 0), int2(Shadow.Resolution - 1, Shadow.Resolution - 1));
+    return LoadShadowDepth(Shadow.AtlasPageIndex, int2(Tile * Shadow.Resolution) + LocalTexel);
+}
+
+// 기존 PCF는 텍셀 간격, PCSS는 Blocker 거리에서 구한 간격을 같은 중앙 정렬 격자에 사용한다.
+float FilterShadowMap(FShadowShaderParameters Shadow, float2 UV, float CompareDepth, float2 SampleStepUV)
+{
+    const uint2 Tile = uint2(
+        Shadow.TileIndex % SHADOW_ATLAS_TILES_PER_ROW,
+        Shadow.TileIndex / SHADOW_ATLAS_TILES_PER_ROW
+    );
     const int KernelSize = Shadow.ShadowPCFKernelSize;
-
-    if (KernelSize == 0)
-    {
-        // UV 1에서도 현재 타일의 마지막 텍셀만 읽도록 제한한다.
-        const uint2 LocalTexel = min(uint2(UV * Shadow.Resolution), uint2(Shadow.Resolution - 1, Shadow.Resolution - 1));
-        const int2 AtlasTexel = int2(Tile * Shadow.Resolution + LocalTexel);
-        const float Depth = LoadShadowDepth(Shadow.AtlasPageIndex, AtlasTexel);
-
-        // 기존 LESS_EQUAL 비교 Sampler와 같은 비교식을 사용한다.
-        return CompareDepth <= Depth ? 1.0f : 0.0f;
-    }
-
-    // Resolution은 기존 HasShadowMap에서 양수임을 확인한다.
     const float TexelSize = 1.0f / float(Shadow.Resolution);
     const float HalfTexel = 0.5f * TexelSize;
     const float HalfKernel = float(KernelSize - 1) * 0.5f;
@@ -275,7 +273,7 @@ float SampleShadowMap(FShadowShaderParameters Shadow, float3 LightNDC)
         {
             // 홀수는 정수 오프셋, 짝수는 반 텍셀 오프셋으로 중심을 맞춘다.
             const float2 Offset = float2(X, Y) - HalfKernel;
-            const float2 LocalUV = clamp(UV + Offset * TexelSize, float2(HalfTexel, HalfTexel), float2(1.0f - HalfTexel, 1.0f - HalfTexel));
+            const float2 LocalUV = clamp(UV + Offset * SampleStepUV, float2(HalfTexel, HalfTexel), float2(1.0f - HalfTexel, 1.0f - HalfTexel));
             const float2 AtlasUV =(float2(Tile) + LocalUV) / float(SHADOW_ATLAS_TILES_PER_ROW);
 
             // 각 호출에서 기존 하드웨어 2×2 비교 필터를 사용한다.
@@ -285,6 +283,101 @@ float SampleShadowMap(FShadowShaderParameters Shadow, float3 LightNDC)
 
     // 양수 커널만 이 경로에 도달하므로 분모는 항상 양수다.
     return VisibilitySum / float(KernelSize * KernelSize);
+}
+
+// PCF를 선택했거나 커널이 0/1이면 기존 Hard·하드웨어 PCF 동작을 그대로 유지한다.
+float SampleShadowMap(FShadowShaderParameters Shadow, float3 LightNDC)
+{
+    const float2 UV = LightNDC.xy * float2(0.5f, -0.5f) + 0.5f;
+    if (!(all(UV >= 0.0.xx) && all(UV <= 1.0.xx)))
+        return 1.0f;
+
+    const float CompareDepth = LightNDC.z - Shadow.Bias;
+    if (Shadow.ShadowPCFKernelSize == 0)
+        return CompareDepth <= LoadShadowTileDepth(Shadow, UV) ? 1.0f : 0.0f;
+
+    const float TexelSize = 1.0f / float(Shadow.Resolution);
+    return FilterShadowMap(Shadow, UV, CompareDepth, float2(TexelSize, TexelSize));
+}
+
+// 중심 1개와 4×4 검색을 함께 사용해 얇은 Caster의 Umbra가 검색 격자 사이로 빠지는 것을 막는다.
+// 원근은 (DepthScale, DepthOffset), 직교는 (깊이 범위, 0)을 전달해 저장 깊이를 선형화한다.
+void FindShadowBlockers(FShadowShaderParameters Shadow, float2 UV, float CompareDepth,
+    float2 SearchRadiusUV, float2 DepthTransform, bool bPerspective, out float AverageBlockerDepth, out int BlockerCount)
+{
+    float BlockerSum = 0.0f;
+    BlockerCount = 0;
+
+    [loop]
+    for (int SampleIndex = 0; SampleIndex < 17; ++SampleIndex)
+    {
+        float2 Offset = float2(0.0f, 0.0f);
+        if (SampleIndex > 0)
+        {
+            const int GridIndex = SampleIndex - 1;
+            Offset = (float2(GridIndex % 4, GridIndex / 4) - 1.5f) / 1.5f;
+        }
+
+        const float Depth = LoadShadowTileDepth(Shadow, UV + Offset * SearchRadiusUV);
+        if (Depth < CompareDepth)
+        {
+            const float LinearDepth = bPerspective ? DepthTransform.y / (Depth - DepthTransform.x) : Depth * DepthTransform.x;
+            BlockerSum += LinearDepth;
+            ++BlockerCount;
+        }
+    }
+    AverageBlockerDepth = BlockerSum / float(max(BlockerCount, 1));
+}
+
+// Point·Spot의 원근 깊이를 선형화하고 광원 크기와 Blocker 거리로 필터 반경을 계산한다.
+float SamplePointSpotShadowMap(FShadowShaderParameters Shadow, float3 LightNDC, FLightRenderParameters Light)
+{
+    if (Shadow.UsePCSS == 0 || Shadow.ShadowPCFKernelSize <= 1)
+        return SampleShadowMap(Shadow, LightNDC);
+
+    const float2 UV = LightNDC.xy * float2(0.5f, -0.5f) + 0.5f;
+    const float CompareDepth = LightNDC.z - Shadow.Bias;
+    const float NearClip = 0.1f; // Point·Spot의 실제 Shadow Projection과 같은 Near를 사용한다.
+    const float ReceiverDepth = Light.DepthOffset / (LightNDC.z - Light.DepthScale);
+    const float NearWidth = Light.Type == LIGHT_TYPE_SPOT
+        ? 2.0f * NearClip * tan(acos(clamp(Light.OuterConeCos, 0.0f, 1.0f)))
+        : 2.0f * NearClip;
+    const float LightRadiusUV = Light.SourceRadius / max(NearWidth, 0.000001f);
+    const float SearchRadiusUV = LightRadiusUV * max(ReceiverDepth - NearClip, 0.0f) / ReceiverDepth;
+    float AverageBlockerDepth;
+    int BlockerCount;
+    FindShadowBlockers(Shadow, UV, CompareDepth, float2(SearchRadiusUV, SearchRadiusUV),
+        float2(Light.DepthScale, Light.DepthOffset), true, AverageBlockerDepth, BlockerCount);
+    if (BlockerCount == 0)
+        return 1.0f;
+
+    const float PenumbraRatio = max(ReceiverDepth - AverageBlockerDepth, 0.0f) / max(AverageBlockerDepth, NearClip);
+    const float FilterRadiusUV = PenumbraRatio * LightRadiusUV * NearClip / ReceiverDepth;
+    const float HalfKernel = float(Shadow.ShadowPCFKernelSize - 1) * 0.5f;
+    return FilterShadowMap(Shadow, UV, CompareDepth, float2(FilterRadiusUV, FilterRadiusUV) / HalfKernel);
+}
+
+// Directional은 각 Cascade의 직교 범위와 광원 각반경으로 월드 Penumbra를 UV 반경으로 바꾼다.
+float SampleDirectionalShadowMap(FShadowShaderParameters Shadow, float3 LightNDC)
+{
+    if (Shadow.UsePCSS == 0 || Shadow.ShadowPCFKernelSize <= 1)
+        return SampleShadowMap(Shadow, LightNDC);
+
+    const float2 UV = LightNDC.xy * float2(0.5f, -0.5f) + 0.5f;
+    const float CompareDepth = LightNDC.z - Shadow.Bias;
+    const float ReceiverDepth = LightNDC.z * Shadow.ShadowViewSize.x;
+    const float AngularRadius = tan(Directional.SourceAngle);
+    const float2 SearchRadiusUV = AngularRadius * ReceiverDepth / Shadow.ShadowViewSize.yz;
+    float AverageBlockerDepth;
+    int BlockerCount;
+    FindShadowBlockers(Shadow, UV, CompareDepth, SearchRadiusUV,
+        float2(Shadow.ShadowViewSize.x, 0.0f), false, AverageBlockerDepth, BlockerCount);
+    if (BlockerCount == 0)
+        return 1.0f;
+
+    const float2 FilterRadiusUV = max(ReceiverDepth - AverageBlockerDepth, 0.0f) * AngularRadius / Shadow.ShadowViewSize.yz;
+    const float HalfKernel = float(Shadow.ShadowPCFKernelSize - 1) * 0.5f;
+    return FilterShadowMap(Shadow, UV, CompareDepth, FilterRadiusUV / HalfKernel);
 }
 
 // 양수 인덱스의 범위는 CPU가 보장하고, 실제 타깃 존재 여부만 확인한다.
@@ -330,7 +423,27 @@ float GetShadowVisibility(int ShadowIndex, float3 WorldPos, float3 N, float3 L)
     if (any(abs(LightNDC.xy) > 1.0f) || LightNDC.z < 0.0f || LightNDC.z > 1.0f)
         return 1.0f;
 
-    return SampleShadowMap(Shadow, LightNDC);
+    return SampleDirectionalShadowMap(Shadow, LightNDC);
+}
+
+// 지역광도 기존 Normal Bias를 적용한 좌표를 사용하고, 선택된 Point 면 또는 Spot 작업만 평가한다.
+float GetPointSpotShadowVisibility(int ShadowIndex, float3 WorldPos, float3 N, float3 L, FLightRenderParameters Light)
+{
+    if (!HasShadowMap(ShadowIndex))
+        return 1.0f;
+
+    const FShadowShaderParameters Shadow = ShadowParameters[ShadowIndex];
+    const float NormalBias = SHADOW_NORMAL_BIAS_SCALE * (1 - max(dot(N, L), 0));
+    const float3 BiasedPos = WorldPos + N * NormalBias;
+    const float4 LightClip = mul(float4(BiasedPos, 1.0f), Shadow.LightViewProjection);
+    if (LightClip.w <= 0.0f)
+        return 1.0f;
+
+    const float3 LightNDC = LightClip.xyz / LightClip.w;
+    if (any(abs(LightNDC.xy) > 1.0f) || LightNDC.z < 0.0f || LightNDC.z > 1.0f)
+        return 1.0f;
+
+    return SamplePointSpotShadowMap(Shadow, LightNDC, Light);
 }
 
 // 실제 그림자와 색상 표시가 동일한 선택 구간을 사용한다.
@@ -621,7 +734,7 @@ bool bUseLightGrid, bool bReceiveShadow)
             // 해당 라이트의 직접광만 가린다. Ambient와 다른 라이트는 유지한다.
             if (Light.Type == LIGHT_TYPE_SPOT)
             {
-                const float Visibility = GetShadowVisibility(Light.ShadowIndex, WorldPos, VertexN, L);
+                const float Visibility = GetPointSpotShadowVisibility(Light.ShadowIndex, WorldPos, VertexN, L, Light);
                 LightContribution.Diffuse *= Visibility;
                 LightContribution.Specular *= Visibility;
             }
@@ -664,7 +777,7 @@ bool bUseLightGrid, bool bReceiveShadow)
                 }
                 // 현재 World가 같은 Point의 6면을 순서대로 연속 등록한다.
                 // TODO(Shadow): 빈 면 생략·작업 정렬 도입 시 면별 GPU 인덱스 연결을 갱신한다.
-                const float Visibility = GetShadowVisibility(Light.ShadowIndex + FaceIndex, WorldPos, VertexN, L);
+                const float Visibility = GetPointSpotShadowVisibility(Light.ShadowIndex + FaceIndex, WorldPos, VertexN, L, Light);
                 LightContribution.Diffuse *= Visibility;
                 LightContribution.Specular *= Visibility;
             }

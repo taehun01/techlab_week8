@@ -58,6 +58,7 @@ void FProjectedShadowInfo::Reset()
     ViewId = 0;
     ShadowViewOrigin = FVector::ZeroVector;
     LightViewProjection = FMatrix::Identity;
+    ShadowViewSize = FVector::ZeroVector;
     CasterFrustum = {};
     CasterPlaneMask = FrustumAllPlanesMask;
     RenderingInfo = FRenderingInfo{};

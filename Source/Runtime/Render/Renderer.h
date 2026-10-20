@@ -84,8 +84,11 @@ struct alignas(16) FShadowShaderParameters
 	int32 ShadowPCFKernelSize = 0;
 	uint32 IsKnownEmpty = 0;
 	float pad[2]{};
+	// 기존 빈 작업 플래그를 유지한 채 PCSS에 필요한 별도 행을 추가한다.
+	FVector ShadowViewSize = FVector::ZeroVector;
+	uint32 UsePCSS = 0;
 };
-static_assert(sizeof(FShadowShaderParameters) == 96);
+static_assert(sizeof(FShadowShaderParameters) == 112);
 
 // 컬링 방식별 셀 크기. Tiled는 슬라이스 1개인 Clustered와 같다.
 constexpr uint32 TiledTileSize = 16;
@@ -107,7 +110,7 @@ struct FDirectionalLightInfo
 	FVector Direction;
 	float Intensity;
 	FVector Color;
-	uint32 Padding = 0;
+	float SourceAngle = 0.0f;
 };
 
 struct FPointLightInfo

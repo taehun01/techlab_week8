@@ -230,6 +230,9 @@ void FRenderer::PrepareShadowParameters()
 			PageIndex = static_cast<int32>(ShadowDepthBindings.Add(DepthTexture));
 		}
 		Parameter.AtlasPageIndex = PageIndex;
+		Parameter.ShadowViewSize = ShadowInfo.ShadowViewSize;
+		// 수신 필터 변경은 Depth 캐시와 독립적으로 매 프레임 전달한다.
+		Parameter.UsePCSS = ShadowInfo.LightProxy->GetLightComponent()->IsPCSSEnabled() ? 1u : 0u;
 	}
 
 	// 업로드 실패 시 이전 GPU 정보를 현재 작업에 사용하지 않는다.

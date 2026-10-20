@@ -3,8 +3,6 @@
 #include "Math/EngineMath.h"
 #include "Math/Color.h"
 
-//static_assert(sizeof(FLightRenderParameters) == 96, "UberLit / 컬링 CS의 구조체와 같아야 한다");
-
 struct FLightRenderParameters
 {
 	FVector Position;
@@ -24,6 +22,11 @@ struct FLightRenderParameters
 	float BarnDoorSin;
 	float BarnDoorLength;
 	int32 ShadowIndex = INDEX_NONE;
+	// PCSS의 원근 깊이 복원 계수와 광원 크기다.
+	float DepthScale = 0.0f;
+	float DepthOffset = 0.0f;
+	float SourceRadius = 0.0f;
+	float SourceAngle = 0.0f;
 };
 
-static_assert(sizeof(FLightRenderParameters) == 96,"sizeof(UberLit / TileBasedLightCulling) == sizeof(FLightRenderParameters)");
+static_assert(sizeof(FLightRenderParameters) == 112,"sizeof(UberLit / TileBasedLightCulling) == sizeof(FLightRenderParameters)");

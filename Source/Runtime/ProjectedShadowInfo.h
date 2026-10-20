@@ -50,6 +50,9 @@ public:
     // Shadow Caching 할 때 필요한 헤시값을 저장한다.
     void AddCasterKey(uint32 UUID, uint64 Version);
 
+    // 직교 깊이 복원과 PCSS 반경 변환에 사용할 광원 View의 실제 크기다.
+    void SetShadowViewSize(const FVector& Size) { ShadowViewSize = Size; }
+
 private:
     // Renderer는 준비된 상태를 읽고 Caster 큐를 소비한다.
     friend class FRenderer;
@@ -71,6 +74,8 @@ private:
 
     // Caster 렌더링과 Receiver의 깊이 비교에 동일한 VP를 사용한다.
     FMatrix LightViewProjection = FMatrix::Identity;
+
+    FVector ShadowViewSize = FVector::ZeroVector;
 
     // World가 라이트 기준으로 Caster를 수집할 때 사용한다
     FFrustumPlanes CasterFrustum{};
