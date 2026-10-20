@@ -301,6 +301,10 @@ public:
 	void SetLightDebugMode(uint32 Mode);
 	void SetLightCullingMode(ELightCullingMode Mode) { LightCullingMode = Mode; }
 	ELightCullingMode GetLightCullingMode() const { return LightCullingMode; }
+
+	void SetShadowMapResolution(int32 Resolution) { ShadowMapResolution = Resolution; }
+	int32 GetShadowMapResolution() { return ShadowMapResolution; }
+
 private:
 	void DrawPackets(uint32 Begin, uint32 End, const FMatrix& ViewProjection);
 	void DrawStaticGroups();
@@ -400,4 +404,7 @@ private:
 
 	// 타깃이 배정된 투영 작업 하나의 Depth 패스를 실행한다.
 	void RenderShadowDepth(FProjectedShadowInfo& ShadowInfo);
+
+	// ShadowMap 해상도 변수
+	int32 ShadowMapResolution = 1024;
 };

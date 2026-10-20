@@ -524,7 +524,9 @@ void FRenderer::PrepareShadowDepthTargets(TArray<FProjectedShadowInfo>& ShadowIn
 	{
 		const ULightComponent* Light = ShadowInfo.LightProxy->GetLightComponent();
 		const ELightType LightType = Light->GetLightType();
-		const uint32 Resolution = static_cast<uint32>(Light->GetShadowMapResolution());
+		const uint32 LocalResolution = static_cast<uint32>(Light->GetShadowMapResolution());
+		const uint32 GlobalResolution = static_cast<uint32>(ShadowMapResolution);
+		const uint32 Resolution = (LocalResolution >= GlobalResolution) ? GlobalResolution : LocalResolution;
 		const FShadowAllocationKey Key{
 			Light->GetUUID(), ShadowInfo.ProjectionIndex, ShadowInfo.ViewId
 		};
