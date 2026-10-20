@@ -1,6 +1,7 @@
 #include "EnginePCH.h"
 #include "Renderer.h"
 #include "FShadowViewRenderer.h"
+#include "ShadowSettings.h"
 #include "Shader.h"
 #include "Mesh.h"
 
@@ -342,6 +343,8 @@ void FRenderer::UpdateShadowStats()
 	}
 
 	uint64 DepthBytes = 0;
+	uint64 UsedTiles = 0;
+	uint64 TotalTiles = 0;
 	// 사용 타일 수가 아니라 모든 타입에서 확보한 페이지 메모리를 합산한다.
 	for (const auto& PoolEntry : ShadowViewRenderer->GetAtlasPools())
 	{
@@ -351,6 +354,11 @@ void FRenderer::UpdateShadowStats()
 			// 페이지 생성 시 검증을 마친 비압축·1 mip·1 slice·MSAA 1 자원이다.
 			DepthBytes += static_cast<uint64>(Target->GetWidth())
 				* Target->GetHeight() * FormatToBytes(Target->GetFormat());
+
+			// 캐시는 추가 메모리 없이 할당된 타일 내용을 재사용하므로 점유율만 따로 본다.
+			TotalTiles += FShadowViewRenderer::TilesPerAtlas;
+			for (uint32 Tile = 0; Tile < FShadowViewRenderer::TilesPerAtlas; ++Tile)
+				UsedTiles += Atlas.UsedTiles[Tile] ? 1 : 0;
 		}
 	}
 
@@ -380,6 +388,8 @@ void FRenderer::UpdateShadowStats()
 	// Local은 World 공유 작업이므로 Directional 그룹의 View 수만 기록한다.
 	FStatRegistry::SetCounter(ShadowStats::STAT_SingleViews, SingleViewIds.Num());
 	FStatRegistry::SetCounter(ShadowStats::STAT_CSMViews, CSMViewIds.Num());
+	FStatRegistry::SetCounter(ShadowStats::STAT_UsedTiles, UsedTiles);
+	FStatRegistry::SetCounter(ShadowStats::STAT_TotalTiles, TotalTiles);
 }
 
 // 카메라의 ViewProjection을 공통 렌더 경로로 전달한다.
@@ -532,6 +542,39 @@ void FRenderer::RenderDepth(const FMatrix& ViewProjection)
 	LastMaterial = nullptr;
 }
 
+namespace ShadowCachePrivate
+{
+	// operator== 한 번 대신 항목별로 비교해 미스 원인을 구분한다.
+	EShadowCacheResult ClassifyShadowCache(const FShadowData& Data, const FShadowCacheKey& Key)
+	{
+		if (!FShadowSettings::IsWholeSceneCacheEnabled())
+			return EShadowCacheResult::Disabled;
+		if (!Data.bIsValid)
+			return EShadowCacheResult::NewTile;
+		if (Data.CacheKey.CacheGeneration != Key.CacheGeneration)
+			return EShadowCacheResult::Generation;
+		if (std::memcmp(Data.CacheKey.LightViewProjection.M, Key.LightViewProjection.M,
+			sizeof(Key.LightViewProjection.M)) != 0)
+			return EShadowCacheResult::ViewProjection;
+		if (Data.CacheKey.CasterHash != Key.CasterHash)
+			return EShadowCacheResult::Casters;
+		return EShadowCacheResult::Hit;
+	}
+
+	void AddCacheMissStat(EShadowCacheResult Result)
+	{
+		switch (Result)
+		{
+		case EShadowCacheResult::Disabled:       FStatRegistry::AddCounter(ShadowStats::STAT_CacheMissDisabled); break;
+		case EShadowCacheResult::NewTile:        FStatRegistry::AddCounter(ShadowStats::STAT_CacheMissNewTile); break;
+		case EShadowCacheResult::Generation:     FStatRegistry::AddCounter(ShadowStats::STAT_CacheMissGeneration); break;
+		case EShadowCacheResult::ViewProjection: FStatRegistry::AddCounter(ShadowStats::STAT_CacheMissViewProjection); break;
+		case EShadowCacheResult::Casters:        FStatRegistry::AddCounter(ShadowStats::STAT_CacheMissCasters); break;
+		default: break;
+		}
+	}
+}
+
 // 유효한 프로젝션이 설정된 섀도우 맵 타깃을 준비한다.
 void FRenderer::PrepareShadowDepthTargets(TArray<FProjectedShadowInfo>& ShadowInfos)
 {
@@ -565,10 +608,10 @@ void FRenderer::PrepareShadowDepthTargets(TArray<FProjectedShadowInfo>& ShadowIn
 		const ULightComponent* Light = ShadowInfo.LightProxy->GetLightComponent();
 		const ELightType LightType = Light->GetLightType();
 		const uint32 Resolution = static_cast<uint32>(Light->GetShadowMapResolution());
-		const FShadowAllocationKey Key{
+		const FShadowAllocationKey AllocKey{
 			Light->GetUUID(), ShadowInfo.ProjectionIndex, ShadowInfo.ViewId
 		};
-		const FShadowData* Data = ShadowViewRenderer->AllocateShadowInfo(LightType, Key, Resolution);
+		const FShadowData* Data = ShadowViewRenderer->AllocateShadowInfo(LightType, AllocKey, Resolution);
 		if (!Data)
 			continue;
 
@@ -580,24 +623,32 @@ void FRenderer::PrepareShadowDepthTargets(TArray<FProjectedShadowInfo>& ShadowIn
 		RenderingInfo.ViewportSetting.Width = Resolution;
 		RenderingInfo.ViewportSetting.Height = Resolution;
 		RenderingInfo.DepthStencil.Texture = Pool.ShadowAtlasArray[Data->AtlasIndex].Texture.get();
-		// 배정 완료 후 페이지를 한 번 초기화하고, 각 타일 패스에서는 다른 영역의 깊이를 보존한다.
+		// 각 타일 패스에서 다른 영역의 깊이를 보존한다.
 		RenderingInfo.DepthStencil.LoadOp = ERenderTargetLoadOp::Load;
 		RenderingInfo.DepthStencil.StoreOp = ERenderTargetStoreOp::Store;
 		ShadowInfo.SetRenderingInfo(RenderingInfo);
-	}
-	// 사용하는 페이지만 한번씩 초기화 하는 구문
-	TSet<FTexture2D*> ClearedAtlases;
-	for (const FProjectedShadowInfo& ShadowInfo : ShadowInfos)
-	{
-		FTexture2D* AtlasTexture = ShadowInfo.RenderingInfo.DepthStencil.Texture;
-		if (AtlasTexture && ClearedAtlases.Add(AtlasTexture))
-			RenderCommand::ClearDepthStencil(AtlasTexture, 1.0f, 0);
+
+		// Shadow Cache Hit 확인
+		const FShadowCacheKey CacheKey{
+			ShadowInfo.LightViewProjection,
+			ShadowInfo.CasterHash,
+			FShadowSettings::GetCacheGeneration(),
+		};
+		const EShadowCacheResult CacheResult = ShadowCachePrivate::ClassifyShadowCache(*Data, CacheKey);
+		const bool bIsHit = CacheResult == EShadowCacheResult::Hit;
+
+		ShadowInfo.bShouldRenderShadow = !bIsHit;
+		ShadowInfo.CacheKey = CacheKey;
+		ShadowInfo.CacheResult = CacheResult;
+		// 미스는 이번 프레임에 그리므로 현재 프레임, 히트는 저장된 프레임
+		ShadowInfo.LastUpdatedFrame = bIsHit ? Data->LastUpdatedFrame : ShadowFrameIndex;
 	}
 }
 
 void FRenderer::RenderShadowMaps(TArray<FProjectedShadowInfo>&& InShadows, FShadowViewRenderer& InShadowViewRenderer)
 {
 	SCOPE_CYCLE_COUNTER(ShadowStats::STAT_RenderCPU);
+
 	// 이전 화면의 SRV를 자원 교체·Depth 기록 전에 해제한다.
 	RenderCommand::UnbindShaderResource(ShadowParameterSlot, EShaderBindFlagBits::Pixel);
 
@@ -611,6 +662,8 @@ void FRenderer::RenderShadowMaps(TArray<FProjectedShadowInfo>&& InShadows, FShad
 	ShadowDepthBindings.Reset();
 	NumShadowParameters = 0;
 	ShadowViewRenderer = &InShadowViewRenderer;
+	// PrepareShadowDepthTargets 전에 증가시켜 이번 프레임 번호로 판정·기록한다.
+	++ShadowFrameIndex;
 
 	ProjectedShadows = std::move(InShadows);
 	PrepareShadowDepthTargets(ProjectedShadows);
@@ -622,9 +675,31 @@ void FRenderer::RenderShadowMaps(TArray<FProjectedShadowInfo>&& InShadows, FShad
 			FStatRegistry::AddCounter(ShadowStats::STAT_EmptyCasterDepthSkips);
 			continue;
 		}
-		if (ShadowInfo.HasDepthTarget())
+		// 타일 할당에 실패한 작업은 그리지도, 집계하지도 않는다.
+		if (!ShadowInfo.HasDepthTarget())
+			continue;
+
+		const ULightComponent* Light = ShadowInfo.LightProxy->GetLightComponent();
+		const ELightType Type = Light->GetLightType();
+		const FShadowAllocationKey AllocKey{ Light->GetUUID(), ShadowInfo.ProjectionIndex, ShadowInfo.ViewId };
+
+		if (ShadowInfo.bShouldRenderShadow)
 		{
+			// 갱신 횟수는 실제 Depth 실행 함수에서 한 번만 집계한다.
 			RenderShadowDepth(ShadowInfo);
+			ShadowCachePrivate::AddCacheMissStat(ShadowInfo.CacheResult);
+
+			ShadowViewRenderer->UpdateShadowCache(Type, AllocKey, ShadowInfo.CacheKey, ShadowFrameIndex);
+		}
+		else
+		{
+			FStatRegistry::AddCounter(ShadowStats::STAT_CacheHits);
+			if (Type == ELightType::Directional)
+				FStatRegistry::AddCounter(ShadowStats::STAT_CacheHitsDirectional);
+			else if (Type == ELightType::Point)
+				FStatRegistry::AddCounter(ShadowStats::STAT_CacheHitsPoint);
+			else if (Type == ELightType::Spot)
+				FStatRegistry::AddCounter(ShadowStats::STAT_CacheHitsSpot);
 		}
 	}
 	PrepareShadowParameters();
@@ -673,6 +748,24 @@ const FTexture2D* FRenderer::GetShadowDepthTexture(
 	return nullptr;
 }
 
+bool FRenderer::GetShadowCacheDebugInfo(const FLightSceneProxy& LightProxy, FShadowCacheDebugInfo& OutInfo,
+	uint32 ProjectionIndex, uint32 ViewId) const
+{
+	for (const FProjectedShadowInfo& ShadowInfo : ProjectedShadows)
+	{
+		if (ShadowInfo.LightProxy == &LightProxy
+			&& ShadowInfo.ProjectionIndex == ProjectionIndex && ShadowInfo.ViewId == ViewId
+			&& ShadowInfo.HasDepthTarget())
+		{
+			OutInfo.Result = ShadowInfo.CacheResult;
+			OutInfo.FramesSinceUpdate = ShadowFrameIndex - ShadowInfo.LastUpdatedFrame;
+			OutInfo.CasterCount = ShadowInfo.CasterCount;
+			return true;
+		}
+	}
+	return false;
+}
+
 bool FRenderer::GetShadowDepthViewport(const FLightSceneProxy& LightProxy, FViewportSettings& OutViewport,
 	uint32 ProjectionIndex, uint32 ViewId) const
 {
@@ -713,13 +806,15 @@ void FRenderer::RenderShadowDepth(FProjectedShadowInfo& ShadowInfo)
 	const EViewMode SavedViewMode = CurrentViewMode;
 	SetViewMode(EViewMode::Unlit);
 
-	// Shadow DSV·Viewport를 연결하고 LoadOp에 따라 Depth를 초기화한다.
+	// Shadow DSV·Viewport를 연결한다.
 	RenderCommand::BeginRenderPass(ShadowInfo.RenderingInfo);
+	ShadowViewRenderer->ClearBoundTile();
 
 	// 이전 View의 Wireframe·오버레이 상태가 그림자에 영향을 주지 않게 한다.
 	RenderCommand::SetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 	// Slope Bias를 위한 전용 RasterizerState를 설정한다.
 	RenderCommand::SetRasterizerState(ERasterizerState::ShadowDepth);
+	RenderCommand::SetDepthStencilState(EDepthStencilState::Default);
 
 	// 실제 제출된 Draw 수를 전체 합계와 해당 그룹에 함께 기록한다.
 	const uint64 DrawStart = RenderCommand::GetDrawIndexedCount();

@@ -1011,6 +1011,23 @@ void FDetailsPanel::DrawShadowMapPreview(const ULightComponent& Light)
 
 	// 물리 Atlas 크기와 선택한 라이트의 실제 타일 해상도를 구분한다.
 	ImGui::Text("Rendered: %u x %u", ShadowViewport.Width, ShadowViewport.Height);
+
+	// 이번 프레임에 캐시를 재사용했는지, 다시 그렸다면 그 이유를 표시한다.
+	FRenderer::FShadowCacheDebugInfo CacheInfo;
+	if (Renderer->GetShadowCacheDebugInfo(*Light.SceneProxy, CacheInfo, ProjectionIndex, ViewId))
+	{
+		if (CacheInfo.Result == EShadowCacheResult::Hit)
+		{
+			ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.4f, 1.0f), "Cache: Hit (updated %llu frames ago)",
+				static_cast<unsigned long long>(CacheInfo.FramesSinceUpdate));
+		}
+		else
+		{
+			ImGui::TextColored(ImVec4(1.0f, 0.65f, 0.2f, 1.0f), "Cache: Updated (%s)",
+				GetShadowCacheResultName(CacheInfo.Result));
+		}
+		ImGui::TextDisabled("Casters: %u", CacheInfo.CasterCount);
+	}
 	ImGui::TextDisabled("Atlas: %u x %u", DepthTexture->GetWidth(), DepthTexture->GetHeight());
 	if (ShadowViewport.Width != static_cast<uint32>(Light.GetShadowMapResolution()))
 		ImGui::TextDisabled("Resolution applies next frame.");

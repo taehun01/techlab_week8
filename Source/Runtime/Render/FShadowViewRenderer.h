@@ -4,6 +4,7 @@
 #include "Containers/Map.h"
 #include "Containers/Set.h"
 #include "Texture2D.h"
+#include "PipelineState.h"
 
 enum class ELightType;
 
@@ -33,11 +34,57 @@ struct std::hash<FShadowAllocationKey>
 	}
 };
 
-// 투영 행렬은 작업 Info가 보관하며, 할당 결과에는 풀 내부 위치만 남긴다.
+// Shadow Caching 판정에 쓰이는 key. VP 행렬과 hash값, Generation으로 구분.
+struct FShadowCacheKey
+{
+	FMatrix LightViewProjection = FMatrix::Identity;
+	uint64 CasterHash = 0u;
+	uint64 CacheGeneration = 0u;
+
+	bool operator==(const FShadowCacheKey& Other) const
+	{
+		return memcmp(LightViewProjection.M, Other.LightViewProjection.M, sizeof(LightViewProjection.M)) == 0 &&
+			CasterHash == Other.CasterHash && CacheGeneration == Other.CacheGeneration;
+	}
+};
+
+// 캐시 판정 결과. Hit가 아니면 이번 프레임에 깊이를 다시 그린 이유다.
+enum class EShadowCacheResult : uint8
+{
+	Hit,
+	Disabled,        // r.shadow.CacheWholeSceneShadows 0
+	NewTile,         // 새 할당·재할당이라 내용이 없음
+	Generation,      // 전체 무효화(콘솔 토글 등)
+	ViewProjection,  // 라이트 이동·회전·Cone·Cascade 변화
+	Casters,         // Caster 집합 또는 ShadowVersion 변화
+	Count
+};
+
+inline const char* GetShadowCacheResultName(EShadowCacheResult Result)
+{
+	switch (Result)
+	{
+	case EShadowCacheResult::Hit:            return "Hit";
+	case EShadowCacheResult::Disabled:       return "Cache disabled";
+	case EShadowCacheResult::NewTile:        return "New tile";
+	case EShadowCacheResult::Generation:     return "Generation changed";
+	case EShadowCacheResult::ViewProjection: return "View projection changed";
+	case EShadowCacheResult::Casters:        return "Casters changed";
+	default:                                 return "Unknown";
+	}
+}
+
+// 투영 행렬은 작업 Info가 보관하며, 할당 결과에는 풀 내부 위치, 캐시 키를 남긴다.
 struct FShadowData
 {
 	uint32 AtlasIndex = 0;
 	uint32 TileIndex = 0;
+
+	// Shadow Caching
+	bool bIsValid = false;
+	FShadowCacheKey CacheKey = FShadowCacheKey{};
+	// 마지막으로 깊이를 그린 Shadow 프레임 번호 (디버그 표시용)
+	uint64 LastUpdatedFrame = 0;
 };
 
 // 한 페이지가 실제 Depth 자원과 네 타일의 점유 상태를 소유한다.
@@ -55,10 +102,12 @@ struct FShadowAtlasPool
 	TArray<FShadowAtlas> ShadowAtlasArray;
 };
 
-// Atlas 자원과 타일 배정만 관리하며, 실제 Depth 렌더링은 FRenderer가 수행한다.
+// Atlas 자원과 타일 배정, 캐시 상태, 타일 clear를 관리하며, 실제 Depth 렌더링은 FRenderer가 수행한다.
 class FShadowViewRenderer
 {
 public:
+	bool Init();
+
 	static constexpr uint32 TilesPerRow = 2;
 	static constexpr uint32 TilesPerAtlas = 4;
 
@@ -71,9 +120,20 @@ public:
 	const FShadowAtlasPool* FindPool(ELightType Type) const { return AtlasPools.Find(Type); }
 	const TMap<ELightType, FShadowAtlasPool>& GetAtlasPools() const { return AtlasPools; }
 
+	// 저장한 투영과 Caster 키로 캐시 유효성을 확인한다.
+	bool CheckShadowCache(ELightType InType, const FShadowAllocationKey& InAllocKey, const FShadowCacheKey& InCacheKey) const;
+	// shadow cache 갱신
+	void UpdateShadowCache(ELightType InType, const FShadowAllocationKey& InAllocKey, const FShadowCacheKey& InCacheKey, uint64 InFrame);
+
+	// BeginRenderPass로 타일 DSV와 뷰포트가 설정된 후 호출해야한다.
+	void ClearBoundTile();
+
 private:
 	bool AddNewAtlas(FShadowAtlasPool& Pool, uint32 TileResolution);
 	const FShadowData* AddShadowInfo(FShadowAtlasPool& Pool, const FShadowAllocationKey& Key, uint32 AtlasIndex, uint32 TileIndex);
 
 	TMap<ELightType, FShadowAtlasPool> AtlasPools;
+
+	// 각 뷰포트의 DSV를 Clear하기 위한 파이프라인. Shadow Cache가 Miss인 경우 해당 뷰포트만 clear한다.
+	FPipelineState ClearPipelineState{};
 };

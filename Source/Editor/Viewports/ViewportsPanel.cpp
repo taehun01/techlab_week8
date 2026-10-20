@@ -12,6 +12,7 @@
 
 #include "Core/Stats/EditorStats.h"
 #include "Core/Stats/ShadowStats.h"
+#include "Render/ShadowSettings.h"
 
 namespace
 {
@@ -475,6 +476,33 @@ void FViewportsPanel::DrawStatOverlay(ImDrawList* DrawList, const ImVec2& ViewMi
 				FStatRegistry::GetCounter(ShadowStats::UpdateStats[Group]),
 				TileMiB), ValueColor });
 		}
+
+		Lines.Add({ "Shadow / Cache", TitleColor });
+		Lines.Add({ std::format("  r.shadow.CacheWholeSceneShadows: {}  Generation: {}",
+			FShadowSettings::IsWholeSceneCacheEnabled() ? "ON" : "OFF",
+			FShadowSettings::GetCacheGeneration()), ValueColor });
+
+		const uint64 CacheHits = FStatRegistry::GetCounter(ShadowStats::STAT_CacheHits);
+		const uint64 MapUpdates = FStatRegistry::GetCounter(ShadowStats::STAT_MapUpdates);
+		const uint64 CacheTotal = CacheHits + MapUpdates;
+		const double HitRate = CacheTotal > 0 ? 100.0 * static_cast<double>(CacheHits) / static_cast<double>(CacheTotal) : 0.0;
+		Lines.Add({ std::format("  Cached: {}  Updated: {}  Hit rate: {:.1f}%",
+			CacheHits, MapUpdates, HitRate), ValueColor });
+		// Point는 라이트 수가 아니라 캐시를 재사용한 면 수로 집계한다.
+		Lines.Add({ std::format("  Cached D/P/S: {} / {} / {}",
+			FStatRegistry::GetCounter(ShadowStats::STAT_CacheHitsDirectional),
+			FStatRegistry::GetCounter(ShadowStats::STAT_CacheHitsPoint),
+			FStatRegistry::GetCounter(ShadowStats::STAT_CacheHitsSpot)), ValueColor });
+		Lines.Add({ std::format("  Miss Off / New / Gen / VP / Caster: {} / {} / {} / {} / {}",
+			FStatRegistry::GetCounter(ShadowStats::STAT_CacheMissDisabled),
+			FStatRegistry::GetCounter(ShadowStats::STAT_CacheMissNewTile),
+			FStatRegistry::GetCounter(ShadowStats::STAT_CacheMissGeneration),
+			FStatRegistry::GetCounter(ShadowStats::STAT_CacheMissViewProjection),
+			FStatRegistry::GetCounter(ShadowStats::STAT_CacheMissCasters)), ValueColor });
+		Lines.Add({ std::format("  Tile clears: {}  Atlas tiles used: {} / {}",
+			FStatRegistry::GetCounter(ShadowStats::STAT_TileClears),
+			FStatRegistry::GetCounter(ShadowStats::STAT_UsedTiles),
+			FStatRegistry::GetCounter(ShadowStats::STAT_TotalTiles)), ValueColor });
 
 		const uint64 DepthBytes = FStatRegistry::GetMemory(ShadowStats::STAT_DepthMemory);
 		const uint64 ParameterBytes = FStatRegistry::GetMemory(ShadowStats::STAT_ParameterMemory);

@@ -1,6 +1,18 @@
 #include "EnginePCH.h"
 #include "ProjectedShadowInfo.h"
 
+namespace ShadowCasterHashPrivate
+{
+    // Caster 식별자와 변경 버전을 순서에 무관하게 누적할 수 있도록 혼합한다.
+    uint64 MixHash64(uint64 X)
+    {
+        X += 0x9E3779B97F4A7C15ull;
+        X = (X ^ (X >> 30)) * 0xBF58476D1CE4E5B9ull;
+        X = (X ^ (X >> 27)) * 0x94D049BB133111EBull;
+        return X ^ (X >> 31);
+    }
+}
+
 
 // 새 투영을 설정하면 이전 Caster와 타깃 연결은 더 이상 사용하지 않는다.
 void FProjectedShadowInfo::SetupProjection(const FLightSceneProxy& InLightProxy, const FVector& InViewOrigin,
@@ -51,4 +63,18 @@ void FProjectedShadowInfo::Reset()
     RenderingInfo = FRenderingInfo{};
     CasterQueue.Reset();
     bHasCasters = false;
+    CasterHash = 0u;
+    CasterCount = 0u;
+    bShouldRenderShadow = true;
+    CacheKey = FShadowCacheKey{};
+    CacheResult = EShadowCacheResult::NewTile;
+    LastUpdatedFrame = 0;
+}
+
+// Shadow Caching 할 때 필요한 헤시값을 저장한다.
+void FProjectedShadowInfo::AddCasterKey(uint32 UUID, uint64 Version)
+{
+    uint64 HashKey = (Version << 32) + static_cast<uint64>(UUID);
+    CasterHash += ShadowCasterHashPrivate::MixHash64(HashKey);
+    CasterCount++;
 }

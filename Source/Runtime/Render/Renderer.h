@@ -288,6 +288,16 @@ public:
 
 	void GetShadowViewIds(const FLightSceneProxy& LightProxy, TArray<uint32>& OutViewIds) const;
 
+	// Details Preview에서 선택한 투영의 이번 프레임 캐시 상태를 확인한다.
+	struct FShadowCacheDebugInfo
+	{
+		EShadowCacheResult Result = EShadowCacheResult::NewTile;
+		uint64 FramesSinceUpdate = 0;
+		uint32 CasterCount = 0;
+	};
+	bool GetShadowCacheDebugInfo(const FLightSceneProxy& LightProxy, FShadowCacheDebugInfo& OutInfo,
+		uint32 ProjectionIndex = 0, uint32 ViewId = 0) const;
+
 	uint8* BeginObjectConstants(uint32 MaxSlots);
 	void EndObjectConstants();
 
@@ -337,6 +347,9 @@ private:
 	// Engine이 소유한 타입별 Atlas 관리자를 빌려 타깃과 GPU 정보를 연결한다.
 	FShadowViewRenderer* ShadowViewRenderer = nullptr;
 	TArray<FProjectedShadowInfo> ProjectedShadows;
+
+	// RenderShadowMaps 호출마다 1씩 증가하는 Shadow 프레임 번호
+	uint64 ShadowFrameIndex = 0;
 
 	// 그림자 작업 수에 맞춰 용량을 늘리는 GPU 정보 버퍼다.
 	TUniquePtr<FStructuredBuffer> ShadowParameterBuffer;

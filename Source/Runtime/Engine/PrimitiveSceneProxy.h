@@ -13,6 +13,8 @@ class UMaterial;
 // View의 카메라 형식을 알지 않고 위치와 크기로 Billboard 행렬을 받는다.
 using FBillboardMatrixBuilder = FMatrix(*)(const FVector&, float, float, const void*);
 
+inline static uint64 GlobalShadowVersion = 0u;
+
 class FPrimitiveSceneProxy
 {
 public:
@@ -47,6 +49,7 @@ public:
     const FCachedMeshLOD& GetLOD(uint32 Index) const { return RenderState->LODs[Index]; }
     const FCachedMeshSection& GetSection(uint32 Index) const { return RenderState->Sections[Index]; }
     FScene* GetScene() const { return Scene; }
+    uint64 GetShadowVersion() const { return ShadowVersion; }
 
 protected:
     // 파생 Proxy만 자신의 렌더 스냅샷을 갱신한다.
@@ -69,4 +72,5 @@ private:
     bool bCastShadow = true;
     bool bReceiveShadow = true;
     bool bDynamicDataPrepared = false;
+    uint64 ShadowVersion = 0u;
 };

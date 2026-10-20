@@ -353,6 +353,13 @@ void FRenderDevice::CreateStates()
 		Desc.FrontFace.StencilFunc = D3D11_COMPARISON_EQUAL;
 		Desc.BackFace = Desc.FrontFace;
 		Device->CreateDepthStencilState(&Desc, DepthStencilStates[(uint8)EDepthStencilState::StencilOutline].GetAddressOf());
+
+		// 타일 영역을 항상 깊이 1로 덮어쓸 때 사용한다.
+		Desc.DepthEnable = TRUE;
+		Desc.DepthFunc = D3D11_COMPARISON_ALWAYS;
+		Desc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL;
+		Desc.StencilEnable = FALSE;
+		Device->CreateDepthStencilState(&Desc, DepthStencilStates[(uint8)EDepthStencilState::AlwaysWrite].GetAddressOf());
 	}
 
 	// ---------- Blend ----------

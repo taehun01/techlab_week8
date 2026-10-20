@@ -2,6 +2,7 @@
 
 #include "Render/RenderPacket.h"
 #include "Render/RenderingInfo.h"
+#include "Render/FShadowViewRenderer.h"
 #include "Math/Frustum.h"
 
 class FLightSceneProxy;
@@ -46,6 +47,9 @@ public:
     // CPU 작업과 타깃 참조를 초기화한다. GPU 텍스처는 해제하지 않는다.
     void Reset();
 
+    // Shadow Caching 할 때 필요한 헤시값을 저장한다.
+    void AddCasterKey(uint32 UUID, uint64 Version);
+
 private:
     // Renderer는 준비된 상태를 읽고 Caster 큐를 소비한다.
     friend class FRenderer;
@@ -82,4 +86,20 @@ private:
 
     // 패킷 등록 여부이며, Depth 실행 후 큐가 비어도 변경하지 않는다.
     bool bHasCasters = false;
+
+    // UUID + ShadowVersion으로 만든 헤시값
+    uint64 CasterHash = 0u;
+
+    // 이번 투영에 실제로 제출한 Caster 수다.
+    uint32 CasterCount = 0u;
+
+    // 캐시 Miss인 작업만 Depth를 다시 생성한다.
+    bool bShouldRenderShadow = true;
+
+    // 판정 결과(Stat·Preview용)와 마지막 깊이 갱신 프레임
+    EShadowCacheResult CacheResult = EShadowCacheResult::NewTile;
+    uint64 LastUpdatedFrame = 0;
+
+    // Shadow Cache Key
+    FShadowCacheKey CacheKey{};
 };
