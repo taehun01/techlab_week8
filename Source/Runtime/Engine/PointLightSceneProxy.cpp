@@ -23,7 +23,7 @@ void FPointLightSceneProxy::GetLightShaderParameters(FLightRenderParameters& Out
         Out.DepthScale = FarClip / (FarClip - NearClip);
         Out.DepthOffset = -NearClip * FarClip / (FarClip - NearClip);
     }
-    Out.SourceRadius = 0.03f;
+    Out.SourceRadius = PointLightComponent->GetSourceRadius();
 }
 
 bool FPointLightSceneProxy::GetShadowProjection(FShadowProjection& OutShadowProjection) const
