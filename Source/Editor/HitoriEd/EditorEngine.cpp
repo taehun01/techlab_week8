@@ -121,7 +121,9 @@ bool UEditorEngine::Init()
 
 	DepthViewRenderer = MakeUnique<FDepthViewRenderer>();
 	DepthViewRenderer->Init();
+
 	ShadowViewRenderer = MakeUnique<FShadowViewRenderer>();
+	ShadowViewRenderer->Init();
 
 	ToneMapRenderer = MakeUnique<FToneMapRenderer>();
 	ToneMapRenderer->Init();

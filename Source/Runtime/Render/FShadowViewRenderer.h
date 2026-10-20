@@ -4,6 +4,7 @@
 #include "Containers/Map.h"
 #include "Containers/Set.h"
 #include "Texture2D.h"
+#include "PipelineState.h"
 
 enum class ELightType;
 
@@ -33,7 +34,7 @@ struct std::hash<FShadowAllocationKey>
 	}
 };
 
-// Shadow Caching 판정에 쓰이는 key
+// Shadow Caching 판정에 쓰이는 key. VP 행렬과 hash값, Generation으로 구분.
 struct FShadowCacheKey
 {
 	FMatrix LightViewProjection = FMatrix::Identity;
@@ -47,7 +48,7 @@ struct FShadowCacheKey
 	}
 };
 
-// 투영 행렬은 작업 Info가 보관하며, 할당 결과에는 풀 내부 위치만 남긴다.
+// 투영 행렬은 작업 Info가 보관하며, 할당 결과에는 풀 내부 위치, 캐시 키를 남긴다.
 struct FShadowData
 {
 	uint32 AtlasIndex = 0;
@@ -73,10 +74,12 @@ struct FShadowAtlasPool
 	TArray<FShadowAtlas> ShadowAtlasArray;
 };
 
-// Atlas 자원과 타일 배정만 관리하며, 실제 Depth 렌더링은 FRenderer가 수행한다.
+// Atlas 자원과 타일 배정, 캐시 상태, 타일 clear를 관리하며, 실제 Depth 렌더링은 FRenderer가 수행한다.
 class FShadowViewRenderer
 {
 public:
+	bool Init();
+
 	static constexpr uint32 TilesPerRow = 2;
 	static constexpr uint32 TilesPerAtlas = 4;
 
@@ -94,9 +97,15 @@ public:
 	// shadow cache 갱신
 	void UpdateShadowCache(ELightType InType, const FShadowAllocationKey& InAllocKey, const FShadowCacheKey& InCacheKey);
 
+	// BeginRenderPass로 타일 DSV와 뷰포트가 설정된 후 호출해야한다.
+	void ClearBoundTile();
+
 private:
 	bool AddNewAtlas(FShadowAtlasPool& Pool, uint32 TileResolution);
 	const FShadowData* AddShadowInfo(FShadowAtlasPool& Pool, const FShadowAllocationKey& Key, uint32 AtlasIndex, uint32 TileIndex);
 
 	TMap<ELightType, FShadowAtlasPool> AtlasPools;
+
+	// 각 뷰포트의 DSV를 Clear하기 위한 파이프라인. Shadow Cache가 Miss인 경우 해당 뷰포트만 clear한다.
+	FPipelineState ClearPipelineState{};
 };

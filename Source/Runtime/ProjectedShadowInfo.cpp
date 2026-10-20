@@ -1,6 +1,17 @@
 #include "EnginePCH.h"
 #include "ProjectedShadowInfo.h"
 
+namespace
+{
+    uint64 MixHash64(uint64 X)
+    {
+        X += 0x9E3779B97F4A7C15ull;
+        X = (X ^ (X >> 30)) * 0xBF58476D1CE4E5B9ull;
+        X = (X ^ (X >> 27)) * 0x94D049BB133111EBull;
+        return X ^ (X >> 31);
+    }
+}
+
 
 // 새 투영을 설정하면 이전 Caster와 타깃 연결은 더 이상 사용하지 않는다.
 void FProjectedShadowInfo::SetupProjection(const FLightSceneProxy& InLightProxy, const FVector& InViewOrigin,
@@ -49,6 +60,8 @@ void FProjectedShadowInfo::Reset()
     CasterQueue.Reset();
     CasterHash = 0u;
     CasterCount = 0u;
+    bShouldRenderShadow = true;
+    CacheKey = FShadowCacheKey{};
 }
 
 // Shadow Caching 할 때 필요한 헤시값을 저장한다.

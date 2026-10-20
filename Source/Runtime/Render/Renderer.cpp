@@ -526,10 +526,10 @@ void FRenderer::PrepareShadowDepthTargets(TArray<FProjectedShadowInfo>& ShadowIn
 		const ULightComponent* Light = ShadowInfo.LightProxy->GetLightComponent();
 		const ELightType LightType = Light->GetLightType();
 		const uint32 Resolution = static_cast<uint32>(Light->GetShadowMapResolution());
-		const FShadowAllocationKey Key{
+		const FShadowAllocationKey AllocKey{
 			Light->GetUUID(), ShadowInfo.ProjectionIndex, ShadowInfo.ViewId
 		};
-		const FShadowData* Data = ShadowViewRenderer->AllocateShadowInfo(LightType, Key, Resolution);
+		const FShadowData* Data = ShadowViewRenderer->AllocateShadowInfo(LightType, AllocKey, Resolution);
 		if (!Data)
 			continue;
 
@@ -541,26 +541,31 @@ void FRenderer::PrepareShadowDepthTargets(TArray<FProjectedShadowInfo>& ShadowIn
 		RenderingInfo.ViewportSetting.Width = Resolution;
 		RenderingInfo.ViewportSetting.Height = Resolution;
 		RenderingInfo.DepthStencil.Texture = Pool.ShadowAtlasArray[Data->AtlasIndex].Texture.get();
-		// 배정 완료 후 페이지를 한 번 초기화하고, 각 타일 패스에서는 다른 영역의 깊이를 보존한다.
+		// 각 타일 패스에서 다른 영역의 깊이를 보존한다.
 		RenderingInfo.DepthStencil.LoadOp = ERenderTargetLoadOp::Load;
 		RenderingInfo.DepthStencil.StoreOp = ERenderTargetStoreOp::Store;
 		ShadowInfo.SetRenderingInfo(RenderingInfo);
-	}
-	// 사용하는 페이지만 한번씩 초기화 하는 구문
-	TSet<FTexture2D*> ClearedAtlases;
-	for (const FProjectedShadowInfo& ShadowInfo : ShadowInfos)
-	{
-		FTexture2D* AtlasTexture = ShadowInfo.RenderingInfo.DepthStencil.Texture;
-		if (AtlasTexture && ClearedAtlases.Add(AtlasTexture))
-			RenderCommand::ClearDepthStencil(AtlasTexture, 1.0f, 0);
+
+		// Shadow Cache Hit 확인
+		FShadowCacheKey CacheKey{
+			ShadowInfo.LightViewProjection,
+			ShadowInfo.CasterHash,
+			FShadowSettings::GetCacheGeneration(),
+		};
+		bool bUseCache = FShadowSettings::IsWholeSceneCacheEnabled();
+		bool bIsHit = false;
+		if (bUseCache)
+		{
+			bIsHit = Data->bIsValid && Data->CacheKey == CacheKey;
+		}
+		ShadowInfo.bShouldRenderShadow = !bIsHit;
+		ShadowInfo.CacheKey = CacheKey;
 	}
 }
 
 void FRenderer::RenderShadowMaps(TArray<FProjectedShadowInfo>&& InShadows, FShadowViewRenderer& InShadowViewRenderer)
 {
 	SCOPE_CYCLE_COUNTER(ShadowStats::STAT_RenderCPU);
-
-	const bool bUseCache = FShadowSettings::IsWholeSceneCacheEnabled();
 
 	// 이전 화면의 SRV를 자원 교체·Depth 기록 전에 해제한다.
 	RenderCommand::UnbindShaderResource(ShadowParameterSlot, EShaderBindFlagBits::Pixel);
@@ -581,21 +586,17 @@ void FRenderer::RenderShadowMaps(TArray<FProjectedShadowInfo>&& InShadows, FShad
 
 	for (FProjectedShadowInfo& ShadowInfo : ProjectedShadows)
 	{
+		ELightType Type = ShadowInfo.LightProxy->GetLightComponent()->GetLightType();
+		const FShadowAllocationKey AllocKey{ ShadowInfo.LightProxy->GetLightComponent()->GetUUID(), ShadowInfo.ProjectionIndex, ShadowInfo.ViewId
+		};
+
 		// 기존 Depth 실행 경로를 유지한다.
-		if (ShadowInfo.HasDepthTarget())
+		if (ShadowInfo.HasDepthTarget() && ShadowInfo.bShouldRenderShadow)
 		{
 			RenderShadowDepth(ShadowInfo);
 			FStatRegistry::AddCounter(ShadowStats::STAT_MapUpdates);
 
-			ELightType Type = ShadowInfo.LightProxy->GetLightComponent()->GetLightType();
-			const FShadowAllocationKey AllocKey{
-				ShadowInfo.LightProxy->GetLightComponent()->GetUUID(), ShadowInfo.ProjectionIndex, ShadowInfo.ViewId
-			};
-			const FShadowCacheKey CacheKey{
-				ShadowInfo.LightViewProjection, ShadowInfo.CasterHash, FShadowSettings::GetCacheGeneration()
-			};
-
-			ShadowViewRenderer->UpdateShadowCache(Type, AllocKey, CacheKey);
+			ShadowViewRenderer->UpdateShadowCache(Type, AllocKey, ShadowInfo.CacheKey);
 		}
 	}
 	PrepareShadowParameters();
@@ -671,12 +672,14 @@ void FRenderer::RenderShadowDepth(FProjectedShadowInfo& ShadowInfo)
 	const EViewMode SavedViewMode = CurrentViewMode;
 	SetViewMode(EViewMode::Unlit);
 
-	// Shadow DSV·Viewport를 연결하고 LoadOp에 따라 Depth를 초기화한다.
+	// Shadow DSV·Viewport를 연결한다.
 	RenderCommand::BeginRenderPass(ShadowInfo.RenderingInfo);
+	ShadowViewRenderer->ClearBoundTile();
 
 	// 이전 View의 Wireframe·오버레이 상태가 그림자에 영향을 주지 않게 한다.
 	RenderCommand::SetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 	RenderCommand::SetRasterizerState(ERasterizerState::SolidBack);
+	RenderCommand::SetDepthStencilState(EDepthStencilState::Default);
 
 	// 뎁스를 그린다
 	const uint64 DrawStart = RenderCommand::GetDrawIndexedCount();

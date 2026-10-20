@@ -2,18 +2,8 @@
 
 #include "Render/RenderPacket.h"
 #include "Render/RenderingInfo.h"
+#include "Render/FShadowViewRenderer.h"
 #include "Math/Frustum.h"
-
-namespace
-{
-    static uint64 MixHash64(uint64 X)
-    {
-        X += 0x9E3779B97F4A7C15ull;
-        X = (X ^ (X >> 30)) * 0xBF58476D1CE4E5B9ull;
-        X = (X ^ (X >> 27)) * 0x94D049BB133111EBull;
-        return X ^ (X >> 31);
-    }
-}
 
 class FLightSceneProxy;
 
@@ -89,4 +79,10 @@ private:
 
     // Caster가 총 몇개인지. 
     uint32 CasterCount = 0u;
+
+    // Shadow Cache Miss 결과 
+    bool bShouldRenderShadow = true;
+
+    // Shadow Cache Key
+    FShadowCacheKey CacheKey{};
 };
