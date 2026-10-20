@@ -237,75 +237,6 @@ float LoadShadowDepth(int AtlasPageIndex, int2 Texel)
 #undef SHADOW_DEPTH_LOAD_CASE
 }
 
-float SampleDirectionalShadowMap(FShadowShaderParameters Shadow, float3 LightNDC)
-{
-// D3D 텍스처의 좌상단 원점에 맞춰 Y를 뒤집는다.
-    const float2 UV = LightNDC.xy * float2(0.5f, -0.5f) + 0.5f;
-    if (!(all(UV >= 0.0.xx) && all(UV <= 1.0.xx)))
-        return 1.0f;
-     
-    const uint2 Tile = uint2(
-        Shadow.TileIndex % SHADOW_ATLAS_TILES_PER_ROW,
-        Shadow.TileIndex / SHADOW_ATLAS_TILES_PER_ROW
-    );
-    const float CompareDepth = LightNDC.z - Shadow.Bias;
-    const int KernelSize = Shadow.ShadowPCFKernelSize;
-
-// Receiver의 광원 기준 선형 깊이(View 행렬까지 적용된 깊이) 준비 
-    float ReceiverDepth = LightNDC.z * Shadow.ShadowViewSize.z;
-    float OuterHalfAngle = acos(clamp( 0.0f, 1.0f));
-    float NearWidth = 
-    float LightRadiusUV = / NearWidth; // To Do = Light.Position -> SourceRadius로 교체 및 SpotLightProxy에 추가
-    float AverageBlockerDepth;
-// 광원 크기와 Receiver 거리로 Blocker 탐색 반경 계산
-    float avgBlockerDepthView = 0;
-    int numBlockers = 0;
-    
-    if (KernelSize == 0)
-    {
-        // UV 1에서도 현재 타일의 마지막 텍셀만 읽도록 제한한다.
-        const uint2 LocalTexel = min(uint2(UV * Shadow.Resolution), uint2(Shadow.Resolution - 1, Shadow.Resolution - 1));
-        const int2 AtlasTexel = int2(Tile * Shadow.Resolution + LocalTexel);
-        const float Depth = LoadShadowDepth(Shadow.AtlasPageIndex, AtlasTexel);
-
-        // 기존 LESS_EQUAL 비교 Sampler와 같은 비교식을 사용한다.
-        return CompareDepth <= Depth ? 1.0f : 0.0f;
-    }
-    
-    FindBlocker(Shadow, Light, UV, LightNDC.z, ReceiverDepth, LightRadiusUV, AverageBlockerDepth, numBlockers); // 빛을 가리는 물체 Blocker를 판단하고, 그 Blocker들의 Depth 평균을 구함
-
-// Blocker가 없으면 가시성 1 반환
-    if (numBlockers < 1)
-        return 1.0f;
-    
-// Receiver와 평균 Blocker Depth, 광원 Radius UV로 Penumbra 영역의 Ratio 계산 후 UV 기준 PCFRadius 추출
-    float PenumbraRatio = (ReceiverDepth - AverageBlockerDepth) / AverageBlockerDepth;
-    float PCFradiusUV = PenumbraRatio * LightRadiusUV * 0.1f / ReceiverDepth;
-    
-    const float TexelSize = 1.0f / float(Shadow.Resolution);
-    const float HalfTexel = 0.5f * TexelSize;
-    const float HalfKernel = float(KernelSize - 1) * 0.5f;
-    float VisibilitySum = 0.0f;
-
-    [loop]
-    for (int Y = 0; Y < KernelSize; ++Y)
-    {
-        [loop]
-        for (int X = 0; X < KernelSize; ++X)
-        {
-            // 홀수는 정수 오프셋, 짝수는 Half Texel Offset
-            const float2 Offset = float2(X, Y) - HalfKernel;
-            float2 normalizedOffset = float2(0.0f, 0.0f);
-            if (HalfKernel > 0.0f)
-                normalizedOffset = Offset / HalfKernel;
-            const float2 LocalUV = clamp(UV + normalizedOffset * PCFradiusUV, float2(HalfTexel, HalfTexel), float2(1.0f - HalfTexel, 1.0f - HalfTexel));
-            const float2 AtlasUV = (float2(Tile) + LocalUV) / float(SHADOW_ATLAS_TILES_PER_ROW);
-            VisibilitySum += SampleShadowAtlas(Shadow.AtlasPageIndex, PCFSampler, AtlasUV, CompareDepth);
-        }
-    }
-    return VisibilitySum / float(KernelSize * KernelSize);
-}
-
 void FindBlocker(FShadowShaderParameters Shadow, FLightRenderParameters Light, float2 UV, float ReceiverDepthNDC, float ReceiverDepthView, float LightRadiusUV, out float AverageBlockerDepth, out int numBlockers)
 {
     float searchRadiusUV; // 삼각형 비율로 LightRadius / ReceiverDepth = SearchRadius / ReceiverDepth - Znear(Near_Plane), Near_Plane=0.1f
@@ -336,6 +267,38 @@ void FindBlocker(FShadowShaderParameters Shadow, FLightRenderParameters Light, f
         }
     }
     AverageBlockerDepth = blockerSum / max(numBlockers, 1.0f);  // 모든 Blocker 후보들 평균
+}
+
+void FindDirectionalBlocker(FShadowShaderParameters Shadow, float2 UV, float ReceiverDepthNDC, float ReceiverDepthView, float LightRadiusUV, out float AverageBlockerDepth, out int numBlockers)
+{
+    float searchRadiusUV; 
+    searchRadiusUV = LightRadiusUV * ReceiverDepthView;
+  
+    float blockerSum = 0;
+    numBlockers = 0;
+
+    [loop]
+    for (int Y = 0; Y < BLOCKER_SEARCH_KERNEL_SIZE; ++Y)
+    {
+        [loop]
+        for (int X = 0; X < BLOCKER_SEARCH_KERNEL_SIZE; ++X)
+        {
+            float halfSpan = (BLOCKER_SEARCH_KERNEL_SIZE - 1) * 0.5f;
+            float2 offset = float2(X, Y) - halfSpan;
+            float2 uvOff = UV + (offset / halfSpan) * searchRadiusUV; // 기본 UV값 + SearchRadius UV 반경 안의 값 
+            const int2 LocalTexel = clamp(int2(uvOff * Shadow.Resolution), int2(0, 0), int2(Shadow.Resolution - 1, Shadow.Resolution - 1));
+            int2 Tile = int2(Shadow.TileIndex % SHADOW_ATLAS_TILES_PER_ROW, Shadow.TileIndex / SHADOW_ATLAS_TILES_PER_ROW);
+            const int2 AtlasTexel = int2(Tile * Shadow.Resolution + LocalTexel); // Tile 기반 Atlas 전체에서의 Texel 좌표 구함
+            float ShadowMapDepth = LoadShadowDepth(Shadow.AtlasPageIndex, AtlasTexel); // 해당 좌표에서 Atlas 읽기
+            if (ShadowMapDepth < ReceiverDepthNDC - Shadow.Bias) // Receiver의 NDC.z가 더 크다면 광원에서 가장 가까운 표면이 Receiver보다 앞에 있다 => Blocker 후보로 결정 가능
+            {
+                float blockerDepthView = ShadowMapDepth * Shadow.ShadowViewSize.x; // View 공간으로 Depth 이동
+                blockerSum += blockerDepthView;
+                numBlockers++;
+            }
+        }
+    }
+    AverageBlockerDepth = blockerSum / max(numBlockers, 1.0f); // 모든 Blocker 후보들 평균
 }
 
 
@@ -403,6 +366,74 @@ float SamplePointSpotShadowMap(FShadowShaderParameters Shadow, float3 LightNDC, 
             if (HalfKernel > 0.0f) normalizedOffset = Offset / HalfKernel;
             const float2 LocalUV = clamp(UV + normalizedOffset * PCFradiusUV, float2(HalfTexel, HalfTexel), float2(1.0f - HalfTexel, 1.0f - HalfTexel));
             const float2 AtlasUV =(float2(Tile) + LocalUV) / float(SHADOW_ATLAS_TILES_PER_ROW);
+            VisibilitySum += SampleShadowAtlas(Shadow.AtlasPageIndex, PCFSampler, AtlasUV, CompareDepth);
+        }
+    }
+    return VisibilitySum / float(KernelSize * KernelSize);
+}
+
+float SampleDirectionalShadowMap(FShadowShaderParameters Shadow, float3 LightNDC)
+{
+// D3D 텍스처의 좌상단 원점에 맞춰 Y를 뒤집는다.
+    const float2 UV = LightNDC.xy * float2(0.5f, -0.5f) + 0.5f;
+    if (!(all(UV >= 0.0.xx) && all(UV <= 1.0.xx)))
+        return 1.0f;
+     
+    const uint2 Tile = uint2(
+        Shadow.TileIndex % SHADOW_ATLAS_TILES_PER_ROW,
+        Shadow.TileIndex / SHADOW_ATLAS_TILES_PER_ROW
+    );
+    const float CompareDepth = LightNDC.z - Shadow.Bias;
+    const int KernelSize = Shadow.ShadowPCFKernelSize;
+
+// Receiver의 광원 기준 선형 깊이(View 행렬까지 적용된 깊이) 준비 
+    float ReceiverDepth = LightNDC.z * Shadow.ShadowViewSize.x;
+    float Width = Shadow.ShadowViewSize.y;
+    float LightRadiusUV = tan(SourceAngle) / Width;
+    float AverageBlockerDepth;
+// 광원 크기와 Receiver 거리로 Blocker 탐색 반경 계산
+    float avgBlockerDepthView = 0;
+    int numBlockers = 0;
+    
+    if (KernelSize == 0)
+    {
+        // UV 1에서도 현재 타일의 마지막 텍셀만 읽도록 제한한다.
+        const uint2 LocalTexel = min(uint2(UV * Shadow.Resolution), uint2(Shadow.Resolution - 1, Shadow.Resolution - 1));
+        const int2 AtlasTexel = int2(Tile * Shadow.Resolution + LocalTexel);
+        const float Depth = LoadShadowDepth(Shadow.AtlasPageIndex, AtlasTexel);
+
+        // 기존 LESS_EQUAL 비교 Sampler와 같은 비교식을 사용한다.
+        return CompareDepth <= Depth ? 1.0f : 0.0f;
+    }
+    
+    FindDirectionalBlocker(Shadow, UV, LightNDC.z, ReceiverDepth, LightRadiusUV, AverageBlockerDepth, numBlockers); // 빛을 가리는 물체 Blocker를 판단하고, 그 Blocker들의 Depth 평균을 구함
+
+// Blocker가 없으면 가시성 1 반환
+    if (numBlockers < 1)
+        return 1.0f;
+    
+// Receiver와 평균 Blocker Depth, 광원 Radius UV로 Penumbra 영역의 Ratio 계산 후 UV 기준 PCFRadius 추출
+    float PenumbraRadius = (ReceiverDepth - AverageBlockerDepth) * tan(SourceAngle);   // Penumbra의 Radius 값을 계산
+    float2 PCFradiusUV = PenumbraRadius / Shadow.ShadowViewSize.yz;  // ShadowMap U,V 크기로 나눠 UV Radius로 변환
+    
+    const float TexelSize = 1.0f / float(Shadow.Resolution);
+    const float HalfTexel = 0.5f * TexelSize;
+    const float HalfKernel = float(KernelSize - 1) * 0.5f;
+    float VisibilitySum = 0.0f;
+
+    [loop]
+    for (int Y = 0; Y < KernelSize; ++Y)
+    {
+        [loop]
+        for (int X = 0; X < KernelSize; ++X)
+        {
+            // 홀수는 정수 오프셋, 짝수는 Half Texel Offset
+            const float2 Offset = float2(X, Y) - HalfKernel;
+            float2 normalizedOffset = float2(0.0f, 0.0f);
+            if (HalfKernel > 0.0f)
+                normalizedOffset = Offset / HalfKernel;
+            const float2 LocalUV = clamp(UV + normalizedOffset * PCFradiusUV, float2(HalfTexel, HalfTexel), float2(1.0f - HalfTexel, 1.0f - HalfTexel));
+            const float2 AtlasUV = (float2(Tile) + LocalUV) / float(SHADOW_ATLAS_TILES_PER_ROW);
             VisibilitySum += SampleShadowAtlas(Shadow.AtlasPageIndex, PCFSampler, AtlasUV, CompareDepth);
         }
     }
