@@ -79,7 +79,7 @@ struct alignas(16) FShadowShaderParameters
 	int32 AtlasPageIndex = -1;
 	uint32 TileIndex = 0;
 	int32 ShadowPCFKernelSize = 0;
-	float pad[3];
+	FVector ShadowViewSize;
 };
 static_assert(sizeof(FShadowShaderParameters) == 96);
 

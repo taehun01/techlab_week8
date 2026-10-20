@@ -99,6 +99,7 @@ bool FDirectionalLightSceneProxy::SetupShadowProjection(
 	const uint32 CasterPlaneMask = FrustumAllPlanesMask & ~(1u << 4);
 
 	OutInfo.SetupProjection(*this, ViewOrigin, View * Projection, CasterFrustum, CasterPlaneMask, ProjectionIndex, ViewId);
+	OutInfo.SetShadowViewSize(FVector(Size.X, Size.Y, Size.Z));
 	return true;
 }
 

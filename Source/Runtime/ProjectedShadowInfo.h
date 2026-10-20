@@ -39,6 +39,7 @@ public:
     // CPU 작업과 타깃 참조를 초기화한다. GPU 텍스처는 해제하지 않는다.
     void Reset();
 
+    void SetShadowViewSize(FVector Size) { ShadowViewSize = Size; }
 private:
     // Renderer는 준비된 상태를 읽고 Caster 큐를 소비한다.
     friend class FRenderer;
@@ -69,4 +70,6 @@ private:
 
     // Caster 패킷과 큐 내부에서 사용하는 임시 행렬 저장소를 소유한다.
     FRenderQueue CasterQueue;
+
+    FVector ShadowViewSize;
 };

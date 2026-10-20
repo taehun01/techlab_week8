@@ -216,6 +216,7 @@ void FRenderer::PrepareShadowParameters()
 			PageIndex = static_cast<int32>(ShadowDepthBindings.Add(DepthTexture));
 		}
 		Parameter.AtlasPageIndex = PageIndex;
+		Parameter.ShadowViewSize = ShadowInfo.ShadowViewSize;
 	}
 
 	// 업로드 실패 시 이전 GPU 정보를 현재 작업에 사용하지 않는다.
