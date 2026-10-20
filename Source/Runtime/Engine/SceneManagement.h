@@ -27,7 +27,7 @@ struct FLightRenderParameters
 	float DepthScale;
 	float DepthOffset;
 	float SourceRadius;
-	float pad;
+	float SourceAngle;
 };
 
 static_assert(sizeof(FLightRenderParameters) == 112,"sizeof(UberLit / TileBasedLightCulling) == sizeof(FLightRenderParameters)");

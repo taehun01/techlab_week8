@@ -103,7 +103,7 @@ struct FDirectionalLightInfo
 	FVector Direction;
 	float Intensity;
 	FVector Color;
-	uint32 Padding = 0;
+	float SourceAngle;
 };
 
 struct FPointLightInfo

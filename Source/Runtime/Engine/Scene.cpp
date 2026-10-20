@@ -173,6 +173,7 @@ void FScene::UpdateLights(FRenderer* Renderer)
 		Constants.Directional.Direction = P.Direction;
 		Constants.Directional.Color = P.Color;
 		Constants.Directional.Intensity = P.Intensity;
+		Constants.Directional.SourceAngle = P.SourceAngle;
 	}
 
 	for (FLocalLightSceneProxy* Proxy : LocalLightProxies)

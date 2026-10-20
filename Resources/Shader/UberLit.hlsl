@@ -38,7 +38,7 @@ struct FDirectionalLightInfo
     float3 Direction; // 빛이 향하는 방향
     float Intensity;
     float3 Color;
-    uint DirectionalPadding;
+    float SourceAngle;
 };
 
 // SceneManagement.h의 FLightRenderParameters와 바이트 단위로 같아야 한다.
@@ -62,8 +62,8 @@ struct FLightRenderParameters
     int ShadowIndex;
     float DepthScale;
     float DepthOffset;
-    float SourceRadius;
-    float pad;
+    float SourceRadius; // Spot, Point 전용
+    float SourceAngle; // Directional 전용
 };
 
 
@@ -389,7 +389,7 @@ float SampleDirectionalShadowMap(FShadowShaderParameters Shadow, float3 LightNDC
 // Receiver의 광원 기준 선형 깊이(View 행렬까지 적용된 깊이) 준비 
     float ReceiverDepth = LightNDC.z * Shadow.ShadowViewSize.x;
     float Width = Shadow.ShadowViewSize.y;
-    float LightRadiusUV = tan(SourceAngle) / Width;
+    float LightRadiusUV = tan(Directional.SourceAngle) / Width;
     float AverageBlockerDepth;
 // 광원 크기와 Receiver 거리로 Blocker 탐색 반경 계산
     float avgBlockerDepthView = 0;
@@ -413,7 +413,7 @@ float SampleDirectionalShadowMap(FShadowShaderParameters Shadow, float3 LightNDC
         return 1.0f;
     
 // Receiver와 평균 Blocker Depth, 광원 Radius UV로 Penumbra 영역의 Ratio 계산 후 UV 기준 PCFRadius 추출
-    float PenumbraRadius = (ReceiverDepth - AverageBlockerDepth) * tan(SourceAngle);   // Penumbra의 Radius 값을 계산
+    float PenumbraRadius = (ReceiverDepth - AverageBlockerDepth) * tan(Directional.SourceAngle);   // Penumbra의 Radius 값을 계산
     float2 PCFradiusUV = PenumbraRadius / Shadow.ShadowViewSize.yz;  // ShadowMap U,V 크기로 나눠 UV Radius로 변환
     
     const float TexelSize = 1.0f / float(Shadow.Resolution);
