@@ -7,6 +7,10 @@ void FPointLightSceneProxy::GetLightShaderParameters(FLightRenderParameters& Out
 {
     const auto* PointLightComponent = static_cast<const UPointLightComponent*>(LightComponent);
     const FLinearColor Color(PointLightComponent->GetLightColor());
+    constexpr float NearClip = 0.1f;
+    const float FarClip = PointLightComponent->GetAttenuationRadius();
+    const float DepthScale = FarClip / (FarClip - NearClip);
+    const float DepthOffset = -NearClip * FarClip / (FarClip - NearClip);
     float SourceRadius = 0.03f;
 
     Out = FLightRenderParameters{};
@@ -16,6 +20,8 @@ void FPointLightSceneProxy::GetLightShaderParameters(FLightRenderParameters& Out
     Out.Color = FVector(Color.R, Color.G, Color.B);
     Out.Intensity = PointLightComponent->GetIntensity();
     Out.FalloffExponent = PointLightComponent->GetFalloff();
+    Out.DepthOffset = DepthOffset;
+    Out.DepthScale = DepthScale;
     Out.SourceRadius = SourceRadius;
 }
 

@@ -12,18 +12,11 @@ void FSpotLightSceneProxy::GetLightShaderParameters(FLightRenderParameters& Out)
     Transform.Rotation = Spot->GetWorldRotation();
     const float Outer = FMath::Clamp(Spot->GetOuterConeAngle(), 0.0f, 89.0f);
     const float Inner = FMath::Clamp(Spot->GetInnerConeAngle(), 0.0f, Outer);
-    constexpr float NearClip = 0.1f;
-    const float FarClip = Spot->GetAttenuationRadius();
-    const float DepthScale = FarClip / (FarClip - NearClip);
-    const float DepthOffset = -NearClip * FarClip / (FarClip - NearClip);
-    
-
+   
     Out.Type = static_cast<uint32>(ELightType::Spot);
     Out.Direction = Transform.GetForward();
     Out.InnerConeCos = std::cos(FMath::DegreesToRadians(Inner));
     Out.OuterConeCos = std::cos(FMath::DegreesToRadians(Outer));
-    Out.DepthScale = DepthScale;
-    Out.DepthOffset = DepthOffset;
 }
 
 
