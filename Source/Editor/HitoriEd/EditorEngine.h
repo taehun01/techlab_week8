@@ -79,6 +79,7 @@ public:
 	//void DestroyWorldContext(UWorld* PlayWorld);
 
 private:
+	bool ExecShadowCommand(const FString& CommandLine, FString& OutMessage);
 	// 이번 프레임 DeltaTime을 패널에 전달하고 에디터 단축키를 처리한다.
 	void BeginFrame(float DeltaTime);
 	// 패널 요청과 입력을 Core Adapter에 전달해 레이아웃·카메라 상태를 갱신한다.

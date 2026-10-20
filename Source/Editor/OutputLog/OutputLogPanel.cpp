@@ -25,6 +25,7 @@ bool FOutputLogPanel::Init()
 	Commands.Add("HISTORY");
 	Commands.Add("CLEAR");
 	Commands.Add("STAT");
+	Commands.Add("CSM");
 	Commands.Add("SHADOW_CACHE");
 
 	HistoryPos = -1;
@@ -175,6 +176,16 @@ void FOutputLogPanel::ExecCommand(const FString& CommandLine)
 		ScrollToBottom = true;
 		return;
 	}
+
+	// World가 필요한 명령은 외부 처리기에 전달하고 결과만 출력한다.
+	FString CommandMessage;
+	if (CommandHandler && CommandHandler(CommandLine, CommandMessage))
+	{
+		FLog::Log(ELogVerbosity::Info, "{}", CommandMessage);
+		ScrollToBottom = true;
+		return;
+	}
+
 	
 	FString ShadowMessage;
 	if (FShadowSettings::ExecCommand(CommandLine, ShadowMessage))
@@ -194,6 +205,7 @@ void FOutputLogPanel::ExecCommand(const FString& CommandLine)
 		for (const FString& Command : Commands)
 			FLog::Log(ELogVerbosity::Info, "- {}", Command);
 		OnLog(ELogVerbosity::Info, "- STAT <fps|memory|profile|shadow|all|none>");
+		OnLog(ELogVerbosity::Info, "- CSM [ON|OFF|SET <0-4>]");
 		OnLog(ELogVerbosity::Info, "- SHADOW_CACHE <0|1>");
 	}
 	else if (EqualsIgnoreCase(CommandLine, "HISTORY"))

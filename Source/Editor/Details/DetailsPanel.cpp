@@ -950,7 +950,51 @@ void FDetailsPanel::DrawShadowMapPreview(const ULightComponent& Light)
 		ViewId = ShadowPreviewViewId;
 		ProjectionIndex = ShadowPreviewProjectionIndex;
 	}
+	else if (Light.GetLightType() == ELightType::Point)
+	{
+		// Point 투영과 Shader의 면 선택 순서에 맞춘 표시 이름이다.
+		constexpr uint32 FaceCount = 6;
+		static constexpr const char* FaceNames[FaceCount] =
+		{
+			"+X", "-X", "+Y", "-Y", "+Z", "-Z"
+		};
 
+		// Point는 View 0을 공유하며, 실제 Depth 타깃이 있는 면만 표시한다.
+		TArray<uint32> Faces;
+		for (uint32 FaceIndex = 0; FaceIndex < FaceCount; ++FaceIndex)
+		{
+			if (Renderer->GetShadowDepthTexture(*Light.SceneProxy, FaceIndex, 0))
+				Faces.Add(FaceIndex);
+		}
+
+		if (Faces.IsEmpty())
+		{
+			ImGui::TextDisabled("No shadow map generated this frame.");
+			return;
+		}
+
+		// 라이트 전환이나 타깃 변경으로 선택한 면이 사라지면 복구한다.
+		if (Faces.Find(ShadowPreviewProjectionIndex) == INDEX_NONE)
+			ShadowPreviewProjectionIndex = Faces[0];
+
+		if (ImGui::BeginCombo("Shadow Face", FaceNames[ShadowPreviewProjectionIndex]))
+		{
+			for (uint32 Candidate : Faces)
+			{
+				const bool bSelected = Candidate == ShadowPreviewProjectionIndex;
+				if (ImGui::Selectable(FaceNames[Candidate], bSelected))
+					ShadowPreviewProjectionIndex = Candidate;
+
+				// 콤보박스를 열었을 때 현재 선택한 면에 포커스를 둔다.
+				if (bSelected)
+					ImGui::SetItemDefaultFocus();
+			}
+			ImGui::EndCombo();
+		}
+
+		// 아래 공통 조회·Viewport·UV 계산에 선택한 면을 전달한다.
+		ProjectionIndex = ShadowPreviewProjectionIndex;
+	}
 	// Spot은 기존 공유 키 (0, 0)를 사용한다.
 	const FTexture2D* DepthTexture = Renderer->GetShadowDepthTexture(*Light.SceneProxy, ProjectionIndex, ViewId);
 	FViewportSettings ShadowViewport;

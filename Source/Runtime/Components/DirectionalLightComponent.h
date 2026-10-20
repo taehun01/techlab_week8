@@ -28,6 +28,7 @@ public:
 
 	// CSM 사용 여부와 편집된 Cascade 개수는 별도로 보관한다.
 	bool IsCSMEnabled() const { return bUseCSM; }
+	void SetCSMEnabled(bool bEnabled) { bUseCSM = bEnabled; }
 	int32 GetCascadeCount() const { return FMath::Clamp(CascadeCount, 1, MaxShadowCascades); }
 
 	// 분포 1은 균등 분할이며, 값이 커질수록 가까운 구간이 짧아진다.
@@ -38,6 +39,10 @@ public:
 	float GetCascadeTransitionFraction() const
 	{
 		return FMath::Clamp(CascadeTransitionFraction, 0.0f, 0.5f);
+	}
+	void SetCascadeCount(int32 InCount)
+	{
+		CascadeCount = FMath::Clamp(InCount, 1, MaxShadowCascades);
 	}
 	// 편집한 값도 실제 계산에 사용하는 범위로 맞춘다.
 	void PostEditChangeProperty(const FProperty& Property) override;

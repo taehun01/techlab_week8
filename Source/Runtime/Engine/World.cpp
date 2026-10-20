@@ -465,19 +465,51 @@ void UWorld::GatherLocalProjectedShadows(TArray<FProjectedShadowInfo>& OutShadow
 {
 	for (const FLocalLightSceneProxy* LightProxy : Scene.LocalLightProxies)
 	{
-		// 기존 Spot 수집 범위를 유지한다.
-		if (LightProxy->GetLightComponent()->GetLightType() != ELightType::Spot)
-			continue;
+		// TODO : SpotLight 이외의 다른 광원들도 지원해야함.
+		// if문 여러개로 spot이랑 포인트 구분할것임
+		// Point는 공통 원점 하나와 여섯 개의 VP 행렬을 사용한다.
+		if (LightProxy->GetLightComponent()->GetLightType() == ELightType::Spot)
+		{
+			// Light 설정과 투영 유효성은 기존 계산 함수가 판단한다.
+			FShadowProjection ShadowProjection;
+			ShadowProjection.ViewOrigin = FVector::ZeroVector;
+			///ShadowProjection.ViewProjections[0] = FMatrix::Identity;
 
-		FVector ShadowViewOrigin = FVector::ZeroVector;
-		FMatrix LightViewProjection = FMatrix::Identity;
-		if (!LightProxy->GetShadowProjection(ShadowViewOrigin, LightViewProjection))
-			continue;
+			if (!LightProxy->GetShadowProjection(ShadowProjection))
+			{
+				continue;
+			}
 
-		// 기본 식별자 0·0을 사용하는 World 공유 작업이다.
-		FProjectedShadowInfo& ShadowInfo = OutShadows.AddDefaulted_GetRef();
-		ShadowInfo.SetupProjection(*LightProxy, ShadowViewOrigin, LightViewProjection);
-		GatherShadowCasters(ShadowInfo);
+			// Info 하나는 투영 작업 하나이며, Caster 수집은 기존 경로를 사용한다.
+			FProjectedShadowInfo& ShadowInfo = OutShadows.AddDefaulted_GetRef();
+			//ShadowInfo.SetupProjection(*LightProxy, ShadowViewOrigin, LightViewProjection);
+			ShadowInfo.SetupProjection(*LightProxy, ShadowProjection.ViewOrigin, ShadowProjection.ViewProjections[0], 0);
+			GatherShadowCasters(ShadowInfo);
+		}
+
+		// 포인트 라이트면 셰도우 인포 6개
+		if (LightProxy->GetLightComponent()->GetLightType() == ELightType::Point)
+		{
+			// Light 설정과 투영 유효성은 기존 계산 함수가 판단한다.
+			FShadowProjection ShadowProjection;
+			ShadowProjection.ViewOrigin = FVector::ZeroVector;
+
+			if (!LightProxy->GetShadowProjection(ShadowProjection))
+			{
+				continue;
+			}
+
+			uint32 ID = 0;
+
+			// Info 하나는 투영 작업 하나이며, Caster 수집은 기존 경로를 사용한다.
+			for (const FMatrix& IT : ShadowProjection.ViewProjections)
+			{
+				FProjectedShadowInfo& ShadowInfo = OutShadows.AddDefaulted_GetRef();
+				ShadowInfo.SetupProjection(*LightProxy, ShadowProjection.ViewOrigin, IT, ID);
+				GatherShadowCasters(ShadowInfo);
+				++ID;
+			}
+		}
 	}
 }
 

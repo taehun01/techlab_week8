@@ -95,6 +95,12 @@ bool UEditorEngine::Init()
 
 	OutputLogPanel = EditorUI->AddEditorPanel<FOutputLogPanel>();
 	FLog::AddSink(OutputLogPanel);
+	OutputLogPanel->SetCommandHandler(
+		[this](const FString& CommandLine, FString& OutMessage)
+		{
+			return ExecShadowCommand(CommandLine, OutMessage);
+		}
+	);
 	HTR_LOG(Info, "Editor Initialize...");
 
 	HTR_LOG(Info, "Initialize ImGui...");
@@ -337,6 +343,98 @@ void UEditorEngine::Tick(const float DeltaTime)
 	TickWorldAndEditor(DeltaTime);
 	RenderMultipleViewports();
 	EndFrame();
+}
+
+// 기존 Directional 설정을 변경하여 다음 프레임의 그림자 준비에 반영한다.
+bool UEditorEngine::ExecShadowCommand(const FString& CommandLine, FString& OutMessage)
+{
+	std::istringstream Input(CommandLine);
+	FString Command, Action, Value, Extra;
+	Input >> Command >> Action >> Value >> Extra;
+
+	// 다른 명령은 기존 콘솔 처리 경로에서 계속 판정한다.
+	if (_stricmp(Command.c_str(), "CSM") != 0)
+		return false;
+
+	// 잘못된 입력은 아래 검증에서 설정 변경 없이 이 메시지를 반환한다.
+	OutMessage = "Usage: CSM | CSM ON | CSM OFF | CSM SET <0-4>";
+	if (!Extra.empty())
+		return true;
+
+	// -1은 개수 변경이 없는 토글·ON·OFF 명령을 의미한다.
+	int32 RequestedCount = -1;
+	if (_stricmp(Action.c_str(), "SET") == 0)
+	{
+		// 현재 지원 범위인 한 자리 정수 0~4만 허용한다.
+		if (Value.size() != 1 || Value[0] < '0'	|| Value[0] > '0' + UDirectionalLightComponent::MaxShadowCascades)
+			return true;
+
+		RequestedCount = Value[0] - '0';
+	}
+	else
+	{
+		// SET 이외에는 인자가 없거나 ON/OFF만 사용할 수 있다.
+		if (!Value.empty() || (!Action.empty() && _stricmp(Action.c_str(), "ON") != 0 && _stricmp(Action.c_str(), "OFF") != 0))
+			return true;
+	}
+
+	// 평소에는 EditorWorld, PIE 중에는 PlayWorld를 대상으로 한다.
+	UWorld* World = GetActiveWorld();
+	const FDirectionalLightSceneProxy* Primary = World->GetScene().GetPrimaryDirectionalLight();
+
+	if (!Primary)
+	{
+		OutMessage = "No active Directional Light in the current world.";
+		return true;
+	}
+
+	// 실제 Primary의 Owner에서 수정 가능한 동일 Component를 찾는다.
+	const ULightComponent* PrimaryComponent = Primary->GetLightComponent();
+	UDirectionalLightComponent* Light = nullptr;
+	for (UActorComponent* Component : PrimaryComponent->GetOwner()->GetComponents())
+	{
+		if (Component == PrimaryComponent)
+		{
+			Light = Cast<UDirectionalLightComponent>(Component);
+			break;
+		}
+	}
+
+	if (!Light)
+	{
+		OutMessage = "Directional Light component was not found.";
+		return true;
+	}
+
+	if (RequestedCount >= 0)
+	{
+		// SET 0은 마지막 개수를 보존하며 CSM만 비활성화한다.
+		if (RequestedCount > 0)
+			Light->SetCascadeCount(RequestedCount);
+
+		Light->SetCSMEnabled(RequestedCount > 0);
+	}
+	else if (Action.empty())
+	{
+		// 단독 CSM 입력은 기존 STAT 명령처럼 현재 상태를 반전한다.
+		Light->SetCSMEnabled(!Light->IsCSMEnabled());
+	}
+	else
+	{
+		// 입력 검증을 통과했으므로 남은 Action은 ON 또는 OFF다.
+		Light->SetCSMEnabled(_stricmp(Action.c_str(), "ON") == 0);
+	}
+
+	// OFF에서는 출력된 개수가 저장된 설정값임을 명시한다.
+	const bool bEnabled = Light->IsCSMEnabled();
+	OutMessage = std::format(
+		"CSM: {}, {}: {} (World: {})",
+		bEnabled ? "ON" : "OFF",
+		bEnabled ? "Cascades" : "Saved Cascades",
+		Light->GetCascadeCount(),
+		World->IsPlayInEditor() ? "PIE" : "Editor"
+	);
+	return true;
 }
 
 // DeltaTime을 패널에 전달하고 에디터 단축키를 처리한다.
