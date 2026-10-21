@@ -30,6 +30,7 @@ namespace ShadowStats
     DECLARE_COUNTER_STAT("Shadow Empty Caster Depth Skips", STAT_EmptyCasterDepthSkips);;    // 빈 Caster Queue
     DECLARE_COUNTER_STAT("Shadow Small Caster Skips", STAT_SmallCasterSkips);   // 임계값 미만의 크기의 Caster
     DECLARE_COUNTER_STAT("Shadow Caster Sphere Skips", STAT_CasterSphereSkips); // 지역광 Sphere 검사
+    DECLARE_COUNTER_STAT("Shadow Receiver Projection Skips", STAT_ReceiverProjectionSkips); // Receiver 없는 면·Cascade
     
     enum EGroup : uint32
     {

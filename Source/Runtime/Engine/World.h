@@ -78,6 +78,7 @@ public:
 	// 지정한 View·Cascade의 투영과 원래 논리 분할 개수를 보관하고 Caster를 수집한다.
 	void GatherDirectionalShadow(TArray<FProjectedShadowInfo>& OutShadows,
 		const TArray<FVector>& ReceiverCorners, const FLODViewContext& View,
+		float ReceiverNearDistance, float ReceiverFarDistance,
 		float MinScreenRadiusSquared, uint32 ProjectionIndex, uint32 ViewId,
 		uint32 LogicalCascadeCount = 1);
 
@@ -138,7 +139,8 @@ private:
 	// 활성 Lit View 중 하나에서 Receiver 후보가 보이면 유지한다.
 	// LocalLight와 ReceiverFrustum은 지정한 경우에만 영향 구와 투영 범위를 제한한다.
 	bool HasVisibleShadowReceiver(const TArray<FFrustumPlanes>& ActiveViewFrustums,
-		const FLightRenderParameters* LocalLight = nullptr, const FFrustumPlanes* ReceiverFrustum = nullptr) const;
+		const FLightRenderParameters* LocalLight = nullptr, const FFrustumPlanes* ReceiverFrustum = nullptr,
+		uint32 ReceiverPlaneMask = FrustumAllPlanesMask) const;
 	
 	// 모든 전달 View에서 Bounds가 작을 때만 해당 투영의 제출을 생략한다.
 	static bool IsSmallShadowCaster(const FLODSphere& Sphere, const FLODViewContext* Views, int32 ViewCount, float MinScreenRadiusSquared);

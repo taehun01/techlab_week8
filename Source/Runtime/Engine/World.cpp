@@ -525,6 +525,9 @@ void UWorld::GatherLocalProjectedShadows(TArray<FProjectedShadowInfo>& OutShadow
 		}
 
 		const float CasterSphereRadius = GetLocalShadowCasterRadius(*LightProxy->GetLightComponent(), LightParameters, ShadowProjection.TanHalfFOV);
+		// 행렬의 평면 계산 오차만 흡수하며, 그림자 Bias나 필터 폭을 바꾸지 않는다.
+		const float ReceiverGuard = std::max(0.001f, 8.0f * std::numeric_limits<float>::epsilon()
+			* (LightParameters.Position.Size() + LightParameters.Radius));
 
 		uint32 ProjectionIndex = 0;
 		for (const FMatrix& ViewProjection : ShadowProjection.ViewProjections)
@@ -535,8 +538,21 @@ void UWorld::GatherLocalProjectedShadows(TArray<FProjectedShadowInfo>& OutShadow
 			ShadowInfo.SetupProjection(*LightProxy, ShadowProjection.ViewOrigin,
 				ViewProjection, ProjectionFrustum, FrustumAllPlanesMask, ProjectionIndex);
 
-			GatherShadowCasters(ShadowInfo, ActiveViews.GetData(), ActiveViews.Num(),
-				MinScreenRadiusSquared, &LightParameters, CasterSphereRadius);
+			// Point의 면 선택은 Normal Offset 전 WorldPos의 최대 절댓값 축으로 결정된다.
+			// 옆면 4개만 검사해, Offset 후 유효해지는 Near/Far 경계 Receiver도 보존한다.
+			FFrustumPlanes FaceReceiverFrustum = ProjectionFrustum;
+			for (int32 PlaneIndex = 0; PlaneIndex < 4; ++PlaneIndex)
+				FaceReceiverFrustum.Planes[PlaneIndex].Distance += ReceiverGuard;
+			const uint32 FaceReceiverMask = FrustumAllPlanesMask & ~((1u << 4) | (1u << 5));
+			// Spot은 위의 동일 투영 검사 결과를 재사용하고, Point는 모든 활성 View를 확인한다.
+			ShadowInfo.SetHasReceivers(bSpotLight || HasVisibleShadowReceiver(
+				ActiveViewFrustums, &LightParameters, &FaceReceiverFrustum, FaceReceiverMask));
+			if (ShadowInfo.HasReceivers())
+			{
+				GatherShadowCasters(ShadowInfo, ActiveViews.GetData(), ActiveViews.Num(),
+					MinScreenRadiusSquared, &LightParameters, CasterSphereRadius);
+			}
+			// 생략한 면도 논리 슬롯을 남겨 ShadowIndex + FaceIndex 연결을 유지한다.
 			++ProjectionIndex;
 		}
 	}
@@ -545,6 +561,7 @@ void UWorld::GatherLocalProjectedShadows(TArray<FProjectedShadowInfo>& OutShadow
 // 하나의 Receiver 구간마다 독립적인 Directional 작업을 추가한다.
 void UWorld::GatherDirectionalShadow(TArray<FProjectedShadowInfo>& OutShadows,
 	const TArray<FVector>& ReceiverCorners, const FLODViewContext& View,
+	float ReceiverNearDistance, float ReceiverFarDistance,
 	float MinScreenRadiusSquared, uint32 ProjectionIndex, uint32 ViewId,
 	uint32 LogicalCascadeCount)
 {
@@ -561,8 +578,21 @@ void UWorld::GatherDirectionalShadow(TArray<FProjectedShadowInfo>& OutShadows,
 	// 투영 초기화가 끝난 뒤 실제 View의 논리 분할 개수를 기록한다.
 	ShadowInfo.SetLogicalCascadeCount(LogicalCascadeCount);
 
-	// 해당 투영의 열린 Caster Frustum과 CastShadow 조건을 재사용한다.
-	GatherShadowCasters(ShadowInfo, &View, 1, MinScreenRadiusSquared);
+	// Caster의 열린 광원 Frustum과 분리해, 실제 카메라의 Receiver 구간을 검사한다.
+	FFrustumPlanes ReceiverFrustum = ExtractFrustumPlanes(View.ViewProjection);
+	const float CameraDepth = FVector::Dot(View.CameraPosition, View.CameraForward);
+	const float ReceiverGuard = std::max(0.001f, 8.0f * std::numeric_limits<float>::epsilon()
+		* (View.CameraPosition.Size() + std::max(std::abs(ReceiverNearDistance), std::abs(ReceiverFarDistance))));
+	// 입력 Near는 이전 Cascade의 보간 구간까지 포함한 RenderNear다.
+	ReceiverFrustum.Planes[4] = { View.CameraForward, -CameraDepth - ReceiverNearDistance + ReceiverGuard };
+	ReceiverFrustum.Planes[5] = { -View.CameraForward, CameraDepth + ReceiverFarDistance + ReceiverGuard };
+	TArray<FFrustumPlanes> ReceiverFrustums;
+	ReceiverFrustums.Add(ReceiverFrustum);
+	ShadowInfo.SetHasReceivers(HasVisibleShadowReceiver(ReceiverFrustums));
+
+	// Receiver가 있어야 Caster를 수집하되, 생략된 Cascade의 번호도 그대로 보존한다.
+	if (ShadowInfo.HasReceivers())
+		GatherShadowCasters(ShadowInfo, &View, 1, MinScreenRadiusSquared);
 	OutShadows.Add(std::move(ShadowInfo));
 }
 
@@ -1044,7 +1074,7 @@ void UWorld::Serialize(FStructuredArchive::FRecord Record)
 
 // 광원 종류와 무관한 Receiver 후보 검사이며, GPU 가림 결과는 사용하지 않는다.
 bool UWorld::HasVisibleShadowReceiver(const TArray<FFrustumPlanes>& ActiveViewFrustums,
-	const FLightRenderParameters* LocalLight, const FFrustumPlanes* ReceiverFrustum) const
+	const FLightRenderParameters* LocalLight, const FFrustumPlanes* ReceiverFrustum, uint32 ReceiverPlaneMask) const
 {
 	bool bHasReceiver = false;
 
@@ -1065,7 +1095,8 @@ bool UWorld::HasVisibleShadowReceiver(const TArray<FFrustumPlanes>& ActiveViewFr
 			const FAABB Bounds = MakeWorldBounds(Box);
 
 			// Spot 또는 후속 투영별 Receiver 검사에서 지정한 범위를 사용한다.
-			if (ReceiverFrustum && !IsAABBInFrustum(Bounds, *ReceiverFrustum))
+			uint32 PlaneMask = ReceiverPlaneMask;
+			if (ReceiverFrustum && ClassifyBoxInFrustum(Box, *ReceiverFrustum, PlaneMask) == EFrustumTest::Outside)
 			{
 				return false;
 			}

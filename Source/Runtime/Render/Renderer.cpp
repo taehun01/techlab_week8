@@ -706,7 +706,10 @@ void FRenderer::RenderShadowMaps(TArray<FProjectedShadowInfo>&& InShadows, FShad
 	{
 		// 논리 슬롯은 보존하되 Receiver가 없는 작업은 Depth와 캐시 집계에서 제외한다.
 		if (!ShadowInfo.HasReceivers())
+		{
+			FStatRegistry::AddCounter(ShadowStats::STAT_ReceiverProjectionSkips);
 			continue;
+		}
 
 		if (!ShadowInfo.HasCasters())
 		{

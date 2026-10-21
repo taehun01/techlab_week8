@@ -444,6 +444,8 @@ void FViewportsPanel::DrawStatOverlay(ImDrawList* DrawList, const ImVec2& ViewMi
 			FStatRegistry::GetCounter(ShadowStats::STAT_SmallCasterSkips)), ValueColor });
 		Lines.Add({ std::format("  Caster sphere skips: {}",
 			FStatRegistry::GetCounter(ShadowStats::STAT_CasterSphereSkips)), ValueColor });
+		Lines.Add({ std::format("  Receiver projection skips: {}",
+			FStatRegistry::GetCounter(ShadowStats::STAT_ReceiverProjectionSkips)), ValueColor });
 		Lines.Add({ std::format("  Maps: {}  Draws: {}  Updates: {}",
 			FStatRegistry::GetCounter(ShadowStats::STAT_Maps),
 			FStatRegistry::GetCounter(ShadowStats::STAT_DrawCalls),

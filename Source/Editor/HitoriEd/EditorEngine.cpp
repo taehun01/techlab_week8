@@ -673,7 +673,8 @@ void UEditorEngine::RenderMultipleViewports()
 				// 직교 View는 기존 논리 원점 앞뒤의 단일 범위를 유지한다.
 				if (MultipleViewportsAdapter.AppendShadowFrustumCorners(ViewIndex, ShadowDistance, ReceiverCorners))
 				{
-					World->GatherDirectionalShadow(ShadowInfos, ReceiverCorners, ShadowView, MinScreenRadiusSquared, 0, ViewId);
+					World->GatherDirectionalShadow(ShadowInfos, ReceiverCorners, ShadowView,
+						-ShadowDistance, ShadowDistance, MinScreenRadiusSquared, 0, ViewId);
 				}
 				continue;
 			}
@@ -699,7 +700,8 @@ void UEditorEngine::RenderMultipleViewports()
 					continue;
 
 				// 각 Cascade는 자신이 속한 View의 크기 기준으로만 선별한다.
-				World->GatherDirectionalShadow(ShadowInfos, ReceiverCorners, ShadowView, MinScreenRadiusSquared,
+				World->GatherDirectionalShadow(ShadowInfos, ReceiverCorners, ShadowView,
+					RenderNear, SplitDistances[CascadeIndex + 1], MinScreenRadiusSquared,
 					static_cast<uint32>(CascadeIndex), ViewId, LogicalCascadeCount);
 			}
 		}
