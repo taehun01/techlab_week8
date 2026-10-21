@@ -31,6 +31,11 @@ public:
     // Caster가 있는지 체크
     bool HasCasters() const { return bHasCasters; }
 
+    // Receiver 검사로 생략한 작업과 Caster가 없다고 확인한 작업을 구분한다.
+    bool HasReceivers() const { return bHasReceivers; }
+    // 투영별 검사를 수행한 World가 결과를 기록한다. 미검사 작업은 유지한다.
+    void SetHasReceivers(bool bInHasReceivers) { bHasReceivers = bInHasReceivers; }
+
     // World는 범위와 평면 마스크를 함께 사용해 Caster를 탐색한다.
     const FFrustumPlanes& GetCasterFrustum() const { return CasterFrustum; }
     uint32 GetCasterPlaneMask() const { return CasterPlaneMask; }
@@ -91,6 +96,9 @@ private:
 
     // 패킷 등록 여부이며, Depth 실행 후 큐가 비어도 변경하지 않는다.
     bool bHasCasters = false;
+
+    // Receiver 검사가 연결되지 않은 기존 투영은 보수적으로 렌더링한다.
+    bool bHasReceivers = true;
 
     // UUID + ShadowVersion으로 만든 헤시값
     uint64 CasterHash = 0u;

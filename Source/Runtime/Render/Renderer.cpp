@@ -208,7 +208,8 @@ void FRenderer::PrepareShadowParameters()
 		const FProjectedShadowInfo& ShadowInfo = ProjectedShadows[Index];
 		FShadowShaderParameters& Parameter = Parameters[Index];
 		Parameter.LightViewProjection = ShadowInfo.LightViewProjection;
-		Parameter.IsKnownEmpty = ShadowInfo.HasCasters() ? 0u : 1u;
+		// Receiver 생략으로 Caster를 미수집한 작업은 빈 Depth로 확정하지 않는다.
+		Parameter.IsKnownEmpty = ShadowInfo.HasReceivers() && !ShadowInfo.HasCasters() ? 1u : 0u;
 		// 실패한 작업은 기본 AtlasPageIndex=-1을 유지한다.
 		if (!ShadowInfo.HasDepthTarget())
 		{
@@ -592,7 +593,7 @@ void FRenderer::PrepareShadowDepthTargets(TArray<FProjectedShadowInfo>& ShadowIn
 	{
 		// 타깃 재배정 전에 이전 비소유 참조를 비우고 전체 활성 키를 모은다.
 		ShadowInfo.SetRenderingInfo(FRenderingInfo{});
-		if (!ShadowInfo.HasCasters())
+		if (!ShadowInfo.HasReceivers() || !ShadowInfo.HasCasters())
 		{
 			continue;
 		}
@@ -611,7 +612,7 @@ void FRenderer::PrepareShadowDepthTargets(TArray<FProjectedShadowInfo>& ShadowIn
 	for (int32 Index = 0; Index < ShadowInfos.Num(); ++Index)
 	{
 		const FProjectedShadowInfo& ShadowInfo = ShadowInfos[Index];
-		if (!ShadowInfo.HasCasters())
+		if (!ShadowInfo.HasReceivers() || !ShadowInfo.HasCasters())
 		{
 			continue;
 		}
@@ -703,6 +704,10 @@ void FRenderer::RenderShadowMaps(TArray<FProjectedShadowInfo>&& InShadows, FShad
 
 	for (FProjectedShadowInfo& ShadowInfo : ProjectedShadows)
 	{
+		// 논리 슬롯은 보존하되 Receiver가 없는 작업은 Depth와 캐시 집계에서 제외한다.
+		if (!ShadowInfo.HasReceivers())
+			continue;
+
 		if (!ShadowInfo.HasCasters())
 		{
 			FStatRegistry::AddCounter(ShadowStats::STAT_EmptyCasterDepthSkips);
@@ -759,7 +764,9 @@ bool FRenderer::IsShadowKnownEmpty(const FLightSceneProxy& LightProxy, uint32 Pr
 {
 	// 기존 조회를 재사용하고 소비된 큐 대신 수집 결과를 확인한다.
 	const int32 Index = GetShadowIndex(LightProxy, ProjectionIndex, ViewId);
-	return Index != INDEX_NONE && !ProjectedShadows[Index].HasCasters();
+	// Receiver 생략과 Caster 부재를 미리보기에서도 구분한다.
+	return Index != INDEX_NONE && ProjectedShadows[Index].HasReceivers()
+		&& !ProjectedShadows[Index].HasCasters();
 }
 
 const FTexture2D* FRenderer::GetShadowDepthTexture(

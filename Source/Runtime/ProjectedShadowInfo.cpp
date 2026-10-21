@@ -64,6 +64,8 @@ void FProjectedShadowInfo::Reset()
     RenderingInfo = FRenderingInfo{};
     CasterQueue.Reset();
     bHasCasters = false;
+    // 새 투영에서 이전 Receiver 생략 결과를 재사용하지 않는다.
+    bHasReceivers = true;
     CasterHash = 0u;
     CasterCount = 0u;
     bShouldRenderShadow = true;

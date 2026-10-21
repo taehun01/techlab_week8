@@ -513,7 +513,7 @@ void UWorld::GatherLocalProjectedShadows(TArray<FProjectedShadowInfo>& OutShadow
 		}
 
 		// Point는 Receiver가 없으면 여섯 VP 계산도 생략한다.
-		if (!HasVisibleShadowReceiver(LightParameters, ActiveViewFrustums, ReceiverFrustum))
+		if (!HasVisibleShadowReceiver(ActiveViewFrustums, &LightParameters, ReceiverFrustum))
 		{
 			FStatRegistry::AddCounter(ShadowStats::STAT_LocalLightsWithoutReceivers);
 			continue;
@@ -1042,27 +1042,30 @@ void UWorld::Serialize(FStructuredArchive::FRecord Record)
 	// MainCamera->GetCameraComponent()->Serialize(Record.EnterRecord("MainCamera"));
 }
 
-bool UWorld::HasVisibleShadowReceiver(const FLightRenderParameters& LightParameters, const TArray<FFrustumPlanes>& ActiveViewFrustums,
-	const FFrustumPlanes* SpotFrustum) const
+// 광원 종류와 무관한 Receiver 후보 검사이며, GPU 가림 결과는 사용하지 않는다.
+bool UWorld::HasVisibleShadowReceiver(const TArray<FFrustumPlanes>& ActiveViewFrustums,
+	const FLightRenderParameters* LocalLight, const FFrustumPlanes* ReceiverFrustum) const
 {
 	bool bHasReceiver = false;
-	const float RadiusSquared = LightParameters.Radius * LightParameters.Radius;
 
 	const auto BoundsTest = [&](const FBox& Box)
 		{
 			if (bHasReceiver) return false;
-			const FVector ClosestPoint((FMath::Clamp(LightParameters.Position.X, Box.Min.X, Box.Max.X)),
-				(FMath::Clamp(LightParameters.Position.Y, Box.Min.Y, Box.Max.Y)),
-				(FMath::Clamp(LightParameters.Position.Z, Box.Min.Z, Box.Max.Z)));
-			if ((ClosestPoint - LightParameters.Position).SizeSquared() > RadiusSquared)
+			// 지역광의 기존 영향 구 판정을 유지하고, Directional은 이 제한을 사용하지 않는다.
+			if (LocalLight)
 			{
-				return false;
+				const FVector& Position = LocalLight->Position;
+				const FVector ClosestPoint(FMath::Clamp(Position.X, Box.Min.X, Box.Max.X),
+					FMath::Clamp(Position.Y, Box.Min.Y, Box.Max.Y),
+					FMath::Clamp(Position.Z, Box.Min.Z, Box.Max.Z));
+				if ((ClosestPoint - Position).SizeSquared() > LocalLight->Radius * LocalLight->Radius)
+					return false;
 			}
 			// 영향 영역과 겹치는 Bounds가 활성 View 중 하나에서도 보일 수 있어야 한다.
 			const FAABB Bounds = MakeWorldBounds(Box);
 
-			// spot의 경우 ShadowMap을 사용할수없는 방향의 Bounds를 추가로 제외한다.
-			if (SpotFrustum && !IsAABBInFrustum(Bounds, *SpotFrustum))
+			// Spot 또는 후속 투영별 Receiver 검사에서 지정한 범위를 사용한다.
+			if (ReceiverFrustum && !IsAABBInFrustum(Bounds, *ReceiverFrustum))
 			{
 				return false;
 			}
