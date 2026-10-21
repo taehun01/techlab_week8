@@ -17,7 +17,7 @@
 #define LIGHT_DEBUG_MODE_SLICES       3
 
 // Normal Bias와 Slope Bias에 쓰일 상수 값이다.
-#define SHADOW_NORMAL_BIAS_SCALE 0.05f
+#define SHADOW_NORMAL_BIAS_SCALE 0.07f
 
 // 조명 모델은 C++(FRenderResourceManager::LoadUberLit)이 매크로로 하나만 넘긴다.
 // 아무 매크로 없이 컴파일될 때(기존 머티리얼이 쓰는 기본 키)만 Lambert를 켠다.
@@ -74,7 +74,7 @@ cbuffer ViewConstants : register(b0)
 {
     matrix ViewProjection;
     float3 CameraWorldPos; // Specular의 V = normalize(CameraWorldPos - WorldPos)
-    uint ClampShadowNear; // Directional Depth 패스에서만 Near Clamp를 적용한다.
+    uint CameraPositionPadding;
     
     float3 CameraForward;
     uint DirectionalCascadeCount;
@@ -798,12 +798,6 @@ VS_OUTPUT mainVS(VS_INPUT Input)
 
     const float4 WorldPos = mul(float4(Input.Position, 1.0f), World);
     Output.SvPosition = mul(WorldPos, ViewProjection);
-
-#if defined(LIGHTING_MODEL_UNLIT)
-    // 현재 엔진은 정방향 깊이 0~1을 사용하며 Directional 직교 투영의 W는 1이다.
-    if (ClampShadowNear != 0)
-        Output.SvPosition.z = max(Output.SvPosition.z, 0.0f);
-#endif
     Output.WorldPos = WorldPos.xyz;
 
     // 노멀은 역전치로, 탄젠트는 표면을 따라 놓인 방향이라 World로 변환한다.

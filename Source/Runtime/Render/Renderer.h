@@ -1,4 +1,4 @@
-#pragma once
+        #pragma once
 
 #include "RenderPacket.h"
 #include "Texture2D.h"
@@ -43,8 +43,8 @@ struct alignas(16) FViewConstants
 	FMatrix ViewProjection = FMatrix::Identity;
 	FVector CameraWorldPos = FVector::ZeroVector;
 
-	// Directional Depth 패스에서만 Near 밖의 정점을 깊이 0으로 제한한다.
-	uint32 ClampShadowNear = 0;
+	// 사용하던 변수를 지우면서 생긴 패딩
+	uint32 CameraPositionPadding = 0;
 
 	// 논리 카메라의 정규화된 전방 축이다.
 	FVector CameraForward = FVector::ZeroVector;
@@ -263,7 +263,7 @@ public:
 	// 큐를 Material, Opaque, Mesh에 따라 정렬한다
 	// CameraWorldPos는 ViewProjection과 함께 b0에 올라가 Specular 계산(V 벡터)에 쓰인다.
 	void RenderQueueSorting(FRenderQueue& InQueue, const FMatrix& ViewProjection,
-		const FVector& CameraWorldPos, bool bClampShadowNear = false);
+		const FVector& CameraWorldPos);
 	
 	// 호출자가 준비한 View별 GPU 상수를 업로드하고 같은 정렬 경로를 사용한다.
 	void RenderQueueSorting(FRenderQueue& InQueue, const FViewConstants& ViewConstants);

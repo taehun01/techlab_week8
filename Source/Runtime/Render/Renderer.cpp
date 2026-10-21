@@ -487,12 +487,11 @@ void FRenderer::DrawStaticGroups()
 }
 
 void FRenderer::RenderQueueSorting(FRenderQueue& InQueue, const FMatrix& ViewProjection,
-	const FVector& CameraWorldPos, bool bClampShadowNear)
+	const FVector& CameraWorldPos)
 {
 	FViewConstants ViewConstants{};
 	ViewConstants.ViewProjection = ViewProjection;
 	ViewConstants.CameraWorldPos = CameraWorldPos;
-	ViewConstants.ClampShadowNear = bClampShadowNear ? 1u : 0u;
 
 	RenderQueueSorting(InQueue, ViewConstants);
 }
@@ -841,8 +840,7 @@ void FRenderer::RenderShadowDepth(FProjectedShadowInfo& ShadowInfo)
 
 	// Caster 큐를 소비하고 라이트 기준 View·Object 상수를 준비한다.
 	const bool bClampShadowNear = LightType == ELightType::Directional;
-	RenderQueueSorting(ShadowInfo.CasterQueue, ShadowInfo.LightViewProjection,
-		ShadowInfo.ShadowViewOrigin, bClampShadowNear);
+	RenderQueueSorting(ShadowInfo.CasterQueue, ShadowInfo.LightViewProjection, ShadowInfo.ShadowViewOrigin);
 
 	// 기존 UberLit의 Unlit VS를 사용해 정점 조명 계산 없이 위치를 변환한다.
 	// 실제 화면 View의 Unlit 여부는 호출자가 판단한다.
@@ -856,7 +854,21 @@ void FRenderer::RenderShadowDepth(FProjectedShadowInfo& ShadowInfo)
 	// 이전 View의 Wireframe·오버레이 상태가 그림자에 영향을 주지 않게 한다.
 	RenderCommand::SetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 	// Slope Bias를 위한 전용 RasterizerState를 설정한다.
-	RenderCommand::SetRasterizerState(ERasterizerState::ShadowDepth);
+	// shadow_cull 설정에 따라 Back(기본) 또는 Front Face Culling 상태를 고른다.
+	const bool bFrontCull = FShadowSettings::GetCullMode() == EShadowCullMode::Front;
+
+	ERasterizerState ShadowRasterizerState = bFrontCull
+		? ERasterizerState::ShadowDepthFrontCull
+		: ERasterizerState::ShadowDepth;
+
+	// Directional만 정점을 변형하지 않는 하드웨어 Depth Clamp 상태를 선택한다.
+	// LightType은 이 함수 상단에 이미 선언되어 있다.
+	if (LightType == ELightType::Directional)
+	{
+		ShadowRasterizerState = bFrontCull ? ERasterizerState::DirectionalShadowDepthFrontCull : ERasterizerState::DirectionalShadowDepth;
+	}
+
+	RenderCommand::SetRasterizerState(ShadowRasterizerState);
 	RenderCommand::SetDepthStencilState(EDepthStencilState::Default);
 
 	// 실제 제출된 Draw 수를 전체 합계와 해당 그룹에 함께 기록한다.
