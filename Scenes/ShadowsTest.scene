@@ -99,10 +99,10 @@
                                 "CascadeTransitionFraction": 0.10000000149011612,
                                 "Intensity": 1.0,
                                 "LightColor": 4294967295,
-                                "ShadowBias": -0.29899999499320984,
+                                "ShadowBias": 0.0010000000474974513,
                                 "ShadowDistance": 100.0,
                                 "ShadowMapResolution": 4096,
-                                "ShadowPCFKernelSize": 0,
+                                "ShadowPCFKernelSize": 6,
                                 "SourceAngle": 1.1459156274795532,
                                 "Transform": {
                                     "Location": {
@@ -602,7 +602,7 @@
                                 "Intensity": 1.2999999523162842,
                                 "LightColor": 4294967295,
                                 "LightFalloffExponent": 1.0,
-                                "ShadowBias": 0.0,
+                                "ShadowBias": 0.0010000000474974513,
                                 "ShadowMapResolution": 1024,
                                 "ShadowPCFKernelSize": 7,
                                 "SourceRadius": 0.029999999329447746,
@@ -610,7 +610,7 @@
                                     "Location": {
                                         "X": 10.0,
                                         "Y": -10.0,
-                                        "Z": 5.0
+                                        "Z": 4.83490514755249
                                     },
                                     "Rotation": {
                                         "Pitch": 0.0,
@@ -624,7 +624,7 @@
                                     }
                                 },
                                 "bCastShadows": true,
-                                "bUsePCSS": false,
+                                "bUsePCSS": true,
                                 "bVisible": true
                             }
                         },
