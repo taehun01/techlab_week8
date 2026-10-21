@@ -220,8 +220,10 @@ void FRenderer::PrepareShadowParameters()
 		const FViewportSettings& Viewport = ShadowInfo.RenderingInfo.ViewportSetting;
 		Parameter.ShadowPCFKernelSize = ShadowInfo.LightProxy->GetLightComponent()->GetShadowPCFKernelSize();
 		Parameter.Resolution = Viewport.Width;
-		Parameter.TileIndex = (Viewport.StartY / Viewport.Height) * ShadowAtlasTilesPerRow
-			+ Viewport.StartX / Viewport.Width;
+		// 콘텐츠 해상도와 예약 블록 크기를 구분하고 실제 페이지 좌표를 전달한다.
+		Parameter.AtlasOffset[0] = Viewport.StartX;
+		Parameter.AtlasOffset[1] = Viewport.StartY;
+		Parameter.InvAtlasSize = 1.0f / static_cast<float>(DepthTexture->GetWidth());
 
 		// 같은 페이지의 타일들은 SRV 하나를 공유한다.
 		int32 PageIndex = ShadowDepthBindings.Find(DepthTexture);
@@ -357,23 +359,14 @@ void FRenderer::UpdateShadowStats()
 	}
 
 	uint64 DepthBytes = 0;
-	uint64 UsedTiles = 0;
-	uint64 TotalTiles = 0;
-	// 사용 타일 수가 아니라 모든 타입에서 확보한 페이지 메모리를 합산한다.
-	for (const auto& PoolEntry : ShadowViewRenderer->GetAtlasPools())
+	uint64 ReservedBytes = 0;
+	// 빈 페이지를 포함한 실제 메모리와 활성 POT 블록의 예약 면적을 구분한다.
+	for (const FShadowAtlas& Atlas : ShadowViewRenderer->GetAtlases())
 	{
-		for (const FShadowAtlas& Atlas : PoolEntry.second.ShadowAtlasArray)
-		{
-			const FTexture2D* Target = Atlas.Texture.get();
-			// 페이지 생성 시 검증을 마친 비압축·1 mip·1 slice·MSAA 1 자원이다.
-			DepthBytes += static_cast<uint64>(Target->GetWidth())
-				* Target->GetHeight() * FormatToBytes(Target->GetFormat());
-
-			// 캐시는 추가 메모리 없이 할당된 타일 내용을 재사용하므로 점유율만 따로 본다.
-			TotalTiles += FShadowViewRenderer::TilesPerAtlas;
-			for (uint32 Tile = 0; Tile < FShadowViewRenderer::TilesPerAtlas; ++Tile)
-				UsedTiles += Atlas.UsedTiles[Tile] ? 1 : 0;
-		}
+		const FTexture2D* Target = Atlas.Texture.get();
+		const uint32 BytesPerTexel = FormatToBytes(Target->GetFormat());
+		DepthBytes += static_cast<uint64>(Target->GetWidth()) * Target->GetHeight() * BytesPerTexel;
+		ReservedBytes += Atlas.Layout.GetUsedArea() * BytesPerTexel;
 	}
 
 	// 실제 사용 항목 수가 아니라 확보한 버퍼 용량이다.
@@ -402,8 +395,9 @@ void FRenderer::UpdateShadowStats()
 	// Local은 World 공유 작업이므로 Directional 그룹의 View 수만 기록한다.
 	FStatRegistry::SetCounter(ShadowStats::STAT_SingleViews, SingleViewIds.Num());
 	FStatRegistry::SetCounter(ShadowStats::STAT_CSMViews, CSMViewIds.Num());
-	FStatRegistry::SetCounter(ShadowStats::STAT_UsedTiles, UsedTiles);
-	FStatRegistry::SetCounter(ShadowStats::STAT_TotalTiles, TotalTiles);
+	FStatRegistry::SetCounter(ShadowStats::STAT_AtlasAllocations, ShadowViewRenderer->GetAllocationCount());
+	FStatRegistry::SetCounter(ShadowStats::STAT_AtlasPages, ShadowViewRenderer->GetAtlases().Num());
+	FStatRegistry::SetMemory(ShadowStats::STAT_AtlasReservedMemory, ReservedBytes);
 }
 
 // 카메라의 ViewProjection을 공통 렌더 경로로 전달한다.
@@ -592,14 +586,13 @@ namespace ShadowCachePrivate
 // 유효한 프로젝션이 설정된 섀도우 맵 타깃을 준비한다.
 void FRenderer::PrepareShadowDepthTargets(TArray<FProjectedShadowInfo>& ShadowInfos)
 {
-	static_assert(ShadowAtlasTilesPerRow == FShadowViewRenderer::TilesPerRow);
-	static_assert(FShadowViewRenderer::TilesPerAtlas == ShadowAtlasTilesPerRow * ShadowAtlasTilesPerRow);
-	TMap<ELightType, TSet<FShadowAllocationKey>> ActiveKeysByType;
+	TSet<FShadowAllocationKey> ActiveKeys;
+	ActiveKeys.Reserve(ShadowInfos.Num());
 	for (FProjectedShadowInfo& ShadowInfo : ShadowInfos)
 	{
 		// 타깃 재배정 전에 이전 비소유 참조를 비우고 전체 활성 키를 모은다.
 		ShadowInfo.SetRenderingInfo(FRenderingInfo{});
-		if(!ShadowInfo.HasCasters())
+		if (!ShadowInfo.HasCasters())
 		{
 			continue;
 		}
@@ -607,36 +600,62 @@ void FRenderer::PrepareShadowDepthTargets(TArray<FProjectedShadowInfo>& ShadowIn
 		const FShadowAllocationKey Key{
 			Light->GetUUID(), ShadowInfo.ProjectionIndex, ShadowInfo.ViewId
 		};
-		ActiveKeysByType[Light->GetLightType()].Add(Key);
+		ActiveKeys.Add(Key);
 	}
 
 	// 같은 라이트에서 사라진 Cascade·View의 타일도 반환한다.
-	ShadowViewRenderer->ReleaseUnusedShadowInfos(ActiveKeysByType);
+	ShadowViewRenderer->ReleaseUnusedShadowInfos(ActiveKeys);
 
-	for (FProjectedShadowInfo& ShadowInfo : ShadowInfos)
+	TArray<int32> AllocationOrder;
+	AllocationOrder.Reserve(ShadowInfos.Num());
+	for (int32 Index = 0; Index < ShadowInfos.Num(); ++Index)
 	{
+		const FProjectedShadowInfo& ShadowInfo = ShadowInfos[Index];
 		if (!ShadowInfo.HasCasters())
 		{
 			continue;
 		}
 		const ULightComponent* Light = ShadowInfo.LightProxy->GetLightComponent();
-		const ELightType LightType = Light->GetLightType();
+		const uint32 Resolution = static_cast<uint32>(FShadowSettings::GetEffectiveResolution(Light->GetShadowMapResolution()));
+		const FShadowAllocationKey Key{ Light->GetUUID(), ShadowInfo.ProjectionIndex, ShadowInfo.ViewId };
+		// 해상도 변경으로 반환되는 공간도 신규 배정 전에 모두 확보한다.
+		const FShadowData* ExistingData = ShadowViewRenderer->FindShadowInfo(Key);
+		if (ExistingData && ExistingData->Resolution != Resolution)
+			ShadowViewRenderer->ReleaseShadowInfo(Key);
+		AllocationOrder.Add(Index);
+	}
+
+	// 논리 작업 배열을 정렬하지 않아 Point 6면과 CSM의 GPU 인덱스를 유지한다.
+	std::stable_sort(AllocationOrder.begin(), AllocationOrder.end(),
+		[&ShadowInfos](int32 LeftIndex, int32 RightIndex)
+		{
+			const ULightComponent* LeftLight = ShadowInfos[LeftIndex].LightProxy->GetLightComponent();
+			const ULightComponent* RightLight = ShadowInfos[RightIndex].LightProxy->GetLightComponent();
+			const uint32 LeftResolution = static_cast<uint32>(FShadowSettings::GetEffectiveResolution(LeftLight->GetShadowMapResolution()));
+			const uint32 RightResolution = static_cast<uint32>(FShadowSettings::GetEffectiveResolution(RightLight->GetShadowMapResolution()));
+			return FTextureLayout::GetBlockSize(LeftResolution, LeftResolution)
+				> FTextureLayout::GetBlockSize(RightResolution, RightResolution);
+		});
+
+	for (int32 Index : AllocationOrder)
+	{
+		FProjectedShadowInfo& ShadowInfo = ShadowInfos[Index];
+		const ULightComponent* Light = ShadowInfo.LightProxy->GetLightComponent();
 		const uint32 Resolution = static_cast<uint32>(FShadowSettings::GetEffectiveResolution(Light->GetShadowMapResolution()));
 		const FShadowAllocationKey AllocKey{
 			Light->GetUUID(), ShadowInfo.ProjectionIndex, ShadowInfo.ViewId
 		};
-		const FShadowData* Data = ShadowViewRenderer->AllocateShadowInfo(LightType, AllocKey, Resolution);
+		const FShadowData* Data = ShadowViewRenderer->AllocateShadowInfo(AllocKey, Resolution);
 		if (!Data)
 			continue;
 
-		// AtlasIndex는 타입 풀 내부 번호이며 Shader의 바인딩 번호와는 다르다.
-		const FShadowAtlasPool& Pool = *ShadowViewRenderer->FindPool(LightType);
+		// AtlasIndex는 물리 페이지 번호이며 Shader의 바인딩 번호와는 다르다.
 		FRenderingInfo RenderingInfo{};
-		RenderingInfo.ViewportSetting.StartX = (Data->TileIndex % ShadowAtlasTilesPerRow) * Resolution;
-		RenderingInfo.ViewportSetting.StartY = (Data->TileIndex / ShadowAtlasTilesPerRow) * Resolution;
-		RenderingInfo.ViewportSetting.Width = Resolution;
-		RenderingInfo.ViewportSetting.Height = Resolution;
-		RenderingInfo.DepthStencil.Texture = Pool.ShadowAtlasArray[Data->AtlasIndex].Texture.get();
+		RenderingInfo.ViewportSetting.StartX = Data->BaseX;
+		RenderingInfo.ViewportSetting.StartY = Data->BaseY;
+		RenderingInfo.ViewportSetting.Width = Data->Resolution;
+		RenderingInfo.ViewportSetting.Height = Data->Resolution;
+		RenderingInfo.DepthStencil.Texture = ShadowViewRenderer->GetAtlases()[Data->AtlasIndex].Texture.get();
 		// 각 타일 패스에서 다른 영역의 깊이를 보존한다.
 		RenderingInfo.DepthStencil.LoadOp = ERenderTargetLoadOp::Load;
 		RenderingInfo.DepthStencil.StoreOp = ERenderTargetStoreOp::Store;
@@ -703,7 +722,7 @@ void FRenderer::RenderShadowMaps(TArray<FProjectedShadowInfo>&& InShadows, FShad
 			RenderShadowDepth(ShadowInfo);
 			ShadowCachePrivate::AddCacheMissStat(ShadowInfo.CacheResult);
 
-			ShadowViewRenderer->UpdateShadowCache(Type, AllocKey, ShadowInfo.CacheKey, ShadowFrameIndex);
+			ShadowViewRenderer->UpdateShadowCache(AllocKey, ShadowInfo.CacheKey, ShadowFrameIndex);
 		}
 		else
 		{

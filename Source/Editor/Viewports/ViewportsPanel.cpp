@@ -499,10 +499,18 @@ void FViewportsPanel::DrawStatOverlay(ImDrawList* DrawList, const ImVec2& ViewMi
 			FStatRegistry::GetCounter(ShadowStats::STAT_CacheMissGeneration),
 			FStatRegistry::GetCounter(ShadowStats::STAT_CacheMissViewProjection),
 			FStatRegistry::GetCounter(ShadowStats::STAT_CacheMissCasters)), ValueColor });
-		Lines.Add({ std::format("  Tile clears: {}  Atlas tiles used: {} / {}",
+		// 실제 확보한 페이지 용량 대비 POT 예약 블록의 점유율을 표시한다.
+		const uint64 AtlasDepthBytes = FStatRegistry::GetMemory(ShadowStats::STAT_DepthMemory);
+		const uint64 ReservedBytes = FStatRegistry::GetMemory(ShadowStats::STAT_AtlasReservedMemory);
+		const double Occupancy = AtlasDepthBytes > 0
+			? 100.0 * static_cast<double>(ReservedBytes) / static_cast<double>(AtlasDepthBytes)
+			: 0.0;
+		Lines.Add({ std::format("  Tile clears: {}  Atlas pages: {}  Allocations: {}",
 			FStatRegistry::GetCounter(ShadowStats::STAT_TileClears),
-			FStatRegistry::GetCounter(ShadowStats::STAT_UsedTiles),
-			FStatRegistry::GetCounter(ShadowStats::STAT_TotalTiles)), ValueColor });
+			FStatRegistry::GetCounter(ShadowStats::STAT_AtlasPages),
+			FStatRegistry::GetCounter(ShadowStats::STAT_AtlasAllocations)), ValueColor });
+		Lines.Add({ std::format("  Reserved: {:.2f} MiB  Block occupancy: {:.1f}%",
+			static_cast<double>(ReservedBytes) / BytesPerMegabyte, Occupancy), ValueColor });
 
 		const uint64 DepthBytes = FStatRegistry::GetMemory(ShadowStats::STAT_DepthMemory);
 		const uint64 ParameterBytes = FStatRegistry::GetMemory(ShadowStats::STAT_ParameterMemory);

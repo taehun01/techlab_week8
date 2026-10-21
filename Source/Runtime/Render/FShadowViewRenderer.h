@@ -4,9 +4,8 @@
 #include "Containers/Map.h"
 #include "Containers/Set.h"
 #include "Texture2D.h"
+#include "TextureLayout.h"
 #include "PipelineState.h"
-
-enum class ELightType;
 
 // 같은 라이트의 투영과 View별 그림자 작업을 서로 다른 타일에 연결한다.
 struct FShadowAllocationKey
@@ -74,11 +73,13 @@ inline const char* GetShadowCacheResultName(EShadowCacheResult Result)
 	}
 }
 
-// 투영 행렬은 작업 Info가 보관하며, 할당 결과에는 풀 내부 위치, 캐시 키를 남긴다.
+// 논리 그림자 작업의 물리 위치와 기존 Depth 캐시 상태를 함께 보관한다.
 struct FShadowData
 {
 	uint32 AtlasIndex = 0;
-	uint32 TileIndex = 0;
+	uint32 BaseX = 0;
+	uint32 BaseY = 0;
+	uint32 Resolution = 0;
 
 	// Shadow Caching
 	bool bIsValid = false;
@@ -87,52 +88,48 @@ struct FShadowData
 	uint64 LastUpdatedFrame = 0;
 };
 
-// 한 페이지가 실제 Depth 자원과 네 타일의 점유 상태를 소유한다.
+// 페이지 하나가 텍스처와 그 텍스처의 공간 배치기를 소유한다.
 struct FShadowAtlas
 {
+	explicit FShadowAtlas(uint32 InSize)
+		: Layout(InSize)
+	{
+	}
+
 	TUniquePtr<FTexture2D> Texture;
-	bool UsedTiles[4] = {};
-	uint32 TileResolution = 1024;
+	FTextureLayout Layout;
 };
 
-// 라이트 종류마다 페이지와 할당 수명을 분리하고 배정 알고리즘은 공유한다.
-struct FShadowAtlasPool
-{
-	TMap<FShadowAllocationKey, FShadowData> ShadowInfoMap;
-	TArray<FShadowAtlas> ShadowAtlasArray;
-};
-
-// Atlas 자원과 타일 배정, 캐시 상태, 타일 clear를 관리하며, 실제 Depth 렌더링은 FRenderer가 수행한다.
+// 통합 페이지, 키별 배정, Depth 캐시를 관리한다. 실제 Depth 렌더링은 FRenderer가 수행한다.
 class FShadowViewRenderer
 {
 public:
+	static constexpr uint32 AtlasSize = 8192;
+	static constexpr uint32 MaxAtlasPages = 16;
+
 	bool Init();
 
-	static constexpr uint32 TilesPerRow = 2;
-	static constexpr uint32 TilesPerAtlas = 4;
+	const FShadowData* AllocateShadowInfo(const FShadowAllocationKey& Key, uint32 Resolution);
+	void ReleaseShadowInfo(const FShadowAllocationKey& Key);
+	void ReleaseUnusedShadowInfos(const TSet<FShadowAllocationKey>& ActiveKeys);
 
-	// 지원 종류를 검사한 뒤 필요할 때만 풀과 페이지를 만든다. 해상도 범위는 호출자가 보장한다.
-	const FShadowData* AllocateShadowInfo(ELightType Type, const FShadowAllocationKey& Key, uint32 TileResolution);
-	void ReleaseShadowInfo(ELightType Type, const FShadowAllocationKey& Key);
-	void ReleaseUnusedShadowInfos(const TMap<ELightType, TSet<FShadowAllocationKey>>& ActiveAllocations);
+	// 렌더링과 통계에서는 할당 상태를 변경하지 않고 위치와 자원을 조회한다.
+	const FShadowData* FindShadowInfo(const FShadowAllocationKey& Key) const { return ShadowInfoMap.Find(Key); }
+	const TArray<FShadowAtlas>& GetAtlases() const { return ShadowAtlasArray; }
+	uint32 GetAllocationCount() const { return ShadowInfoMap.Num(); }
 
-	// 렌더링과 통계는 할당 상태를 변경하지 않고 종류별 자원을 조회한다.
-	const FShadowAtlasPool* FindPool(ELightType Type) const { return AtlasPools.Find(Type); }
-	const TMap<ELightType, FShadowAtlasPool>& GetAtlasPools() const { return AtlasPools; }
-
-	// 저장한 투영과 Caster 키로 캐시 유효성을 확인한다.
-	bool CheckShadowCache(ELightType InType, const FShadowAllocationKey& InAllocKey, const FShadowCacheKey& InCacheKey) const;
-	// shadow cache 갱신
-	void UpdateShadowCache(ELightType InType, const FShadowAllocationKey& InAllocKey, const FShadowCacheKey& InCacheKey, uint64 InFrame);
+	void UpdateShadowCache(const FShadowAllocationKey& Key, const FShadowCacheKey& CacheKey, uint64 Frame);
 
 	// BeginRenderPass로 타일 DSV와 뷰포트가 설정된 후 호출해야한다.
 	void ClearBoundTile();
 
 private:
-	bool AddNewAtlas(FShadowAtlasPool& Pool, uint32 TileResolution);
-	const FShadowData* AddShadowInfo(FShadowAtlasPool& Pool, const FShadowAllocationKey& Key, uint32 AtlasIndex, uint32 TileIndex);
+	bool AddNewAtlas();
+	const FShadowData* AddShadowInfo(const FShadowAllocationKey& Key,
+		uint32 AtlasIndex, uint32 BaseX, uint32 BaseY, uint32 Resolution);
 
-	TMap<ELightType, FShadowAtlasPool> AtlasPools;
+	TMap<FShadowAllocationKey, FShadowData> ShadowInfoMap;
+	TArray<FShadowAtlas> ShadowAtlasArray;
 
 	// 각 뷰포트의 DSV를 Clear하기 위한 파이프라인. Shadow Cache가 Miss인 경우 해당 뷰포트만 clear한다.
 	FPipelineState ClearPipelineState{};

@@ -1,17 +1,20 @@
 #include "EnginePCH.h"
 #include "FShadowViewRenderer.h"
-#include "Components/LightComponentBase.h"
 #include "RenderCommand.h"
 #include "RenderResourceManager.h"
 #include "Core/Stats/ShadowStats.h"
 
+#include <cassert>
 
-// 타일 네 개가 같은 해상도를 사용하는 기존 2x2 Depth 페이지를 만든다.
-bool FShadowViewRenderer::AddNewAtlas(FShadowAtlasPool& Pool, uint32 TileResolution)
+// 고정 크기 페이지를 필요할 때 한 장씩 만든다. 빈 페이지도 이후 재사용한다.
+bool FShadowViewRenderer::AddNewAtlas()
 {
+	if (ShadowAtlasArray.Num() >= static_cast<int32>(MaxAtlasPages))
+		return false;
+
 	D3D11_TEXTURE2D_DESC Desc{};
-	Desc.Width = TileResolution * TilesPerRow;
-	Desc.Height = TileResolution * TilesPerRow;
+	Desc.Width = AtlasSize;
+	Desc.Height = AtlasSize;
 	Desc.MipLevels = 1;
 	Desc.ArraySize = 1;
 	Desc.Format = DXGI_FORMAT_R24G8_TYPELESS;
@@ -19,26 +22,27 @@ bool FShadowViewRenderer::AddNewAtlas(FShadowAtlasPool& Pool, uint32 TileResolut
 	Desc.Usage = D3D11_USAGE_DEFAULT;
 	Desc.BindFlags = D3D11_BIND_DEPTH_STENCIL | D3D11_BIND_SHADER_RESOURCE;
 
-	FShadowAtlas Atlas;
+	FShadowAtlas Atlas(AtlasSize);
 	Atlas.Texture = RenderCommand::CreateTexture2D(Desc);
 	if (!Atlas.Texture || !Atlas.Texture->GetDSV() || !Atlas.Texture->GetSRV())
 	{
 		HTR_LOG(Error, "Shadow Atlas creation failed: {}x{}", Desc.Width, Desc.Height);
 		return false;
 	}
-	Atlas.TileResolution = TileResolution;
-	Pool.ShadowAtlasArray.Add(std::move(Atlas));
+	ShadowAtlasArray.Add(std::move(Atlas));
 	return true;
 }
 
-// 타일 점유와 키의 위치 기록을 한 경로에서 함께 갱신한다.
-const FShadowData* FShadowViewRenderer::AddShadowInfo(FShadowAtlasPool& Pool, const FShadowAllocationKey& Key, uint32 AtlasIndex, uint32 TileIndex)
+// 같은 좌표를 재사용하더라도 이전 작업의 캐시 상태를 계승하지 않는다.
+const FShadowData* FShadowViewRenderer::AddShadowInfo(const FShadowAllocationKey& Key,
+	uint32 AtlasIndex, uint32 BaseX, uint32 BaseY, uint32 Resolution)
 {
-	Pool.ShadowAtlasArray[AtlasIndex].UsedTiles[TileIndex] = true;
-	FShadowData& Data = Pool.ShadowInfoMap[Key];
+	FShadowData& Data = ShadowInfoMap[Key];
 	Data = FShadowData{};
 	Data.AtlasIndex = AtlasIndex;
-	Data.TileIndex = TileIndex;
+	Data.BaseX = BaseX;
+	Data.BaseY = BaseY;
+	Data.Resolution = Resolution;
 	return &Data;
 }
 
@@ -58,99 +62,78 @@ bool FShadowViewRenderer::Init()
 	return true;
 }
 
-const FShadowData* FShadowViewRenderer::AllocateShadowInfo(ELightType Type, const FShadowAllocationKey& Key, uint32 TileResolution)
+// 기존 배정을 유지하고, 기존 페이지에 공간이 없을 때만 페이지를 늘린다.
+const FShadowData* FShadowViewRenderer::AllocateShadowInfo(const FShadowAllocationKey& Key, uint32 Resolution)
 {
-	// 현재 생성 경로가 있는 라이트만 허용하고, 이후 배정은 같은 알고리즘을 사용한다.
-	switch (Type)
-	{
-	case ELightType::Directional:
-	case ELightType::Spot:
-	case ELightType::Point:
-		break;
-	default:
+	if (Resolution == 0 || Resolution > AtlasSize)
 		return nullptr;
-	}
 
-	FShadowAtlasPool& Pool = AtlasPools[Type];
-	if (const FShadowData* Data = Pool.ShadowInfoMap.Find(Key))
+	if (const FShadowData* Data = ShadowInfoMap.Find(Key))
 	{
-		if (Pool.ShadowAtlasArray[Data->AtlasIndex].TileResolution == TileResolution)
-		{
-			// 같은 작업과 해상도는 기존 위치를 유지한다.
+		if (Data->Resolution == Resolution)
 			return Data;
-		}
-		// 해상도가 바뀐 작업만 이전 타일을 반환하고 다시 배정한다.
-		ReleaseShadowInfo(Type, Key);
+
+		ReleaseShadowInfo(Key);
 	}
 
-	for (int32 AtlasIndex = 0; AtlasIndex < Pool.ShadowAtlasArray.Num(); ++AtlasIndex)
+	uint32 BaseX = 0;
+	uint32 BaseY = 0;
+	for (int32 AtlasIndex = 0; AtlasIndex < ShadowAtlasArray.Num(); ++AtlasIndex)
 	{
-		FShadowAtlas& Atlas = Pool.ShadowAtlasArray[AtlasIndex];
-		// 페이지 내부의 타일 해상도는 모두 같아야 한다.
-		if (Atlas.TileResolution != TileResolution)
-			continue;
-
-		for (uint32 TileIndex = 0; TileIndex < TilesPerAtlas; ++TileIndex)
-		{
-			if (!Atlas.UsedTiles[TileIndex])
-			{
-				return AddShadowInfo(Pool, Key, AtlasIndex, TileIndex);
-			}
-		}
+		FShadowAtlas& Atlas = ShadowAtlasArray[AtlasIndex];
+		if (Atlas.Layout.AddElement(BaseX, BaseY, Resolution, Resolution))
+			return AddShadowInfo(Key, static_cast<uint32>(AtlasIndex), BaseX, BaseY, Resolution);
 	}
 
-	if (!AddNewAtlas(Pool, TileResolution))
+	if (!AddNewAtlas())
 		return nullptr;
 
-	const uint32 AtlasIndex = Pool.ShadowAtlasArray.Num() - 1;
-	return AddShadowInfo(Pool, Key, AtlasIndex, 0);
+	const uint32 AtlasIndex = static_cast<uint32>(ShadowAtlasArray.Num() - 1);
+	if (!ShadowAtlasArray[AtlasIndex].Layout.AddElement(BaseX, BaseY, Resolution, Resolution))
+		return nullptr;
+
+	return AddShadowInfo(Key, AtlasIndex, BaseX, BaseY, Resolution);
 }
 
-// 존재하지 않는 풀은 만들지 않고, 사용하던 타일만 반환한다.
-void FShadowViewRenderer::ReleaseShadowInfo(ELightType Type, const FShadowAllocationKey& Key)
+// 배치기의 반환에 성공했을 때만 키를 지워 두 자료구조의 상태를 맞춘다.
+void FShadowViewRenderer::ReleaseShadowInfo(const FShadowAllocationKey& Key)
 {
-	FShadowAtlasPool* Pool = AtlasPools.Find(Type);
-	if (!Pool)
+	const FShadowData* Data = ShadowInfoMap.Find(Key);
+	if (!Data)
 		return;
 
-	if (const FShadowData* Data = Pool->ShadowInfoMap.Find(Key))
-	{
-		Pool->ShadowAtlasArray[Data->AtlasIndex].UsedTiles[Data->TileIndex] = false;
-		Pool->ShadowInfoMap.Remove(Key);
-	}
+	FTextureLayout& Layout = ShadowAtlasArray[Data->AtlasIndex].Layout;
+	const bool bReleased = Layout.RemoveElement(Data->BaseX, Data->BaseY, Data->Resolution, Data->Resolution);
+	// 반환 호출은 Release 빌드에서도 실행해야 하므로 assert 밖에 둔다.
+	assert(bReleased);
+	if (bReleased)
+		ShadowInfoMap.Remove(Key);
 }
 
-// 활성 목록에 종류 자체가 없으면 해당 풀의 모든 할당을 반환한다.
-void FShadowViewRenderer::ReleaseUnusedShadowInfos(const TMap<ELightType, TSet<FShadowAllocationKey>>& ActiveAllocations)
+// 전체 World와 View에서 이번 프레임에 사용하지 않는 할당만 반환한다.
+void FShadowViewRenderer::ReleaseUnusedShadowInfos(const TSet<FShadowAllocationKey>& ActiveKeys)
 {
-	for (auto& [Type, Pool] : AtlasPools)
+	TArray<FShadowAllocationKey> RemovedKeys;
+	for (const auto& Entry : ShadowInfoMap)
 	{
-		const TSet<FShadowAllocationKey>* ActiveKeys = ActiveAllocations.Find(Type);
-		TArray<FShadowAllocationKey> RemovedKeys;
-		for (const auto& Entry : Pool.ShadowInfoMap)
-		{
-			if (!ActiveKeys || !ActiveKeys->Contains(Entry.first))
-				RemovedKeys.Add(Entry.first);
-		}
-		// 맵 순회가 끝난 뒤 제거해 반복자를 무효화하지 않는다.
-		for (const FShadowAllocationKey& Key : RemovedKeys)
-			ReleaseShadowInfo(Type, Key);
+		if (!ActiveKeys.Contains(Entry.first))
+			RemovedKeys.Add(Entry.first);
 	}
-	// TODO(ShadowAtlas): 빈 페이지를 회수할 때 남은 할당의 AtlasIndex 갱신도 함께 처리한다.
+
+	// 맵 순회가 끝난 뒤 제거한다. 페이지 배열은 지우거나 재정렬하지 않는다.
+	for (const FShadowAllocationKey& Key : RemovedKeys)
+		ReleaseShadowInfo(Key);
 }
 
-// shadow cache 갱신
-void FShadowViewRenderer::UpdateShadowCache(ELightType InType, const FShadowAllocationKey& InAllocKey, const FShadowCacheKey& InCacheKey, uint64 InFrame)
+// 실제 Depth 렌더링을 마친 작업에 대해서만 기존 캐시 정보를 갱신한다.
+void FShadowViewRenderer::UpdateShadowCache(const FShadowAllocationKey& Key,
+	const FShadowCacheKey& CacheKey, uint64 Frame)
 {
-	FShadowAtlasPool* Pool = AtlasPools.Find(InType);
-	if (!Pool)
-		return;
-
-	if (FShadowData* Data = Pool->ShadowInfoMap.Find(InAllocKey))
+	if (FShadowData* Data = ShadowInfoMap.Find(Key))
 	{
-		Data->CacheKey = InCacheKey;
+		Data->CacheKey = CacheKey;
 		Data->bIsValid = true;
-		Data->LastUpdatedFrame = InFrame;
+		Data->LastUpdatedFrame = Frame;
 	}
 }
 

@@ -121,6 +121,8 @@ namespace ShadowStats
     DECLARE_COUNTER_STAT("Shadow Cache Miss ViewProjection", STAT_CacheMissViewProjection);
     DECLARE_COUNTER_STAT("Shadow Cache Miss Casters", STAT_CacheMissCasters);
     DECLARE_COUNTER_STAT("Shadow Tile Clears", STAT_TileClears);
-    DECLARE_COUNTER_STAT("Shadow Atlas Used Tiles", STAT_UsedTiles);
-    DECLARE_COUNTER_STAT("Shadow Atlas Total Tiles", STAT_TotalTiles);
+    // 가변 크기 배치의 활성 배정 수와 실제 예약 블록 면적을 따로 기록한다.
+    DECLARE_COUNTER_STAT("Shadow Atlas Allocations", STAT_AtlasAllocations);
+    DECLARE_COUNTER_STAT("Shadow Atlas Pages", STAT_AtlasPages);
+    DECLARE_MEMORY_STAT("Shadow Atlas Reserved Memory", STAT_AtlasReservedMemory);
 }

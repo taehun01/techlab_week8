@@ -22,6 +22,11 @@ void ULightComponent::PostEditChangeProperty(const FProperty& Property)
 		// 음수를 편집하면 표시값도 실제 사용값인 0으로 맞춘다.
 		ShadowPCFKernelSize = GetShadowPCFKernelSize();
 	}
+	else if (Property.Name == "ShadowBias")
+	{
+		// 편집 화면에도 Getter가 보장하는 음수 없는 값을 반영한다.
+		ShadowBias = GetShadowBias();
+	}
 }
 
 void ULightComponent::CreateRenderState()

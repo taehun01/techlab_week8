@@ -11,6 +11,8 @@
 #include "Material.h"
 #include "ProjectedShadowInfo.h"
 
+#include <cstddef>
+
 constexpr uint32 ObjectSlotBytes = 256;
 
 // World, View가 공유하는 Runtime 그림자 품질 임계값.
@@ -78,17 +80,19 @@ struct alignas(16) FShadowShaderParameters
 	FMatrix LightViewProjection = FMatrix::Identity;
 	float Bias = 0.0f;
 	uint32 Resolution = 0;
-	// 같은 해상도의 그림자 네 개가 Atlas 페이지 한 장을 공유한다.
 	int32 AtlasPageIndex = -1;
-	uint32 TileIndex = 0;
 	int32 ShadowPCFKernelSize = 0;
+	// 실제 콘텐츠의 시작 텍셀과 필터 설정을 HLSL의 같은 위치에 배치한다.
+	uint32 AtlasOffset[2]{};
 	uint32 IsKnownEmpty = 0;
-	float pad[2]{};
-	// 기존 빈 작업 플래그를 유지한 채 PCSS에 필요한 별도 행을 추가한다.
-	FVector ShadowViewSize = FVector::ZeroVector;
 	uint32 UsePCSS = 0;
+	FVector ShadowViewSize = FVector::ZeroVector;
+	float InvAtlasSize = 0.0f;
 };
 static_assert(sizeof(FShadowShaderParameters) == 112);
+static_assert(offsetof(FShadowShaderParameters, AtlasOffset) == 80);
+static_assert(offsetof(FShadowShaderParameters, ShadowViewSize) == 96);
+static_assert(offsetof(FShadowShaderParameters, InvAtlasSize) == 108);
 
 // 컬링 방식별 셀 크기. Tiled는 슬라이스 1개인 Clustered와 같다.
 constexpr uint32 TiledTileSize = 16;
@@ -347,12 +351,10 @@ private:
 	static constexpr uint32 ShadowParameterSlot = 13;
 	static constexpr uint32 ShadowDepthTextureSlot = 14;
 
-	// SM5.0의 정적 텍스처 선택 분기와 동일한 페이지 바인딩 한도다.
-	// 같은 해상도라면 페이지당 네 개, 총 32개 그림자를 읽을 수 있다.
-	static constexpr uint32 MaxBoundShadowAtlases = 8;
-	static constexpr uint32 ShadowAtlasTilesPerRow = 2;
+	// SM5.0의 정적 선택 분기와 관리자의 물리 페이지 한도를 맞춘다.
+	static constexpr uint32 MaxBoundShadowAtlases = FShadowViewRenderer::MaxAtlasPages;
 
-	// Engine이 소유한 타입별 Atlas 관리자를 빌려 타깃과 GPU 정보를 연결한다.
+	// Engine이 소유한 통합 Atlas 관리자를 빌려 타깃과 GPU 정보를 연결한다.
 	FShadowViewRenderer* ShadowViewRenderer = nullptr;
 	TArray<FProjectedShadowInfo> ProjectedShadows;
 
