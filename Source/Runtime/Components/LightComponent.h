@@ -48,7 +48,7 @@ private:
 	// 해상도
 	int32 ShadowMapResolution = 1024;
 	// Receiver의 깊이 비교에 사용할 Bias
-	float ShadowBias = 0; // 0.0005f;
+	float ShadowBias = 0.001f;
 
 	// 한 축의 샘플 수. 0은 Hard Shadow, 1은 중심의 하드웨어 PCF 한 번이다.
 	int32 ShadowPCFKernelSize = 2;
