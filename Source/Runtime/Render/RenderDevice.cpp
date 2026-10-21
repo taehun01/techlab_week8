@@ -426,7 +426,7 @@ void FRenderDevice::CreateStates()
 		Desc.FillMode = D3D11_FILL_SOLID;
 		Desc.CullMode = D3D11_CULL_BACK;
 		Desc.DepthClipEnable = true;
-		Desc.DepthBias = 10000;
+		Desc.DepthBias = 0;
 		Desc.SlopeScaledDepthBias = 1.0f;
 		Desc.DepthBiasClamp = 0.01f;
 

@@ -22,5 +22,5 @@ public:
 private:
 	inline static bool bCacheWholeSceneShadows = true;
 	inline static uint64 CacheGeneration = 1;
-	inline static int32 MaxResolution = 1024;
+	inline static int32 MaxResolution = 4096;
 };

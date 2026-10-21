@@ -17,7 +17,7 @@
 #define LIGHT_DEBUG_MODE_SLICES       3
 
 // Normal Bias와 Slope Bias에 쓰일 상수 값이다.
-#define SHADOW_NORMAL_BIAS_SCALE 0.01f
+#define SHADOW_NORMAL_BIAS_SCALE 0.05f
 
 // 조명 모델은 C++(FRenderResourceManager::LoadUberLit)이 매크로로 하나만 넘긴다.
 // 아무 매크로 없이 컴파일될 때(기존 머티리얼이 쓰는 기본 키)만 Lambert를 켠다.
@@ -143,9 +143,8 @@ SamplerComparisonState PCFSampler : register(s1);
 
 #if defined(LIGHTING_MODEL_LAMBERT) || defined(LIGHTING_MODEL_BLINN_PHONG)
 
-// Renderer의 MaxBoundShadowAtlases·ShadowAtlasTilesPerRow와 같아야 한다.
-#define MAX_BOUND_SHADOW_ATLASES 8
-#define SHADOW_ATLAS_TILES_PER_ROW 2
+// Renderer의 MaxBoundShadowAtlases와 같아야 한다.
+#define MAX_BOUND_SHADOW_ATLASES 16
 
 // C++ FShadowShaderParameters와 동일한 112바이트 레이아웃이다.
 struct FShadowShaderParameters
@@ -154,12 +153,14 @@ struct FShadowShaderParameters
     float Bias;
     uint Resolution;
     int AtlasPageIndex;
-    uint TileIndex;
     int ShadowPCFKernelSize;
+
+    uint2 AtlasOffset;
     uint IsKnownEmpty;
-    float2 pad;
-    float3 ShadowViewSize;
     uint UsePCSS;
+
+    float3 ShadowViewSize;
+    float InvAtlasSize;
 };
 
 // 전체 그림자 정보는 가변 개수로 전달한다.
@@ -215,6 +216,8 @@ float SampleShadowAtlas(int AtlasPageIndex, SamplerComparisonState Sampler, floa
     {
         SHADOW_DEPTH_CASE(0);SHADOW_DEPTH_CASE(1);SHADOW_DEPTH_CASE(2);SHADOW_DEPTH_CASE(3);
         SHADOW_DEPTH_CASE(4);SHADOW_DEPTH_CASE(5);SHADOW_DEPTH_CASE(6);SHADOW_DEPTH_CASE(7);
+        SHADOW_DEPTH_CASE(8);SHADOW_DEPTH_CASE(9);SHADOW_DEPTH_CASE(10);SHADOW_DEPTH_CASE(11);
+        SHADOW_DEPTH_CASE(12);SHADOW_DEPTH_CASE(13);SHADOW_DEPTH_CASE(14);SHADOW_DEPTH_CASE(15);
         default:
             return 1.0f;
     }
@@ -234,6 +237,10 @@ float LoadShadowDepth(int AtlasPageIndex, int2 Texel)
         SHADOW_DEPTH_LOAD_CASE(2);SHADOW_DEPTH_LOAD_CASE(3);
         SHADOW_DEPTH_LOAD_CASE(4);SHADOW_DEPTH_LOAD_CASE(5);
         SHADOW_DEPTH_LOAD_CASE(6);SHADOW_DEPTH_LOAD_CASE(7);
+        SHADOW_DEPTH_LOAD_CASE(8);SHADOW_DEPTH_LOAD_CASE(9);
+        SHADOW_DEPTH_LOAD_CASE(10);SHADOW_DEPTH_LOAD_CASE(11);
+        SHADOW_DEPTH_LOAD_CASE(12);SHADOW_DEPTH_LOAD_CASE(13);
+        SHADOW_DEPTH_LOAD_CASE(14);SHADOW_DEPTH_LOAD_CASE(15);
         default:
             return 1.0f;
     }
@@ -244,21 +251,14 @@ float LoadShadowDepth(int AtlasPageIndex, int2 Texel)
 // 타일 내부에서만 깊이를 읽어 Hard Shadow와 Blocker 검색이 이웃 타일을 참조하지 않게 한다.
 float LoadShadowTileDepth(FShadowShaderParameters Shadow, float2 UV)
 {
-    const uint2 Tile = uint2(
-        Shadow.TileIndex % SHADOW_ATLAS_TILES_PER_ROW,
-        Shadow.TileIndex / SHADOW_ATLAS_TILES_PER_ROW
-    );
     const int2 LocalTexel = clamp(int2(UV * Shadow.Resolution), int2(0, 0), int2(Shadow.Resolution - 1, Shadow.Resolution - 1));
-    return LoadShadowDepth(Shadow.AtlasPageIndex, int2(Tile * Shadow.Resolution) + LocalTexel);
+    // 예약 블록의 빈 공간 대신 실제 콘텐츠 해상도 안에서만 읽는다.
+    return LoadShadowDepth(Shadow.AtlasPageIndex, int2(Shadow.AtlasOffset) + LocalTexel);
 }
 
 // 기존 PCF는 텍셀 간격, PCSS는 Blocker 거리에서 구한 간격을 같은 중앙 정렬 격자에 사용한다.
 float FilterShadowMap(FShadowShaderParameters Shadow, float2 UV, float CompareDepth, float2 SampleStepUV)
 {
-    const uint2 Tile = uint2(
-        Shadow.TileIndex % SHADOW_ATLAS_TILES_PER_ROW,
-        Shadow.TileIndex / SHADOW_ATLAS_TILES_PER_ROW
-    );
     const int KernelSize = Shadow.ShadowPCFKernelSize;
     const float TexelSize = 1.0f / float(Shadow.Resolution);
     const float HalfTexel = 0.5f * TexelSize;
@@ -274,7 +274,8 @@ float FilterShadowMap(FShadowShaderParameters Shadow, float2 UV, float CompareDe
             // 홀수는 정수 오프셋, 짝수는 반 텍셀 오프셋으로 중심을 맞춘다.
             const float2 Offset = float2(X, Y) - HalfKernel;
             const float2 LocalUV = clamp(UV + Offset * SampleStepUV, float2(HalfTexel, HalfTexel), float2(1.0f - HalfTexel, 1.0f - HalfTexel));
-            const float2 AtlasUV =(float2(Tile) + LocalUV) / float(SHADOW_ATLAS_TILES_PER_ROW);
+            // 콘텐츠 UV를 페이지 내 시작 텍셀과 실제 페이지 크기로 변환한다.
+            const float2 AtlasUV = (float2(Shadow.AtlasOffset) + LocalUV * float(Shadow.Resolution)) * Shadow.InvAtlasSize;
 
             // 각 호출에서 기존 하드웨어 2×2 비교 필터를 사용한다.
             VisibilitySum += SampleShadowAtlas(Shadow.AtlasPageIndex, PCFSampler, AtlasUV, CompareDepth);

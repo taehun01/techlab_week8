@@ -25,18 +25,48 @@ bool FDirectionalLightSceneProxy::SetupShadowProjection(
     const TArray<FVector>& ReceiverCorners, FProjectedShadowInfo& OutInfo,
 	uint32 ProjectionIndex, uint32 ViewId) const
 {
-	if (!ShouldCastShadow() || ReceiverCorners.IsEmpty())
+	if (!ShouldCastShadow() || ReceiverCorners.Num() != 8)
 		return false;
 
 	// Directional 위치·Scale은 무시하고 회전으로 광원 축만 결정한다.
 	const FMatrix Rotation = LightComponent->GetWorldRotation().Quaternion().ToFMatrix();
 	const FMatrix WorldToLight = Rotation.GetTransposed();
 
-	// 같은 Frustum 형상에서는 이동·회전해도 구의 반경이 유지된다.
-	FVector SphereCenter = FVector::ZeroVector;
-	for (const FVector& Corner : ReceiverCorners)
-		SphereCenter += Corner;
-	SphereCenter /= static_cast<float>(ReceiverCorners.Num());
+	// 입력 순서는 Near 평면 4점, Far 평면 4점이다.
+	FVector NearCenter = FVector::ZeroVector;
+	FVector FarCenter = FVector::ZeroVector;
+
+	for (int32 Index = 0; Index < 4; ++Index)
+	{
+		NearCenter += ReceiverCorners[Index];
+		FarCenter += ReceiverCorners[Index + 4];
+	}
+	NearCenter *= 0.25f;
+	FarCenter *= 0.25f;
+
+	// 각 평면 중심에서 모서리까지의 거리 제곱을 구한다.
+	float NearRadiusSquared = 0.0f;
+	float FarRadiusSquared = 0.0f;
+
+	for (int32 Index = 0; Index < 4; ++Index)
+	{
+		NearRadiusSquared = FMath::Max(NearRadiusSquared, (ReceiverCorners[Index] - NearCenter).SizeSquared());
+		FarRadiusSquared = FMath::Max(FarRadiusSquared, (ReceiverCorners[Index + 4] - FarCenter).SizeSquared());
+	}
+
+	// Near→Far 구간에서 최소 포함 구 중심의 위치를 계산한다.
+	const FVector FrustumAxis = FarCenter - NearCenter;
+	const float FrustumLengthSquared = FrustumAxis.SizeSquared();
+	float CenterAlpha = 0.5f;
+
+	// 두 평면이 사실상 겹치는 경우에는 중간 중심을 사용한다.
+	if (FrustumLengthSquared > SMALL_NUMBER)
+	{
+		CenterAlpha = FMath::Clamp(0.5f + (FarRadiusSquared - NearRadiusSquared) / (2.0f * FrustumLengthSquared), 0.0f, 1.0f);
+	}
+
+	// 같은 프러스텀 형상에서는 이동·회전에도 필요한 구 반경이 유지된다.
+	const FVector SphereCenter = NearCenter + FrustumAxis * CenterAlpha;
 
 	FVector Min = WorldToLight.TransformPosition(ReceiverCorners[0]);
 	FVector Max = Min;
