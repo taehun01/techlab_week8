@@ -36,7 +36,7 @@ bool FPointLightSceneProxy::GetShadowProjection(FShadowProjection& OutShadowProj
     // Near는 기초 구현의 고정값이며, Far는 실제 조명 영향 거리와 맞춘다.
     constexpr float NearClip = 0.1f;
     const float FarClip = Point->GetAttenuationRadius();
-    const float HalfFOV = 45.0f;
+    const float HalfFOV = 46.0f;
 
     // 원근 투영을 만들 수 없는 설정은 이 지점에서만 걸러낸다.
     if (FarClip <= NearClip)
