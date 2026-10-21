@@ -476,19 +476,17 @@ void UWorld::GatherLocalProjectedShadows(TArray<FProjectedShadowInfo>& OutShadow
 		FLightRenderParameters LightParameters{};
 		LightProxy->GetLightShaderParameters(LightParameters);
 
-		const float Radius = LightParameters.Radius;
-		const FAABB InfluenceBounds{ LightParameters.Position, FVector(Radius,Radius,Radius) };
-		
-		bool bAffetsAnyViews = false;
+		// 같은 World의 어느 활성 그림자 View에라도 영향이 있으면 유지한다.
+		bool bAffectsAnyView = false;
 		for (const FFrustumPlanes& ViewFrustum : ActiveViewFrustums)
 		{
-			if (IsAABBInFrustum(InfluenceBounds, ViewFrustum)) 
+			if (IsSphereInFrustum(LightParameters.Position, LightParameters.Radius, ViewFrustum))
 			{
-				bAffetsAnyViews = true;
+				bAffectsAnyView = true;
 				break;
 			}
 		}
-		if (!bAffetsAnyViews)
+		if (!bAffectsAnyView)
 		{
 			FStatRegistry::AddCounter(ShadowStats::STAT_LocalLightsOutsideViews);
 			continue;

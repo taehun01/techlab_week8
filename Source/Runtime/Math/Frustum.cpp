@@ -53,6 +53,20 @@ bool IsAABBInFrustum(const FAABB& Bounds, const FFrustumPlanes& Frustum)
 }
 
 
+// ExtractFrustumPlanes()가 평면을 정규화하므로 Radius를 월드 거리로 비교한다.
+bool IsSphereInFrustum(const FVector& Center, float Radius, const FFrustumPlanes& Frustum)
+{
+    for (const FPlane& Plane : Frustum.Planes)
+    {
+        const float Distance = FVector::Dot(Plane.Normal, Center) + Plane.Distance;
+
+        // 접하는 구는 유지한다.
+        if (Distance < -Radius)
+            return false;
+    }
+    return true;
+}
+
 FAABB MakeWorldBounds(const FBox& Value)
 {
     const FVector Center = (Value.Min + Value.Max) * 0.5f;
