@@ -30,6 +30,11 @@
 #include "UObject/UObjectGlobals.h"
 #include "Core/Stats/ShadowStats.h"
 
+#include "Render/ShadowSettings.h"
+#include <algorithm>
+#include <cmath>
+#include <limits>
+
 DECLARE_CYCLE_STAT("Actor Tick", STAT_ActorTick); // Actor 틱 측정
 DECLARE_CYCLE_STAT("Update All Transforms", STAT_UpdateAllTransforms); // 각 Transform의 Update 시간 측정
 DECLARE_CYCLE_STAT("Gather Render Packets", STAT_GatherRenderPackets);
@@ -507,40 +512,32 @@ void UWorld::GatherLocalProjectedShadows(TArray<FProjectedShadowInfo>& OutShadow
 			ReceiverFrustum = &SpotFrustum;
 		}
 
-		// 기존 S2 통계에 강화된 Spot Receiver 판정도 포함한다.
+		// Point는 Receiver가 없으면 여섯 VP 계산도 생략한다.
 		if (!HasVisibleShadowReceiver(LightParameters, ActiveViewFrustums, ReceiverFrustum))
 		{
 			FStatRegistry::AddCounter(ShadowStats::STAT_LocalLightsWithoutReceivers);
 			continue;
 		}
 
-		if (bSpotLight)
+		if (!bSpotLight && !LightProxy->GetShadowProjection(ShadowProjection))
 		{
-			// Receiver 후보가 있을 때만 작업을 등록한다.
-			// Frustum 지정 overload를 사용해 같은 VP의 평면을 다시 추출하지 않는다.
-			FProjectedShadowInfo& ShadowInfo = OutShadows.AddDefaulted_GetRef();
-			ShadowInfo.SetupProjection(*LightProxy, ShadowProjection.ViewOrigin, ShadowProjection.ViewProjections[0], SpotFrustum, FrustumAllPlanesMask, 0);
-
-			// Caster는 카메라 가시 목록과 독립적인 기존 수집 경로를 사용한다.
-			GatherShadowCasters(ShadowInfo, ActiveViews.GetData(), ActiveViews.Num(), MinScreenRadiusSquared);
+			continue;
 		}
-		else
+
+		const float CasterSphereRadius = GetLocalShadowCasterRadius(*LightProxy->GetLightComponent(), LightParameters, ShadowProjection.TanHalfFOV);
+
+		uint32 ProjectionIndex = 0;
+		for (const FMatrix& ViewProjection : ShadowProjection.ViewProjections)
 		{
-			// 여기까지 도달하는 다른 지원 타입은 Point다.
-			// Receiver가 없는 Point의 여섯 VP를 미리 계산하지 않는다.
-			if (!LightProxy->GetShadowProjection(ShadowProjection))
-				continue;
+			const FFrustumPlanes ProjectionFrustum = bSpotLight ? SpotFrustum : ExtractFrustumPlanes(ViewProjection);
 
-			// 면 순서와 ProjectionIndex를 유지해 기존 GPU 인덱스 연결을 보존한다.
-			uint32 ProjectionIndex = 0;
-			for (const FMatrix& ViewProjection : ShadowProjection.ViewProjections)
-			{
-				FProjectedShadowInfo& ShadowInfo = OutShadows.AddDefaulted_GetRef();
-				ShadowInfo.SetupProjection(*LightProxy, ShadowProjection.ViewOrigin, ViewProjection, ProjectionIndex);
+			FProjectedShadowInfo& ShadowInfo = OutShadows.AddDefaulted_GetRef();
+			ShadowInfo.SetupProjection(*LightProxy, ShadowProjection.ViewOrigin,
+				ViewProjection, ProjectionFrustum, FrustumAllPlanesMask, ProjectionIndex);
 
-				GatherShadowCasters(ShadowInfo, ActiveViews.GetData(), ActiveViews.Num(), MinScreenRadiusSquared);
-				++ProjectionIndex;
-			}
+			GatherShadowCasters(ShadowInfo, ActiveViews.GetData(), ActiveViews.Num(),
+				MinScreenRadiusSquared, &LightParameters, CasterSphereRadius);
+			++ProjectionIndex;
 		}
 	}
 }
@@ -644,18 +641,41 @@ bool UWorld::IsSmallShadowCaster(const FLODSphere& Sphere, const FLODViewContext
 	return ViewCount > 0;
 }
 
+float UWorld::GetLocalShadowCasterRadius(const ULightComponent& Light, const FLightRenderParameters& Parameters, float TanHalfFOV)
+{
+	const int32 Resolution = FShadowSettings::GetEffectiveResolution(Light.GetShadowMapResolution());
+	if (Resolution <= 0)
+		return 0.0f;
+
+	const double Range = Parameters.Radius;
+	const double Tan = TanHalfFOV;
+	const double ProjectionRadius = Range * std::sqrt(1.0 + 2.0 * Tan * Tan);
+
+	// 한 텍셀의 횡방향 여유와 작은 월드 공간 여유를 더한다.
+	const double RasterGuard = 2.0 * 1.41421356 * Tan * Range / Resolution;
+	const double Radius = ProjectionRadius + RasterGuard + 0.001;
+
+	if (!std::isfinite(Radius) || Radius > std::numeric_limits<float>::max())
+		return 0.0f;
+
+	const float Result = std::nextafter(static_cast<float>(Radius), std::numeric_limits<float>::infinity());
+	return std::isfinite(Result) ? Result : 0.0f;
+}
 
 // Light Frustum으로 후보를 찾고 기존 정적 메시 제출 경로를 재사용한다.
 // 투영·타깃 상태는 유지하며 Caster 큐에 패킷만 추가한다.
-void UWorld::GatherShadowCasters(FProjectedShadowInfo& ShadowInfo, const FLODViewContext* Views, int32 ViewCount, float MinScreenRadiusSquared)
+void UWorld::GatherShadowCasters(FProjectedShadowInfo& ShadowInfo, const FLODViewContext* Views, int32 ViewCount, 
+	float MinScreenRadiusSquared, const FLightRenderParameters* LocalLight, float CasterSphereRadius)
 {
 	// 한 Gather 안에서 여러 물체의 제출에 같은 임시 큐를 재사용한다.
 	FRenderQueue MeshPackets;
 	uint64 SmallCasterSkips = 0;
+	uint64 SphereCasterSkips = 0;
 
 	// QueryCull에서 처리할 함수
 	const auto Visit = [&ShadowInfo, &MeshPackets, Views, ViewCount,
-		MinScreenRadiusSquared, &SmallCasterSkips](FPrimitiveSceneProxy* Proxy)
+		MinScreenRadiusSquared, &SmallCasterSkips, LocalLight,
+		CasterSphereRadius, &SphereCasterSkips](FPrimitiveSceneProxy* Proxy)
 		{
 			// 그림자 생성 여부만 확인한다. ReceiveShadow는 Caster 선별과 무관하다.
 			if (!Proxy->IsVisible() || !Proxy->IsShadowCaster())
@@ -665,6 +685,14 @@ void UWorld::GatherShadowCasters(FProjectedShadowInfo& ShadowInfo, const FLODVie
 			auto* StaticComponent = Cast<UStaticMeshComponent>(Proxy->GetComponent());
 			if (!StaticComponent || StaticComponent->IsEditorIcon())
 				return;
+
+			// BVH가 Frustum 내부 가지를 일괄 방문해도 이 검사는 수행한다.
+			if (LocalLight && CasterSphereRadius > 0.0f
+				&& !IsAABBInSphere(Proxy->GetBounds(), LocalLight->Position, CasterSphereRadius))
+			{
+				++SphereCasterSkips;
+				return;
+			}
 
 			// 월드 Sphere를 이용, 섹션마다 반복검사하지 않는다.
 			if (IsSmallShadowCaster(Proxy->GetLODSphere(), Views, ViewCount, MinScreenRadiusSquared))
@@ -711,6 +739,8 @@ void UWorld::GatherShadowCasters(FProjectedShadowInfo& ShadowInfo, const FLODVie
 		Visit);
 	if (SmallCasterSkips > 0)
 		FStatRegistry::AddCounter(ShadowStats::STAT_SmallCasterSkips, SmallCasterSkips);
+	if (SphereCasterSkips > 0)
+		FStatRegistry::AddCounter(ShadowStats::STAT_CasterSphereSkips, SphereCasterSkips);
 }
 
 // 메인 카메라 생성

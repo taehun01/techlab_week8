@@ -84,7 +84,8 @@ public:
 	// BeginRenderViews와 SetupProjection 이후, 해당 작업에 한 번 호출한다.
 	// Light Frustum과 CastShadow 조건으로 정적 메시 Caster를 수집한다.
 	void GatherShadowCasters(FProjectedShadowInfo& ShadowInfo,const FLODViewContext* Views, 
-		int32 ViewCount, float MinScreenRadiusSquared);
+		int32 ViewCount, float MinScreenRadiusSquared, const FLightRenderParameters* LocalLight = nullptr,
+		float CasterSphereRadius = 0.0f);
 
 	void CreateMainCamera();
 
@@ -154,6 +155,11 @@ private:
 		uint32 LODCounts[4] = {};
 		uint64 LODTriangles[4] = {};
 	};
+
+
+	// 실제 사각 Projection 전체와 래스터 경계 여유를 포함한다.
+	// 0을 반환하면 추가 Sphere 검사를 사용하지 않는다.
+	static float GetLocalShadowCasterRadius(const ULightComponent& Light, const FLightRenderParameters& Parameters, float TanHalfFOV);
 
 	TArray<FGatherChunk> GatherChunks;
 

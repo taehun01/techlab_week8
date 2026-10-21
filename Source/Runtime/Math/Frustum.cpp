@@ -53,6 +53,15 @@ bool IsAABBInFrustum(const FAABB& Bounds, const FFrustumPlanes& Frustum)
 }
 
 
+bool IsAABBInSphere(const FAABB& Bounds, const FVector& Center, float Radius)
+{
+    const double DX = std::max(std::abs(static_cast<double>(Center.X) - Bounds.Center.X) - Bounds.Extent.X, 0.0);
+    const double DY = std::max(std::abs(static_cast<double>(Center.Y) - Bounds.Center.Y) - Bounds.Extent.Y, 0.0);
+    const double DZ = std::max(std::abs(static_cast<double>(Center.Z) - Bounds.Center.Z) - Bounds.Extent.Z, 0.0);
+
+    return DX * DX + DY * DY + DZ * DZ <= static_cast<double>(Radius) * Radius;
+}
+
 // ExtractFrustumPlanes()가 평면을 정규화하므로 Radius를 월드 거리로 비교한다.
 bool IsSphereInFrustum(const FVector& Center, float Radius, const FFrustumPlanes& Frustum)
 {

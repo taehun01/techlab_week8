@@ -12,6 +12,7 @@ bool IsAABBInFrustum(const FAABB& Bounds, const FFrustumPlanes& Frustum);
 // 정규화된 Frustum 평면과 0 이상의 반경을 사용한다.
 // 어느 평면에서든 구 전체가 바깥에 있을 때만 제외한다.
 bool IsSphereInFrustum(const FVector& Center, float Radius, const FFrustumPlanes& Frustum);
+bool IsAABBInSphere(const FAABB& Bounds, const FVector& Center, float Radius);
 FAABB MakeWorldBounds(const FBox& Value);
 
 enum class EFrustumTest : uint8 { Outside, Intersect, Inside };

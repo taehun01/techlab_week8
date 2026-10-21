@@ -81,6 +81,7 @@ bool FPointLightSceneProxy::GetShadowProjection(FShadowProjection& OutShadowProj
     FMatrix View5 = Translation * Rotation5.GetTransposed();
 
     const float Scale = 1.0f / std::tan(FMath::DegreesToRadians(HalfFOV));
+    OutShadowProjection.TanHalfFOV = 1.0f / Scale;
     const float DepthScale = FarClip / (FarClip - NearClip);
     const float DepthOffset = -NearClip * FarClip / (FarClip - NearClip);
 

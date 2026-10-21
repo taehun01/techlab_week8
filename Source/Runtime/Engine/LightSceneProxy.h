@@ -8,6 +8,9 @@ struct FShadowProjection
 {
 	FVector ViewOrigin = FVector::ZeroVector;
 	TArray<FMatrix> ViewProjections;
+
+	// Projection 비율 저장
+	float TanHalfFOV = 0.0f;
 };
 
 //MSVC 전용 최적화

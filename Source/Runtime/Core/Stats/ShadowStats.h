@@ -29,7 +29,7 @@ namespace ShadowStats
     DECLARE_COUNTER_STAT("Shadow Local Lights Without Receivers", STAT_LocalLightsWithoutReceivers);    // 내부에 가시 Receiver가 없음
     DECLARE_COUNTER_STAT("Shadow Empty Caster Depth Skips", STAT_EmptyCasterDepthSkips);;    // 빈 Caster Queue
     DECLARE_COUNTER_STAT("Shadow Small Caster Skips", STAT_SmallCasterSkips);   // 임계값 미만의 크기의 Caster
-    
+    DECLARE_COUNTER_STAT("Shadow Caster Sphere Skips", STAT_CasterSphereSkips); // 지역광 Sphere 검사
     
     enum EGroup : uint32
     {

@@ -44,6 +44,7 @@ bool FSpotLightSceneProxy::GetShadowProjection(FShadowProjection& OutShadowProje
 
     // OuterConeAngle은 이미 반각이다. 정사각형 타깃이므로 가로·세로 배율이 같다.
     const float Scale = 1.0f / std::tan(FMath::DegreesToRadians(OuterAngle));
+    OutShadowProjection.TanHalfFOV = 1.0f / Scale;
     const float DepthScale = FarClip / (FarClip - NearClip);
     const float DepthOffset = -NearClip * FarClip / (FarClip - NearClip);
 
